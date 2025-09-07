@@ -503,10 +503,10 @@
 
 ## test_plan:
   current_focus:
+    - "PAGE-12-DISCOVERY Backend Testing - COMPLETED"
     - "Complete End-to-End Testing"
     - "Full Customer Journey Testing"
     - "All Role-Based Flows Verification"
-    - "PAGE-11-BOOKINGS Frontend Testing - COMPLETED"
   stuck_tasks:
     []
   test_all: true
