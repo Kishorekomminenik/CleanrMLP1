@@ -215,6 +215,8 @@ class MFAVerifyRequest(BaseModel):
 
 class MFAVerifyResponse(BaseModel):
     ok: bool
+    token: Optional[str] = None
+    user: Optional[UserResponse] = None
 
 class StatusCheck(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
