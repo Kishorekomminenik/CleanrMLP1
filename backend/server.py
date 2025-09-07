@@ -965,6 +965,169 @@ async def switch_role(current_user: User = Depends(get_current_user)):
         user=user_response
     )
 
+# Address Models
+class AddressBase(BaseModel):
+    label: Optional[str] = None
+    line1: str
+    line2: Optional[str] = None
+    city: str
+    state: str
+    postalCode: str
+    country: str
+    lat: float
+    lng: float
+
+class SaveAddressRequest(AddressBase):
+    pass
+
+class SaveAddressResponse(BaseModel):
+    id: str
+
+class AddressResponse(AddressBase):
+    id: str
+
+class ListAddressesResponse(BaseModel):
+    addresses: List[AddressResponse]
+
+class AutocompleteCandidate(BaseModel):
+    placeId: str
+    label: str
+    line1: str
+    city: str
+    state: str
+    postalCode: str
+    country: str
+    lat: float
+    lng: float
+
+class AutocompleteResponse(BaseModel):
+    candidates: List[AutocompleteCandidate]
+
+class ETARequest(BaseModel):
+    lat: float
+    lng: float
+    timing: dict
+
+class ETAResponse(BaseModel):
+    window: str
+    distanceKm: float
+
+# Address API Endpoints
+@api_router.get("/addresses", response_model=ListAddressesResponse)
+async def list_saved_addresses(current_user: User = Depends(get_current_user)):
+    """List saved addresses for the current user"""
+    addresses = await db.addresses.find({"user_id": current_user.id}).to_list(100)
+    
+    address_responses = []
+    for addr in addresses:
+        address_responses.append(AddressResponse(
+            id=str(addr["_id"]),
+            label=addr.get("label"),
+            line1=addr["line1"],
+            line2=addr.get("line2"),
+            city=addr["city"],
+            state=addr["state"],
+            postalCode=addr["postalCode"],
+            country=addr["country"],
+            lat=addr["lat"],
+            lng=addr["lng"]
+        ))
+    
+    return ListAddressesResponse(addresses=address_responses)
+
+@api_router.post("/addresses", response_model=SaveAddressResponse)
+async def save_address(
+    address_data: SaveAddressRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Save a new address for the current user"""
+    
+    # Check for duplicate addresses (same line1, city, postal code)
+    existing = await db.addresses.find_one({
+        "user_id": current_user.id,
+        "line1": address_data.line1,
+        "city": address_data.city,
+        "postalCode": address_data.postalCode
+    })
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Address already exists"
+        )
+    
+    # Create address document
+    address_doc = {
+        "user_id": current_user.id,
+        "label": address_data.label,
+        "line1": address_data.line1,
+        "line2": address_data.line2,
+        "city": address_data.city,
+        "state": address_data.state,
+        "postalCode": address_data.postalCode,
+        "country": address_data.country,
+        "lat": address_data.lat,
+        "lng": address_data.lng,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    result = await db.addresses.insert_one(address_doc)
+    
+    return SaveAddressResponse(id=str(result.inserted_id))
+
+@api_router.get("/places/autocomplete", response_model=AutocompleteResponse)
+async def autocomplete_places(q: str):
+    """Mock autocomplete service for addresses"""
+    
+    # Mock data based on search query
+    if not q or len(q) < 3:
+        return AutocompleteResponse(candidates=[])
+    
+    # Generate mock candidates based on the query
+    mock_candidates = [
+        AutocompleteCandidate(
+            placeId=f"place_{i}_{hashlib.md5(q.encode()).hexdigest()[:8]}",
+            label=f"{q} {suffix}",
+            line1=f"{i*100 + 23} {q} {suffix}",
+            city="San Francisco" if i % 2 == 0 else "New York",
+            state="CA" if i % 2 == 0 else "NY",
+            postalCode="94102" if i % 2 == 0 else "10001",
+            country="USA",
+            lat=37.7749 + (i * 0.01) if i % 2 == 0 else 40.7128 + (i * 0.01),
+            lng=-122.4194 + (i * 0.01) if i % 2 == 0 else -74.0060 + (i * 0.01)
+        )
+        for i, suffix in enumerate(["Street", "Avenue", "Boulevard", "Lane", "Drive"][:3])
+    ]
+    
+    return AutocompleteResponse(candidates=mock_candidates)
+
+@api_router.post("/eta/preview", response_model=ETAResponse)
+async def get_eta_preview(eta_request: ETARequest):
+    """Mock ETA calculation service"""
+    
+    # Mock ETA calculation based on coordinates
+    # Simulate different ETAs based on location
+    base_distance = abs(eta_request.lat - 37.7749) + abs(eta_request.lng + 122.4194)
+    distance_km = round(base_distance * 100, 1)  # Convert to reasonable km
+    
+    if distance_km < 5:
+        window = "15–25 min"
+    elif distance_km < 15:
+        window = "30–45 min"
+    else:
+        window = "45–60 min"
+    
+    # Check if it's scheduled vs now
+    timing = eta_request.timing
+    if timing.get("when") == "schedule":
+        window = f"Scheduled: {window}"
+    
+    return ETAResponse(
+        window=window,
+        distanceKm=min(distance_km, 25.0)  # Cap at 25km for realism
+    )
+
 # Original routes
 @api_router.get("/")
 async def root():
