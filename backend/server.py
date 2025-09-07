@@ -4020,8 +4020,11 @@ async def create_indexes():
     
     # Booking indexes
     await db.bookings.create_index("user_id")
+    await db.bookings.create_index("partner_id")  # New index for partner queries
     await db.bookings.create_index("booking_id", unique=True)
     await db.bookings.create_index("status")
     await db.bookings.create_index("created_at")
+    await db.bookings.create_index([("user_id", 1), ("status", 1), ("created_at", -1)])  # Compound index for customer queries
+    await db.bookings.create_index([("partner_id", 1), ("status", 1), ("created_at", -1)])  # Compound index for partner queries
     
     logger.info("Created database indexes")
