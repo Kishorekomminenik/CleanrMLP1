@@ -89,6 +89,19 @@ interface TaxContext {
   year: number;
 }
 
+interface PayoutCalculation {
+  fareTotal: number;
+  takeRatePercent: number;
+  surgeSharePercent: number;
+  payout: {
+    base: number;
+    surgeShare: number;
+    bonuses: number;
+    total: number;
+    currency: string;
+  };
+}
+
 export default function PartnerEarningsScreen() {
   const { user, token } = useAuth();
   const [loading, setLoading] = useState(true);
