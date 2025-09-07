@@ -464,7 +464,7 @@ export default function AppShell() {
             />
             <Tab.Screen
               name="Settings"
-              component={OwnerSettingsScreen}
+              component={SettingsScreen}
               options={{ tabBarTestID: 'tabOwnerSettings' }}
             />
           </>
