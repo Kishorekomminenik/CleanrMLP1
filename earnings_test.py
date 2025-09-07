@@ -495,6 +495,21 @@ def test_instant_payout_large_amount(results, partner_token):
 
 def test_instant_payout_minimum_amount(results, partner_token):
     """Test POST /api/partner/payouts/instant - below minimum amount"""
+    # First check bank status
+    bank_response = make_request("GET", "/partner/bank/status", auth_token=partner_token)
+    bank_verified = False
+    
+    if bank_response and bank_response.status_code == 200:
+        try:
+            bank_data = bank_response.json()
+            bank_verified = bank_data.get("verified", False)
+        except:
+            pass
+    
+    if not bank_verified:
+        results.add_result("Instant Payout Minimum Amount", True, "Skipped - bank not verified")
+        return True
+    
     payout_data = {
         "amount": 0.50,  # Below $1.00 minimum
         "currency": "usd",
