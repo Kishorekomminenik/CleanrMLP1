@@ -2,14 +2,29 @@ const { getDefaultConfig } = require("expo/metro-config");
 
 const config = getDefaultConfig(__dirname);
 
-// // Exclude unnecessary directories from file watching
-// config.watchFolders = [__dirname];
-// config.resolver.blacklistRE = /(.*)\/(__tests__|android|ios|build|dist|.git|node_modules\/.*\/android|node_modules\/.*\/ios|node_modules\/.*\/windows|node_modules\/.*\/macos)(\/.*)?$/;
+// Aggressive file watching reduction to fix ENOSPC errors
+config.watchFolders = [
+  __dirname + '/src',
+  __dirname + '/app',
+  __dirname + '/assets'
+];
 
-// // Alternative: use a more aggressive exclusion pattern
-// config.resolver.blacklistRE = /node_modules\/.*\/(android|ios|windows|macos|__tests__|\.git|.*\.android\.js|.*\.ios\.js)$/;
+// Exclude test directories and node_modules subdirectories that cause issues
+config.resolver.blacklistRE = /(node_modules\/.*\/(test|tests|__tests__|\.git|android|ios|windows|macos)\/.*|.*\.test\.|.*\.spec\.)/;
 
-// Reduce the number of workers to decrease resource usage
-config.maxWorkers = 2;
+// Reduce workers and enable file system optimizations
+config.maxWorkers = 1;
+config.resetCache = true;
+
+// Disable expensive transformations
+config.transformer = {
+  ...config.transformer,
+  minifierConfig: {
+    keep_fnames: true,
+    mangle: {
+      keep_fnames: true,
+    },
+  },
+};
 
 module.exports = config;
