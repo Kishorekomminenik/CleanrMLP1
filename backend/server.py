@@ -819,11 +819,11 @@ async def verify_mfa(mfa_data: MFAVerifyRequest):
         phone=user.get("phone")
     )
     
-    return {
-        "ok": True,
-        "token": access_token,
-        "user": user_response
-    }
+    return MFAVerifyResponse(
+        ok=True,
+        token=access_token,
+        user=user_response
+    )
 
 @api_router.post("/auth/reset/start", response_model=ResetStartResponse)
 async def reset_password_start(reset_data: ResetStartRequest):
