@@ -299,8 +299,27 @@ async def signup(user_data: UserSignup):
         user_dict["username"] = user_data.username
         user_dict["username_lower"] = normalize_username(user_data.username)
     
-    result = await db.users.insert_one(user_dict)
-    user_id = str(result.inserted_id)
+    try:
+        result = await db.users.insert_one(user_dict)
+        user_id = str(result.inserted_id)
+    except Exception as e:
+        # Handle MongoDB duplicate key errors
+        if "duplicate key error" in str(e):
+            if "email" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email already registered"
+                )
+            elif "username_lower" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Username already taken"
+                )
+        # Handle other database errors
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed. Please try again."
+        )
     
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
