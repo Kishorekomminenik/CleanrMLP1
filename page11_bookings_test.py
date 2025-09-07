@@ -66,9 +66,9 @@ def make_request(method, endpoint, data=None, headers=None, auth_token=None, par
     
     try:
         if method.upper() == "GET":
-            response = requests.get(url, headers=request_headers, params=params, timeout=15)
+            response = requests.get(url, headers=request_headers, params=params, timeout=10)
         elif method.upper() == "POST":
-            response = requests.post(url, json=data, headers=request_headers, timeout=15)
+            response = requests.post(url, json=data, headers=request_headers, timeout=10)
         else:
             raise ValueError(f"Unsupported method: {method}")
         
@@ -76,10 +76,24 @@ def make_request(method, endpoint, data=None, headers=None, auth_token=None, par
         return response
     except requests.exceptions.Timeout as e:
         print(f"Request timeout: {method} {endpoint} - {e}")
-        return None
+        # Return a mock response object for timeout
+        class MockResponse:
+            def __init__(self):
+                self.status_code = 408  # Request Timeout
+                self.text = "Request timeout"
+            def json(self):
+                return {"detail": "Request timeout"}
+        return MockResponse()
     except requests.exceptions.RequestException as e:
         print(f"Request failed: {method} {endpoint} - {e}")
-        return None
+        # Return a mock response object for other errors
+        class MockResponse:
+            def __init__(self):
+                self.status_code = 500  # Internal Server Error
+                self.text = "Request failed"
+            def json(self):
+                return {"detail": "Request failed"}
+        return MockResponse()
 
 def setup_test_user(results):
     """Create test customer user and get authentication token"""
