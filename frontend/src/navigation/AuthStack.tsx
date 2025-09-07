@@ -141,8 +141,8 @@ export default function AuthStack() {
             <TextInput
               style={styles.input}
               placeholder="6-digit code"
-              value={mfaForm.watch('code')}
-              onChangeText={(text) => mfaForm.setValue('code', text)}
+              value={mfaCode}
+              onChangeText={setMfaCode}
               keyboardType="number-pad"
               maxLength={6}
               autoFocus
@@ -150,7 +150,7 @@ export default function AuthStack() {
 
             <TouchableOpacity
               style={[styles.button, loading && styles.buttonDisabled]}
-              onPress={mfaForm.handleSubmit(handleMFA)}
+              onPress={handleMFA}
               disabled={loading}
             >
               {loading ? (
