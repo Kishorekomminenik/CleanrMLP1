@@ -1,0 +1,100 @@
+{
+  "manualE2EReady": true,
+  "buildStatus": {
+    "frontend": "ready",
+    "backend": "ready",
+    "services": "running"
+  },
+  "platformPricing": {
+    "phase1": "completed",
+    "phase2": "completed",
+    "backendApis": "100% tested",
+    "frontendIntegration": "completed"
+  },
+  "designSystem": {
+    "tokensImplemented": true,
+    "buttonVariants": ["primary", "secondary", "danger", "ghost"],
+    "consistencyChecks": "passed",
+    "watermarksEnabled": true
+  },
+  "features": {
+    "discovery": {
+      "status": "complete",
+      "fromPricing": true,
+      "surgeChips": true,
+      "disclaimers": true
+    },
+    "checkout": {
+      "status": "complete",
+      "pricingQuote": true,
+      "estimateIdFlow": true,
+      "repriceHandling": true,
+      "fareBreakdown": true
+    },
+    "earnings": {
+      "status": "complete",
+      "payoutRateInfo": true,
+      "surgeShareInfo": true,
+      "payoutCalculation": true
+    },
+    "subscriptions": {
+      "status": "out-of-scope",
+      "note": "Created but not in MVP scope"
+    },
+    "settings": {
+      "status": "out-of-scope", 
+      "note": "Created but not in MVP scope"
+    }
+  },
+  "mockFixtures": {
+    "enabled": true,
+    "endpoints": [
+      "GET /api/discovery/search",
+      "GET /api/partners/{id}/profile",
+      "POST /api/pricing/quote",
+      "POST /api/bookings",
+      "POST /api/partner/earnings/payout-calc"
+    ]
+  },
+  "watermarks": {
+    "screenOverlay": "enabled",
+    "mediaOverlay": "enabled",
+    "stagingOnly": true
+  },
+  "testData": {
+    "accounts": {
+      "customer": "cust1+e2e@shine.app / Abc!2345",
+      "partner": "pro1+e2e@shine.app / Abc!2345", 
+      "owner": "owner+e2e@shine.app / Abc!2345 / MFA:123456"
+    },
+    "address": "123 Pine St, Springfield, CA 94105"
+  },
+  "automatedTests": {
+    "selectors": [
+      "discItemFromPrice",
+      "discSurgeChip", 
+      "discDisclaimer",
+      "chkFareBlock",
+      "chkSurgeRow",
+      "chkRepriceNotice",
+      "chkPricingDisclaimer",
+      "earnPayoutRateRow",
+      "earnSurgeShareRow"
+    ],
+    "scenarios": [
+      "DISC-PATCH-01: fromPrice visible; surge chip toggles",
+      "CHK-PATCH-02: estimate_updated triggers reprice notice & reconfirm",
+      "EARN-PATCH-01: payout rows visible; totals align with payout-calc"
+    ]
+  },
+  "flags": {
+    "PRICING_MODEL": "PLATFORM_SET",
+    "SURGE_ENABLED": true,
+    "SHOW_PRICING_DISCLAIMER": true,
+    "WATERMARK_ENABLED": true,
+    "WATERMARK_MEDIA_ENABLED": true,
+    "USE_MOCK_FIXTURES": true
+  },
+  "timestamp": "2025-01-27",
+  "version": "v0.9.0-mvp-pricing-e2e"
+}
