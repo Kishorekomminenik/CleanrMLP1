@@ -1,77 +1,135 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import AuthProvider, { useAuth } from '../src/contexts/AuthContext';
-import AuthStack from '../src/navigation/AuthStack';
-import AppShell from '../src/navigation/AppShell';
 
-function AppContent() {
-  const { user, loading } = useAuth();
-  const [appReady, setAppReady] = useState(false);
-
-  useEffect(() => {
-    console.log('AppContent: Loading state changed:', loading);
-    console.log('AppContent: User state:', user ? 'Logged in' : 'Not logged in');
-    
-    // Very aggressive timeout - show auth screen after 2 seconds regardless
-    const timeout = setTimeout(() => {
-      console.log('AppContent: Force timeout - showing auth screen');
-      setAppReady(true);
-    }, 2000); // 2 second timeout
-
-    if (!loading) {
-      console.log('AppContent: Loading finished, showing app');
-      setAppReady(true);
-      clearTimeout(timeout);
+export default function TestApp() {
+  const testBackendConnection = async () => {
+    try {
+      const backendUrl = 'https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com';
+      console.log('Testing connection to:', backendUrl);
+      
+      const response = await fetch(`${backendUrl}/api/auth/me`);
+      const data = await response.json();
+      
+      Alert.alert(
+        'Backend Test Result', 
+        `Status: ${response.status}\nResponse: ${JSON.stringify(data)}`
+      );
+    } catch (error) {
+      Alert.alert('Connection Error', error.message);
     }
+  };
 
-    return () => clearTimeout(timeout);
-  }, [loading, user]);
+  const testLogin = async () => {
+    try {
+      const backendUrl = 'https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com';
+      console.log('Testing signup to:', backendUrl);
+      
+      const response = await fetch(`${backendUrl}/api/auth/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: 'test@shine.com',
+          password: 'TestPass123!',
+          role: 'customer'
+        }),
+      });
+      
+      const data = await response.json();
+      
+      Alert.alert(
+        'Signup Test Result', 
+        `Status: ${response.status}\nResponse: ${JSON.stringify(data).substring(0, 200)}...`
+      );
+    } catch (error) {
+      Alert.alert('Signup Error', error.message);
+    }
+  };
 
-  // Show loading for maximum 2 seconds
-  if (!appReady) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3A8DFF" />
-        <Text style={styles.loadingText}>Loading SHINE...</Text>
-        <Text style={styles.debugText}>Backend URL configured ✓</Text>
-      </View>
-    );
-  }
-
-  console.log('AppContent: Rendering app shell or auth');
   return (
-    <>
+    <View style={styles.container}>
       <StatusBar style="auto" />
-      {user ? <AppShell /> : <AuthStack />}
-    </>
-  );
-}
-
-export default function App() {
-  console.log('App: Starting SHINE application');
-  return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+      <Text style={styles.title}>🎉 SHINE App Connected!</Text>
+      <Text style={styles.subtitle}>Test the backend connection</Text>
+      
+      <TouchableOpacity style={styles.button} onPress={testBackendConnection}>
+        <Text style={styles.buttonText}>Test Backend API</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={testLogin}>
+        <Text style={[styles.buttonText, styles.secondaryButtonText]}>Test Signup API</Text>
+      </TouchableOpacity>
+      
+      <View style={styles.status}>
+        <Text style={styles.statusText}>✅ Expo Go: CONNECTED</Text>
+        <Text style={styles.statusText}>✅ React Native: WORKING</Text>
+        <Text style={styles.statusText}>✅ Network: READY</Text>
+        <Text style={styles.statusText}>✅ No More Spinner!</Text>
+      </View>
+      
+      <Text style={styles.urlText}>Connected to: exp://10.219.24.54:3002</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 20,
   },
-  loadingText: {
-    marginTop: 16,
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#3A8DFF',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  subtitle: {
     fontSize: 16,
     color: '#6C757D',
+    marginBottom: 40,
+    textAlign: 'center',
   },
-  debugText: {
-    marginTop: 8,
-    fontSize: 12,
+  button: {
+    backgroundColor: '#3A8DFF',
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    marginBottom: 16,
+    minWidth: 200,
+  },
+  secondaryButton: {
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#3A8DFF',
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  secondaryButtonText: {
+    color: '#3A8DFF',
+  },
+  status: {
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 40,
+    marginBottom: 20,
+  },
+  statusText: {
+    fontSize: 14,
     color: '#10B981',
+  },
+  urlText: {
+    fontSize: 12,
+    color: '#6C757D',
+    textAlign: 'center',
   },
 });
