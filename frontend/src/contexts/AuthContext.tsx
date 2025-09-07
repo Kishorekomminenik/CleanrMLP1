@@ -61,31 +61,51 @@ export default function AuthProvider({ children }: AuthProviderProps) {
   const checkExistingToken = async () => {
     try {
       console.log('AuthContext: Starting token check');
+      console.log('AuthContext: Backend URL:', BACKEND_URL);
       
-      // For initial testing, skip token verification and go straight to auth screen
-      console.log('AuthContext: Skipping token check for demo');
-      setLoading(false);
-      return;
-      
-      // TODO: Re-enable token verification later
       const token = await AsyncStorage.getItem(TOKEN_KEY);
+      console.log('AuthContext: Token exists:', !!token);
+      
       if (token && BACKEND_URL) {
-        const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
+        try {
+          console.log('AuthContext: Verifying token with backend...');
+          
+          // Add timeout to prevent hanging
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          
+          const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+          });
+          
+          clearTimeout(timeoutId);
+          console.log('AuthContext: Token verification response:', response.status);
 
-        if (response.ok) {
-          const userData = await response.json();
-          setUser(userData);
-        } else {
-          await AsyncStorage.removeItem(TOKEN_KEY);
+          if (response.ok) {
+            const userData = await response.json();
+            console.log('AuthContext: User authenticated:', userData.email);
+            setUser(userData);
+          } else {
+            console.log('AuthContext: Token invalid, removing...');
+            await AsyncStorage.removeItem(TOKEN_KEY);
+          }
+        } catch (networkError) {
+          console.log('AuthContext: Network error during token verification:', networkError.message);
+          // Don't remove token on network error - user can login manually
         }
+      } else {
+        console.log('AuthContext: No token or backend URL found');
       }
     } catch (error) {
       console.error('AuthContext: Error during token check:', error);
+      // Only remove token if it's not a network error
+      if (error.name !== 'AbortError') {
+        await AsyncStorage.removeItem(TOKEN_KEY);
+      }
     } finally {
       console.log('AuthContext: Token check complete, setting loading to false');
       setLoading(false);
