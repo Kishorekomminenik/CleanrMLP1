@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
+import ScreenWatermark from '../components/Watermark';
 import PartnerEarningsScreen from '../screens/PartnerEarningsScreen';
 import CustomerSupportScreen from '../screens/CustomerSupportScreen';
 import PartnerSupportScreen from '../screens/PartnerSupportScreen';
