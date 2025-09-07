@@ -133,6 +133,43 @@ export default function PartnerEarningsScreen() {
     }
   }, [user]);
 
+  // Fetch payout calculation for latest booking
+  const fetchPayoutCalculation = useCallback(async () => {
+    if (!user?.token) return;
+
+    try {
+      const url = `${BACKEND_URL}/partner/earnings/payout-calc`;
+      
+      let response;
+      if (MockApiService.shouldUseMock(url)) {
+        response = await MockApiService.fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${user.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ bookingId: 'bk_1001' }) // Latest booking ID
+        });
+      } else {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${user.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ bookingId: 'bk_1001' })
+        });
+      }
+
+      if (response.ok) {
+        const data = await response.json();
+        setPayoutCalc(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch payout calculation:', err);
+    }
+  }, [user?.token, BACKEND_URL]);
+
   const loadEarningsData = async () => {
     try {
       setLoading(true);
