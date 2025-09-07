@@ -13,6 +13,9 @@ import {
   Platform
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
+import Button from '../components/Button';
+import { ScreenWatermark } from '../components/Watermark';
+import MockApiService from '../services/mockData';
 import Constants from 'expo-constants';
 
 // Types
