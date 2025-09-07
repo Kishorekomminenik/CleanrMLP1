@@ -4619,14 +4619,24 @@ async def get_partner_profile(
     
     partner_data = mock_partners[partner_id]
     
-    # Convert to response format
+    # Convert to response format - backward compatibility services
     services = [
         PartnerService(
-            serviceType=service["serviceType"],
-            price=service["price"],
-            duration=service["duration"]
+            serviceType=card["serviceType"],
+            price=card["fromPrice"],  # Use platform price
+            duration=card["duration"]
         )
-        for service in partner_data["services"]
+        for card in partner_data["fareCards"]
+    ]
+    
+    # New platform pricing cards
+    fare_cards = [
+        PartnerFareCard(
+            serviceType=card["serviceType"],
+            fromPrice=card["fromPrice"],
+            duration=card["duration"]
+        )
+        for card in partner_data["fareCards"]
     ]
     
     reviews = [
@@ -4648,7 +4658,8 @@ async def get_partner_profile(
         badges=partner_data["badges"],
         description=partner_data["description"],
         photos=partner_data["photos"],
-        services=services,
+        services=services,  # Backward compatibility
+        fareCards=fare_cards,  # New platform pricing
         recentReviews=reviews,
         status=partner_data["status"]
     )
