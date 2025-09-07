@@ -95,8 +95,12 @@ def is_valid_identifier(identifier: str) -> tuple[bool, str]:
     # Check if it's an email
     if '@' in identifier:
         try:
-            EmailStr.validate(identifier)
-            return True, 'email'
+            # Simple email validation regex
+            email_pattern = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+            if email_pattern.match(identifier):
+                return True, 'email'
+            else:
+                return False, 'invalid'
         except:
             return False, 'invalid'
     
