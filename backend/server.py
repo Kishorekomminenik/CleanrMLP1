@@ -3567,8 +3567,6 @@ async def get_training_guides(current_user: User = Depends(get_current_user)):
     guides = list(training_guides.values())
     return TrainingGuidesResponse(items=guides)
 
-    return {"ok": True}
-
 # Original routes
 @api_router.get("/")
 async def root():
