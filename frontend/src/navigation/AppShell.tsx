@@ -416,6 +416,11 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabPartnerEarnings' }}
             />
             <Tab.Screen
+              name="Support"
+              component={PartnerSupportScreen}
+              options={{ tabBarTestID: 'tabPartnerSupport' }}
+            />
+            <Tab.Screen
               name="Profile"
               component={PartnerProfileScreen}
               options={{ tabBarTestID: 'tabPartnerProfile' }}
@@ -430,7 +435,7 @@ export default function AppShell() {
               component={OwnerHomeComponent}
               options={{ tabBarTestID: 'tabOwnerHome' }}
             />
-            <Tab.Screen
+            <Tab.Screen  
               name="Reports"
               component={OwnerReportsScreen}
               options={{ tabBarTestID: 'tabOwnerReports' }}
@@ -439,6 +444,11 @@ export default function AppShell() {
               name="Analytics"
               component={OwnerAnalyticsScreen}
               options={{ tabBarTestID: 'tabOwnerAnalytics' }}
+            />
+            <Tab.Screen
+              name="Support"
+              component={OwnerSupportScreen}
+              options={{ tabBarTestID: 'tabOwnerSupport' }}
             />
             <Tab.Screen
               name="Settings"
