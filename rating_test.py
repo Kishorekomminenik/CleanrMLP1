@@ -448,8 +448,8 @@ def test_owner_ratings_dashboard(results, owner_token):
             print(f"Owner ratings dashboard response: {json.dumps(resp_data, indent=2)}")
             
             # Check for required dashboard fields
-            if "ratings" in resp_data and isinstance(resp_data["ratings"], list):
-                ratings = resp_data["ratings"]
+            if "items" in resp_data and isinstance(resp_data["items"], list):
+                ratings = resp_data["items"]
                 if len(ratings) > 0:
                     # Check first rating structure
                     rating = ratings[0]
