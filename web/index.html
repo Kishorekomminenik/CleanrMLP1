@@ -525,7 +525,12 @@
             
             try {
                 const payload = type === 'signup' 
-                    ? { email, password, role: currentRole }
+                    ? { 
+                        email, 
+                        password, 
+                        role: currentRole,
+                        accept_tos: true  // Add required field
+                      }
                     : { identifier: email, password };
                 
                 const response = await fetch(`${BACKEND_URL}/api/auth/${type}`, {
