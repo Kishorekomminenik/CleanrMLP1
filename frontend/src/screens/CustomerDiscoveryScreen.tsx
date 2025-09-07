@@ -430,7 +430,9 @@ const CustomerDiscoveryScreen: React.FC = () => {
       </Text>
 
       <View style={styles.resultFooter}>
-        <Text style={styles.priceHint}>{item.priceHint}</Text>
+        <Text testID="discItemFromPrice" style={styles.fromPrice}>
+          From ${item.fromPrice.toFixed(0)}
+        </Text>
         <TouchableOpacity
           testID="discViewProfileBtn"
           style={styles.viewProfileButton}
