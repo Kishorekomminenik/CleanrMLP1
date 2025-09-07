@@ -32,6 +32,24 @@ interface PriceBreakdownItem {
   amount: number;
 }
 
+interface PricingQuote {
+  fare: {
+    subtotal: number;
+    surgeMultiplier: number;
+    tax: number;
+    total: number;
+    currency: string;
+  };
+  breakdown: PriceBreakdownItem[];
+  surge: {
+    active: boolean;
+    reason?: string;
+    multiplier?: number;
+  };
+  estimateId: string;
+  pricingEngineVersion: string;
+}
+
 interface CheckoutData {
   service: any;
   address: any;
