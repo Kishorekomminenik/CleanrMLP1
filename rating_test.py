@@ -329,7 +329,7 @@ def test_customer_rating_validation(results, customer_token, booking_id):
         try:
             error_data = response.json()
             detail = error_data.get("detail", "").lower()
-            if "star" in detail or "rating" in detail or "1" in detail and "5" in detail:
+            if "star" in detail and ("1" in detail and "5" in detail):
                 results.add_result("Customer Rating Validation", True, "Invalid star rating properly rejected")
                 return
         except:
