@@ -264,11 +264,11 @@ export default function AppShell() {
         case 'Home':
           iconName = focused ? 'home' : 'home-outline';
           break;
-        case 'Bookings':
-          iconName = focused ? 'list' : 'list-outline';
+        case 'Discover':
+          iconName = focused ? 'search' : 'search-outline';
           break;
-        case 'Favorites':
-          iconName = focused ? 'heart' : 'heart-outline';
+        case 'Bookings':
+          iconName = focused ? 'calendar' : 'calendar-outline';
           break;
         case 'Support':
           iconName = focused ? 'help-circle' : 'help-circle-outline';
