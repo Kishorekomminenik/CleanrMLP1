@@ -97,6 +97,63 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
 
   const backendUrl = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
 
+  // Fetch pricing quote
+  const fetchPricingQuote = async () => {
+    if (!user?.token) return;
+
+    try {
+      setQuoteLoading(true);
+      const url = `${backendUrl}/pricing/quote`;
+      
+      const quoteRequest = {
+        serviceType: checkoutData.service.type || 'Deep Clean',
+        dwellingType: checkoutData.service.dwellingType || 'House',
+        bedrooms: checkoutData.service.bedrooms || 3,
+        bathrooms: checkoutData.service.bathrooms || 2,
+        timing: { when: 'now' }, // For surge pricing
+        address: checkoutData.address
+      };
+
+      let response;
+      if (MockApiService.shouldUseMock(url)) {
+        response = await MockApiService.fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${user.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(quoteRequest)
+        });
+      } else {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${user.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(quoteRequest)
+        });
+      }
+
+      if (response.ok) {
+        const quoteData = await response.json();
+        setQuote(quoteData);
+      } else {
+        Alert.alert('Error', 'Failed to get pricing quote');
+      }
+    } catch (err) {
+      console.error('Failed to fetch pricing quote:', err);
+      Alert.alert('Error', 'Network error occurred');
+    } finally {
+      setQuoteLoading(false);
+    }
+  };
+
+  // Initialize quote on mount
+  useEffect(() => {
+    fetchPricingQuote();
+  }, []);
+
   useEffect(() => {
     loadPaymentMethods();
     calculateInitialPricing();
