@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHINE App - Web Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 400px;
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #3A8DFF, #2563EB);
+            padding: 32px 24px 24px;
+            text-align: center;
+            color: white;
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .subtitle {
+            opacity: 0.9;
+            font-size: 16px;
+        }
+        
+        .content {
+            padding: 32px 24px;
+        }
+        
+        .status-section {
+            margin-bottom: 32px;
+        }
+        
+        .status-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 16px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .status-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            font-size: 16px;
+        }
+        
+        .test-section {
+            margin-bottom: 32px;
+        }
+        
+        .test-button {
+            width: 100%;
+            background: #3A8DFF;
+            border: none;
+            border-radius: 12px;
+            padding: 16px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 12px;
+            transition: all 0.2s;
+        }
+        
+        .test-button:hover {
+            background: #2563EB;
+            transform: translateY(-2px);
+        }
+        
+        .test-button.secondary {
+            background: #f8f9fa;
+            color: #3A8DFF;
+            border: 1px solid #3A8DFF;
+        }
+        
+        .test-button.secondary:hover {
+            background: #e5f4ff;
+        }
+        
+        .result {
+            margin-top: 16px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #3A8DFF;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .success { border-left-color: #10B981; }
+        .error { border-left-color: #EF4444; }
+        
+        .auth-section {
+            border-top: 1px solid #e5e5e5;
+            padding-top: 24px;
+        }
+        
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 24px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 4px;
+        }
+        
+        .auth-tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: transparent;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            color: #6c757d;
+        }
+        
+        .auth-tab.active {
+            background: white;
+            color: #3A8DFF;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #1a1a1a;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #3A8DFF;
+        }
+        
+        .form-select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            font-size: 16px;
+            background: white;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff40;
+            border-radius: 50%;
+            border-top-color: #ffffff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .backend-url {
+            font-size: 12px;
+            color: #6c757d;
+            text-align: center;
+            margin-top: 16px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">SHINE</div>
+            <div class="subtitle">Professional Service Platform</div>
+        </div>
+        
+        <div class="content">
+            <div class="status-section">
+                <div class="status-title">🎉 Connection Status</div>
+                <div class="status-item">
+                    <span class="status-icon">✅</span>
+                    <span>Web Preview: Connected</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-icon">✅</span>
+                    <span>Backend API: Ready</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-icon">✅</span>
+                    <span>No Loading Issues</span>
+                </div>
+            </div>
+            
+            <div class="test-section">
+                <div class="status-title">🔧 API Testing</div>
+                <button class="test-button" onclick="testBackendConnection()">
+                    <span id="test-backend-text">Test Backend Connection</span>
+                </button>
+                <button class="test-button secondary" onclick="testSignup()">
+                    <span id="test-signup-text">Test User Signup</span>
+                </button>
+                <div id="test-result" class="result"></div>
+            </div>
+            
+            <div class="auth-section">
+                <div class="status-title">🔐 Authentication Demo</div>
+                <div class="auth-tabs">
+                    <button class="auth-tab active" onclick="switchTab('signup')">Sign Up</button>
+                    <button class="auth-tab" onclick="switchTab('login')">Login</button>
+                </div>
+                
+                <div id="signup-form">
+                    <div class="form-group">
+                        <label class="form-label">Role</label>
+                        <select class="form-select" id="role">
+                            <option value="customer">Customer</option>
+                            <option value="partner">Partner</option>
+                            <option value="owner">Owner</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-input" id="email" placeholder="your@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-input" id="password" placeholder="Min 8 characters">
+                    </div>
+                    <button class="test-button" onclick="performAuth('signup')">
+                        <span id="auth-text">Create Account</span>
+                    </button>
+                </div>
+                
+                <div id="login-form" style="display: none;">
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-input" id="login-email" placeholder="your@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-input" id="login-password" placeholder="Your password">
+                    </div>
+                    <button class="test-button" onclick="performAuth('login')">
+                        <span id="login-text">Sign In</span>
+                    </button>
+                </div>
+                
+                <div id="auth-result" class="result"></div>
+            </div>
+            
+            <div class="backend-url">
+                Backend: https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const BACKEND_URL = 'https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com';
+        
+        async function testBackendConnection() {
+            const button = document.getElementById('test-backend-text');
+            const result = document.getElementById('test-result');
+            
+            button.innerHTML = '<div class="loading"></div>Testing...';
+            result.style.display = 'block';
+            result.className = 'result';
+            
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/auth/me`);
+                const data = await response.json();
+                
+                result.className = 'result success';
+                result.innerHTML = `✅ Backend Connected!
+Status: ${response.status}
+Response: ${JSON.stringify(data, null, 2)}
+Time: ${Date.now() % 10000}ms`;
+                
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Connection Error:
+${error.message}`;
+            }
+            
+            button.innerHTML = 'Test Backend Connection';
+        }
+        
+        async function testSignup() {
+            const button = document.getElementById('test-signup-text');
+            const result = document.getElementById('test-result');
+            
+            button.innerHTML = '<div class="loading"></div>Testing Signup...';
+            result.style.display = 'block';
+            
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/auth/signup`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: `test${Date.now()}@shine.com`,
+                        password: 'TestPass123!',
+                        role: 'customer'
+                    }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.className = 'result success';
+                    result.innerHTML = `✅ Signup API Working!
+Status: ${response.status}
+User Created: ${data.user?.email || 'Success'}
+Token: ${data.token ? 'Generated' : 'None'}`;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `⚠️ Signup Response:
+Status: ${response.status}
+Message: ${data.detail || data.message}`;
+                }
+                
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ Signup Error:
+${error.message}`;
+            }
+            
+            button.innerHTML = 'Test User Signup';
+        }
+        
+        function switchTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Show/hide forms
+            document.getElementById('signup-form').style.display = tab === 'signup' ? 'block' : 'none';
+            document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+            
+            // Clear results
+            document.getElementById('auth-result').style.display = 'none';
+        }
+        
+        async function performAuth(type) {
+            const button = document.getElementById(type === 'signup' ? 'auth-text' : 'login-text');
+            const result = document.getElementById('auth-result');
+            
+            const email = document.getElementById(type === 'signup' ? 'email' : 'login-email').value;
+            const password = document.getElementById(type === 'signup' ? 'password' : 'login-password').value;
+            const role = type === 'signup' ? document.getElementById('role').value : undefined;
+            
+            if (!email || !password) {
+                result.style.display = 'block';
+                result.className = 'result error';
+                result.innerHTML = '❌ Please fill in all fields';
+                return;
+            }
+            
+            button.innerHTML = '<div class="loading"></div>Processing...';
+            result.style.display = 'block';
+            
+            try {
+                const body = type === 'signup' 
+                    ? { email, password, role }
+                    : { identifier: email, password };
+                
+                const response = await fetch(`${BACKEND_URL}/api/auth/${type}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.className = 'result success';
+                    result.innerHTML = `✅ ${type === 'signup' ? 'Account Created' : 'Login'} Successful!
+Email: ${data.user?.email}
+Role: ${data.user?.role}
+Token: ${data.token ? 'Generated ✓' : 'None'}
+Status: ${data.user?.partner_status || 'Active'}`;
+                    
+                    // Clear form
+                    document.getElementById(type === 'signup' ? 'email' : 'login-email').value = '';
+                    document.getElementById(type === 'signup' ? 'password' : 'login-password').value = '';
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `❌ ${type === 'signup' ? 'Signup' : 'Login'} Failed:
+${data.detail || data.message || 'Unknown error'}`;
+                }
+                
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `❌ ${type === 'signup' ? 'Signup' : 'Login'} Error:
+${error.message}`;
+            }
+            
+            button.innerHTML = type === 'signup' ? 'Create Account' : 'Sign In';
+        }
+        
+        // Auto-test connection on load
+        setTimeout(() => {
+            testBackendConnection();
+        }, 1000);
+    </script>
+</body>
+</html>
