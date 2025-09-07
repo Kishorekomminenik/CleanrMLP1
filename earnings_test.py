@@ -698,7 +698,7 @@ def test_earnings_without_auth(results):
     """Test earnings endpoints without authentication"""
     endpoints = [
         "/partner/earnings/summary",
-        "/partner/earnings/series",
+        "/partner/earnings/series", 
         "/partner/earnings/statements",
         "/partner/payouts",
         "/partner/bank/status",
@@ -706,17 +706,16 @@ def test_earnings_without_auth(results):
         "/partner/notifications/prefs"
     ]
     
-    all_passed = True
+    failed_endpoints = []
     for endpoint in endpoints:
         response = make_request("GET", endpoint)
         if not (response and response.status_code in [401, 403]):
-            all_passed = False
-            break
+            failed_endpoints.append(f"{endpoint} -> {response.status_code if response else 'No response'}")
     
-    if all_passed:
+    if not failed_endpoints:
         results.add_result("Earnings Endpoints Without Auth", True, "All endpoints properly require authentication")
     else:
-        results.add_result("Earnings Endpoints Without Auth", False, "Some endpoints allow unauthenticated access")
+        results.add_result("Earnings Endpoints Without Auth", False, f"Failed endpoints: {', '.join(failed_endpoints)}")
 
 def test_earnings_with_customer_role(results, customer_token):
     """Test earnings endpoints with customer role (should be forbidden)"""
@@ -730,17 +729,16 @@ def test_earnings_with_customer_role(results, customer_token):
         "/partner/notifications/prefs"
     ]
     
-    all_passed = True
+    failed_endpoints = []
     for endpoint in endpoints:
         response = make_request("GET", endpoint, auth_token=customer_token)
         if not (response and response.status_code == 403):
-            all_passed = False
-            break
+            failed_endpoints.append(f"{endpoint} -> {response.status_code if response else 'No response'}")
     
-    if all_passed:
+    if not failed_endpoints:
         results.add_result("Earnings Endpoints Customer Role", True, "All endpoints properly reject customer role")
     else:
-        results.add_result("Earnings Endpoints Customer Role", False, "Some endpoints allow customer access")
+        results.add_result("Earnings Endpoints Customer Role", False, f"Failed endpoints: {', '.join(failed_endpoints)}")
 
 def test_earnings_with_owner_role(results, owner_token):
     """Test earnings endpoints with owner role (should be forbidden)"""
@@ -754,17 +752,16 @@ def test_earnings_with_owner_role(results, owner_token):
         "/partner/notifications/prefs"
     ]
     
-    all_passed = True
+    failed_endpoints = []
     for endpoint in endpoints:
         response = make_request("GET", endpoint, auth_token=owner_token)
         if not (response and response.status_code == 403):
-            all_passed = False
-            break
+            failed_endpoints.append(f"{endpoint} -> {response.status_code if response else 'No response'}")
     
-    if all_passed:
+    if not failed_endpoints:
         results.add_result("Earnings Endpoints Owner Role", True, "All endpoints properly reject owner role")
     else:
-        results.add_result("Earnings Endpoints Owner Role", False, "Some endpoints allow owner access")
+        results.add_result("Earnings Endpoints Owner Role", False, f"Failed endpoints: {', '.join(failed_endpoints)}")
 
 # ===== MAIN TEST EXECUTION =====
 
