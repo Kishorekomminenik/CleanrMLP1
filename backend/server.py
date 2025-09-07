@@ -459,11 +459,12 @@ async def reset_password_start(reset_data: ResetStartRequest):
     
     # Determine if it's email or phone
     if '@' in identifier:
-        try:
-            EmailStr.validate(identifier)
+        # Simple email validation
+        email_pattern = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+        if email_pattern.match(identifier):
             channel = "email"
             user = await db.users.find_one({"email": normalize_email(identifier)})
-        except:
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid email or phone format."
