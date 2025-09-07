@@ -1390,6 +1390,9 @@ async def create_booking(
     
     await db.bookings.insert_one(booking_doc)
     
+    # Create dispatch offer for partners
+    create_dispatch_offer(booking_id, booking_data.service)
+    
     return BookingResponse(
         bookingId=booking_id,
         status=status,
