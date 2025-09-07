@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import Constants from 'expo-constants';
 
 // Types
