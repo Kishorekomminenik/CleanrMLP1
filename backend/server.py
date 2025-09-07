@@ -343,6 +343,142 @@ async def signup(user_data: UserSignup):
         user=user_response
     )
 
+# Home API Routes
+
+# Customer Home APIs
+@api_router.get("/partners/nearby")
+async def get_nearby_partners(lat: float, lng: float, radius_km: Optional[float] = 5.0):
+    """Get nearby partners for customer map view"""
+    # Mock data - in production, this would query a geospatial database
+    mock_partners = [
+        {
+            "id": "partner_1",
+            "lat": lat + 0.01,
+            "lng": lng + 0.01,
+            "rating": 4.8,
+            "badges": ["Verified", "Pro"]
+        },
+        {
+            "id": "partner_2", 
+            "lat": lat - 0.015,
+            "lng": lng + 0.008,
+            "rating": 4.6,
+            "badges": ["Verified"]
+        },
+        {
+            "id": "partner_3",
+            "lat": lat + 0.008,
+            "lng": lng - 0.012,
+            "rating": 4.9,
+            "badges": ["Verified", "Pro", "Eco"]
+        },
+        {
+            "id": "partner_4",
+            "lat": lat - 0.005,
+            "lng": lng - 0.007,
+            "rating": 4.7,
+            "badges": ["Verified"]
+        }
+    ]
+    
+    return {"partners": mock_partners}
+
+@api_router.get("/pricing/surge")
+async def get_surge_status(lat: float, lng: float):
+    """Get surge pricing status for customer location"""
+    # Mock surge logic - in production, this would check real demand/supply
+    import random
+    
+    # 30% chance of surge pricing for demo
+    surge_active = random.random() < 0.3
+    multiplier = round(random.uniform(1.2, 2.5), 1) if surge_active else 1.0
+    
+    return {
+        "active": surge_active,
+        "multiplier": multiplier
+    }
+
+# Partner Home APIs  
+@api_router.get("/partner/home")
+async def get_partner_dashboard(current_user: User = Depends(get_current_user)):
+    """Get partner dashboard data"""
+    if current_user.role != UserRole.PARTNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Partner access required"
+        )
+    
+    # Mock job queue data
+    mock_queue = []
+    if current_user.partner_status == PartnerStatus.VERIFIED:
+        mock_queue = [
+            {
+                "jobId": "job_001",
+                "service": "House Cleaning",
+                "eta": 15
+            },
+            {
+                "jobId": "job_002", 
+                "service": "Lawn Care",
+                "eta": 30
+            }
+        ]
+    
+    return {
+        "status": "offline",  # Default to offline
+        "verification": current_user.partner_status or "pending",
+        "queue": mock_queue
+    }
+
+@api_router.post("/partner/availability")
+async def set_partner_availability(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle partner online/offline status"""
+    if current_user.role != UserRole.PARTNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Partner access required"
+        )
+    
+    if current_user.partner_status == PartnerStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Verification required"
+        )
+    
+    new_status = request.get("status", "offline")
+    if new_status not in ["online", "offline"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Status must be 'online' or 'offline'"
+        )
+    
+    # In production, this would update the partner's availability in the database
+    # For now, just return success
+    return {"ok": True}
+
+# Owner Home APIs
+@api_router.get("/owner/tiles")
+async def get_owner_tiles(current_user: User = Depends(get_current_user)):
+    """Get owner dashboard tiles data"""
+    if current_user.role != UserRole.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner access required"
+        )
+    
+    # Mock tiles data - in production, these would be real metrics
+    import random
+    
+    return {
+        "activeJobs": random.randint(15, 45),
+        "partnersOnline": random.randint(8, 25),
+        "supportOpen": random.randint(2, 12),
+        "gmvToday": random.randint(1500, 8500)
+    }
+
 @api_router.post("/auth/login")
 async def login(user_data: UserLogin):
     # Validate identifier format
