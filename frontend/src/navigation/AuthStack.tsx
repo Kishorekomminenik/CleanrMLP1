@@ -50,15 +50,20 @@ export default function AuthStack() {
   });
   const [mfaCode, setMfaCode] = useState('');
 
-  const handleLogin = async (data: LoginForm) => {
+  const handleLogin = async () => {
+    if (!loginData.email || !loginData.password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await login(data.email, data.password);
+      const result = await login(loginData.email, loginData.password);
       if (result.success) {
         if (result.mfa_required) {
           setMfaStep({
             required: true,
-            email: data.email,
+            email: loginData.email,
             devCode: result.dev_mfa_code,
           });
           Alert.alert(
@@ -76,15 +81,20 @@ export default function AuthStack() {
     }
   };
 
-  const handleRegister = async (data: RegisterForm) => {
-    if (data.password !== data.confirmPassword) {
+  const handleRegister = async () => {
+    if (!registerData.email || !registerData.password || !registerData.confirmPassword) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    if (registerData.password !== registerData.confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await register(data.email, data.password, data.role);
+      const result = await register(registerData.email, registerData.password, registerData.role);
       if (!result.success) {
         Alert.alert('Registration Failed', result.error);
       }
@@ -95,10 +105,15 @@ export default function AuthStack() {
     }
   };
 
-  const handleMFA = async (data: MFAForm) => {
+  const handleMFA = async () => {
+    if (!mfaCode) {
+      Alert.alert('Error', 'Please enter the MFA code');
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await verifyMFA(mfaStep.email, data.code);
+      const result = await verifyMFA(mfaStep.email, mfaCode);
       if (!result.success) {
         Alert.alert('MFA Failed', result.error);
       }
