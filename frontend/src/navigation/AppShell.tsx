@@ -418,9 +418,9 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabOwnerHome' }}
             />
             <Tab.Screen  
-              name="Reports"
-              component={OwnerReportsScreen}
-              options={{ tabBarTestID: 'tabOwnerReports' }}
+              name="Bookings"
+              component={OwnerBookingsScreen}
+              options={{ tabBarTestID: 'tabOwnerBookings' }}
             />
             <Tab.Screen
               name="Analytics"
