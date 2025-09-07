@@ -1765,6 +1765,616 @@ def test_dispatch_role_access_control(results, customer_token, partner_token, ow
     else:
         results.add_result("Dispatch Role Access (Partner->Customer Cancel)", False, f"Partner cancel access not properly restricted. Status: {response.status_code if response else 'No response'}")
 
+# ===== JOB TRACKING & LIFECYCLE API TESTS =====
+
+def test_get_job_details(results, token, booking_id):
+    """Test getting job details and current status"""
+    response = make_request("GET", f"/jobs/{booking_id}", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            required_fields = ["bookingId", "status", "serviceType", "address", "partner", "etaMinutes", "routePolyline", "requiredPhotos"]
+            if all(field in resp_data for field in required_fields):
+                address = resp_data["address"]
+                partner = resp_data["partner"]
+                required_photos = resp_data["requiredPhotos"]
+                
+                # Validate nested structures
+                if (all(field in address for field in ["line1", "lat", "lng"]) and
+                    all(field in partner for field in ["id", "name", "rating"]) and
+                    all(field in required_photos for field in ["before", "after"])):
+                    
+                    results.add_result("Get Job Details", True, f"Job details retrieved: {booking_id}, status: {resp_data['status']}")
+                    return resp_data
+                else:
+                    results.add_result("Get Job Details", False, f"Invalid nested structure in job details: {resp_data}")
+            else:
+                results.add_result("Get Job Details", False, f"Missing required fields in job details: {resp_data}")
+        except Exception as e:
+            results.add_result("Get Job Details", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Get Job Details", False, f"Get job details failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_partner_location_updates(results, partner_token, booking_id):
+    """Test partner location updates for real-time tracking"""
+    location_data = {
+        "lat": 37.7749,
+        "lng": -122.4194,
+        "heading": 45.0,
+        "speed": 25.5
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/location", location_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "status" in resp_data:
+                results.add_result("Partner Location Updates", True, f"Location updated for job: {booking_id}")
+                return True
+            else:
+                results.add_result("Partner Location Updates", False, f"Invalid location update response: {resp_data}")
+        except Exception as e:
+            results.add_result("Partner Location Updates", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Partner Location Updates", False, f"Location update failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_partner_arrival(results, partner_token, booking_id):
+    """Test marking partner as arrived at job location"""
+    arrival_data = {
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/arrived", arrival_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and resp_data.get("status") == "arrived":
+                results.add_result("Partner Arrival", True, f"Partner marked as arrived for job: {booking_id}")
+                return True
+            else:
+                results.add_result("Partner Arrival", False, f"Invalid arrival response: {resp_data}")
+        except Exception as e:
+            results.add_result("Partner Arrival", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Partner Arrival", False, f"Partner arrival failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_start_verification(results, partner_token, booking_id):
+    """Test starting partner verification (face/biometric)"""
+    verification_data = {
+        "method": "face"
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/verify/start", verification_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "sessionId" in resp_data and "expiresAt" in resp_data:
+                session_id = resp_data["sessionId"]
+                expires_at = resp_data["expiresAt"]
+                
+                if session_id.startswith("vs_") and expires_at:
+                    results.add_result("Start Verification", True, f"Verification session started: {session_id}")
+                    return session_id
+                else:
+                    results.add_result("Start Verification", False, f"Invalid verification session data: {resp_data}")
+            else:
+                results.add_result("Start Verification", False, f"Missing required fields in verification response: {resp_data}")
+        except Exception as e:
+            results.add_result("Start Verification", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Start Verification", False, f"Start verification failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_complete_verification(results, partner_token, booking_id):
+    """Test completing partner verification"""
+    # First start a verification session
+    session_id = test_start_verification(results, partner_token, booking_id)
+    
+    if not session_id:
+        results.add_result("Complete Verification", False, "Could not start verification session")
+        return False
+    
+    verification_data = {
+        "sessionId": session_id,
+        "result": "success",
+        "evidenceId": f"evidence_{uuid.uuid4().hex[:12]}"
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/verify/complete", verification_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "verified" in resp_data:
+                verified = resp_data["verified"]
+                results.add_result("Complete Verification", True, f"Verification completed: verified={verified}")
+                return verified
+            else:
+                results.add_result("Complete Verification", False, f"Missing verified field in response: {resp_data}")
+        except Exception as e:
+            results.add_result("Complete Verification", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Complete Verification", False, f"Complete verification failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_presigned_url_generation(results, token):
+    """Test generating presigned URLs for photo uploads"""
+    presign_data = {
+        "contentType": "image/jpeg"
+    }
+    
+    response = make_request("POST", "/media/presign", presign_data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "uploadUrl" in resp_data and "fileId" in resp_data:
+                upload_url = resp_data["uploadUrl"]
+                file_id = resp_data["fileId"]
+                
+                if upload_url.startswith("https://") and file_id.startswith("img_"):
+                    results.add_result("Presigned URL Generation", True, f"Presigned URL generated: {file_id}")
+                    return file_id
+                else:
+                    results.add_result("Presigned URL Generation", False, f"Invalid presigned URL data: {resp_data}")
+            else:
+                results.add_result("Presigned URL Generation", False, f"Missing required fields in presign response: {resp_data}")
+        except Exception as e:
+            results.add_result("Presigned URL Generation", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Presigned URL Generation", False, f"Presigned URL generation failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_add_job_photos(results, partner_token, booking_id):
+    """Test adding before/after photos to job"""
+    # Generate mock file IDs
+    file_ids = [f"img_{uuid.uuid4().hex[:12]}", f"img_{uuid.uuid4().hex[:12]}"]
+    
+    # Test adding before photos
+    before_photos_data = {
+        "type": "before",
+        "fileIds": file_ids
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/photos", before_photos_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "counts" in resp_data:
+                counts = resp_data["counts"]
+                if "before" in counts:
+                    results.add_result("Add Job Photos (Before)", True, f"Before photos added: {counts['before']} photos")
+                    
+                    # Test adding after photos
+                    after_photos_data = {
+                        "type": "after",
+                        "fileIds": file_ids
+                    }
+                    
+                    response2 = make_request("POST", f"/jobs/{booking_id}/photos", after_photos_data, auth_token=partner_token)
+                    
+                    if response2 and response2.status_code == 200:
+                        try:
+                            resp_data2 = response2.json()
+                            if resp_data2.get("ok") is True and "counts" in resp_data2:
+                                counts2 = resp_data2["counts"]
+                                if "after" in counts2:
+                                    results.add_result("Add Job Photos (After)", True, f"After photos added: {counts2['after']} photos")
+                                    return True
+                        except Exception as e:
+                            results.add_result("Add Job Photos (After)", False, f"JSON parsing error: {e}")
+                    else:
+                        results.add_result("Add Job Photos (After)", False, f"Add after photos failed. Status: {response2.status_code if response2 else 'No response'}")
+                else:
+                    results.add_result("Add Job Photos (Before)", False, f"Before count not in response: {resp_data}")
+            else:
+                results.add_result("Add Job Photos (Before)", False, f"Invalid add photos response: {resp_data}")
+        except Exception as e:
+            results.add_result("Add Job Photos (Before)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Add Job Photos (Before)", False, f"Add before photos failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_start_job(results, partner_token, booking_id):
+    """Test starting job after verification and photos"""
+    start_data = {
+        "verified": True
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/start", start_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "status" in resp_data:
+                status = resp_data["status"]
+                results.add_result("Start Job", True, f"Job started: {booking_id}, status: {status}")
+                return True
+            else:
+                results.add_result("Start Job", False, f"Invalid start job response: {resp_data}")
+        except Exception as e:
+            results.add_result("Start Job", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Start Job", False, f"Start job failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_pause_resume_job(results, partner_token, booking_id):
+    """Test pausing and resuming job"""
+    # Test pause
+    pause_data = {
+        "reason": "Equipment issue"
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/pause", pause_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and resp_data.get("status") == "paused":
+                results.add_result("Pause Job", True, f"Job paused: {booking_id}")
+                
+                # Test resume
+                response2 = make_request("POST", f"/jobs/{booking_id}/resume", auth_token=partner_token)
+                
+                if response2 and response2.status_code == 200:
+                    try:
+                        resp_data2 = response2.json()
+                        if resp_data2.get("ok") is True and resp_data2.get("status") == "in_progress":
+                            results.add_result("Resume Job", True, f"Job resumed: {booking_id}")
+                            return True
+                        else:
+                            results.add_result("Resume Job", False, f"Invalid resume response: {resp_data2}")
+                    except Exception as e:
+                        results.add_result("Resume Job", False, f"JSON parsing error: {e}")
+                else:
+                    results.add_result("Resume Job", False, f"Resume job failed. Status: {response2.status_code if response2 else 'No response'}")
+            else:
+                results.add_result("Pause Job", False, f"Invalid pause response: {resp_data}")
+        except Exception as e:
+            results.add_result("Pause Job", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Pause Job", False, f"Pause job failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_complete_job(results, partner_token, booking_id):
+    """Test completing job (partner side)"""
+    complete_data = {
+        "notes": "Job completed successfully. All areas cleaned as requested."
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/complete", complete_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "status" in resp_data:
+                status = resp_data["status"]
+                results.add_result("Complete Job", True, f"Job completed: {booking_id}, status: {status}")
+                return True
+            else:
+                results.add_result("Complete Job", False, f"Invalid complete job response: {resp_data}")
+        except Exception as e:
+            results.add_result("Complete Job", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Complete Job", False, f"Complete job failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_customer_approve_completion(results, customer_token, booking_id):
+    """Test customer approving job completion"""
+    response = make_request("POST", f"/jobs/{booking_id}/approve", auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "status" in resp_data:
+                status = resp_data["status"]
+                results.add_result("Customer Approve Completion", True, f"Job approved: {booking_id}, status: {status}")
+                return True
+            else:
+                results.add_result("Customer Approve Completion", False, f"Invalid approve response: {resp_data}")
+        except Exception as e:
+            results.add_result("Customer Approve Completion", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Customer Approve Completion", False, f"Approve completion failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_customer_raise_issue(results, customer_token, booking_id):
+    """Test customer raising issue with completion"""
+    issue_data = {
+        "reason": "Some areas were not cleaned properly",
+        "photoIds": [f"img_{uuid.uuid4().hex[:12]}", f"img_{uuid.uuid4().hex[:12]}"]
+    }
+    
+    response = make_request("POST", f"/jobs/{booking_id}/issue", issue_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True and "ticketId" in resp_data:
+                ticket_id = resp_data["ticketId"]
+                results.add_result("Customer Raise Issue", True, f"Issue raised: {booking_id}, ticket: {ticket_id}")
+                return ticket_id
+            else:
+                results.add_result("Customer Raise Issue", False, f"Invalid raise issue response: {resp_data}")
+        except Exception as e:
+            results.add_result("Customer Raise Issue", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Customer Raise Issue", False, f"Raise issue failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_chat_messaging(results, customer_token, partner_token, booking_id):
+    """Test chat messaging between customer and partner"""
+    # Test sending message as customer
+    message_data = {
+        "text": "Hi, I have a question about the cleaning"
+    }
+    
+    response = make_request("POST", f"/comm/chat/{booking_id}", message_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Send Chat Message (Customer)", True, f"Customer message sent for job: {booking_id}")
+                
+                # Test getting chat messages
+                response2 = make_request("GET", f"/comm/chat/{booking_id}", auth_token=customer_token)
+                
+                if response2 and response2.status_code == 200:
+                    try:
+                        resp_data2 = response2.json()
+                        if "messages" in resp_data2 and isinstance(resp_data2["messages"], list):
+                            messages = resp_data2["messages"]
+                            results.add_result("Get Chat Messages", True, f"Retrieved {len(messages)} chat messages")
+                            
+                            # Test sending message as partner
+                            partner_message_data = {
+                                "text": "Hello! I'll be happy to help with your question."
+                            }
+                            
+                            response3 = make_request("POST", f"/comm/chat/{booking_id}", partner_message_data, auth_token=partner_token)
+                            
+                            if response3 and response3.status_code == 200:
+                                try:
+                                    resp_data3 = response3.json()
+                                    if resp_data3.get("ok") is True:
+                                        results.add_result("Send Chat Message (Partner)", True, f"Partner message sent for job: {booking_id}")
+                                        return True
+                                except Exception as e:
+                                    results.add_result("Send Chat Message (Partner)", False, f"JSON parsing error: {e}")
+                            else:
+                                results.add_result("Send Chat Message (Partner)", False, f"Partner message failed. Status: {response3.status_code if response3 else 'No response'}")
+                        else:
+                            results.add_result("Get Chat Messages", False, f"Invalid messages response: {resp_data2}")
+                    except Exception as e:
+                        results.add_result("Get Chat Messages", False, f"JSON parsing error: {e}")
+                else:
+                    results.add_result("Get Chat Messages", False, f"Get messages failed. Status: {response2.status_code if response2 else 'No response'}")
+            else:
+                results.add_result("Send Chat Message (Customer)", False, f"Invalid send message response: {resp_data}")
+        except Exception as e:
+            results.add_result("Send Chat Message (Customer)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Send Chat Message (Customer)", False, f"Send customer message failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_masked_call_initiation(results, customer_token, booking_id):
+    """Test initiating masked call"""
+    call_data = {
+        "bookingId": booking_id,
+        "to": "partner"
+    }
+    
+    response = make_request("POST", "/comm/call", call_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "callId" in resp_data and "proxyNumber" in resp_data:
+                call_id = resp_data["callId"]
+                proxy_number = resp_data["proxyNumber"]
+                results.add_result("Masked Call Initiation", True, f"Masked call initiated: {call_id}, proxy: {proxy_number}")
+                return call_id
+            else:
+                results.add_result("Masked Call Initiation", False, f"Missing required fields in call response: {resp_data}")
+        except Exception as e:
+            results.add_result("Masked Call Initiation", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Masked Call Initiation", False, f"Masked call initiation failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_payment_capture_start(results, partner_token, booking_id):
+    """Test capturing payment at job start"""
+    capture_data = {
+        "paymentIntentId": f"pi_{uuid.uuid4().hex[:12]}",
+        "amount": 89.50
+    }
+    
+    response = make_request("POST", "/billing/capture/start", capture_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Payment Capture Start", True, f"Payment captured at start for job: {booking_id}")
+                return True
+            else:
+                results.add_result("Payment Capture Start", False, f"Invalid capture response: {resp_data}")
+        except Exception as e:
+            results.add_result("Payment Capture Start", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Payment Capture Start", False, f"Payment capture start failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_payment_capture_finish(results, partner_token, booking_id):
+    """Test capturing payment at job completion"""
+    capture_data = {
+        "paymentIntentId": f"pi_{uuid.uuid4().hex[:12]}",
+        "amount": 96.89
+    }
+    
+    response = make_request("POST", "/billing/capture/finish", capture_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Payment Capture Finish", True, f"Payment captured at finish for job: {booking_id}")
+                return True
+            else:
+                results.add_result("Payment Capture Finish", False, f"Invalid capture response: {resp_data}")
+        except Exception as e:
+            results.add_result("Payment Capture Finish", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Payment Capture Finish", False, f"Payment capture finish failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_sos_emergency_support(results, customer_token, booking_id):
+    """Test SOS emergency support"""
+    sos_data = {
+        "bookingId": booking_id,
+        "lat": 37.7749,
+        "lng": -122.4194,
+        "role": "customer"
+    }
+    
+    response = make_request("POST", "/support/sos", sos_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("SOS Emergency Support", True, f"SOS alert sent for job: {booking_id}")
+                return True
+            else:
+                results.add_result("SOS Emergency Support", False, f"Invalid SOS response: {resp_data}")
+        except Exception as e:
+            results.add_result("SOS Emergency Support", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("SOS Emergency Support", False, f"SOS emergency support failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_job_endpoints_require_auth(results):
+    """Test that job endpoints require authentication"""
+    endpoints_to_test = [
+        ("GET", "/jobs/bk_test123"),
+        ("POST", "/jobs/bk_test123/location", {"lat": 37.7749, "lng": -122.4194, "heading": 0, "speed": 0}),
+        ("POST", "/jobs/bk_test123/arrived", {"timestamp": datetime.now().isoformat()}),
+        ("POST", "/jobs/bk_test123/verify/start", {"method": "face"}),
+        ("POST", "/jobs/bk_test123/verify/complete", {"sessionId": "vs_test", "result": "success", "evidenceId": "ev_test"}),
+        ("POST", "/media/presign", {"contentType": "image/jpeg"}),
+        ("POST", "/jobs/bk_test123/photos", {"type": "before", "fileIds": ["img_test"]}),
+        ("POST", "/jobs/bk_test123/start", {"verified": True}),
+        ("POST", "/jobs/bk_test123/pause", {"reason": "test"}),
+        ("POST", "/jobs/bk_test123/resume"),
+        ("POST", "/jobs/bk_test123/complete", {"notes": "test"}),
+        ("POST", "/jobs/bk_test123/approve"),
+        ("POST", "/jobs/bk_test123/issue", {"reason": "test", "photoIds": []}),
+        ("GET", "/comm/chat/bk_test123"),
+        ("POST", "/comm/chat/bk_test123", {"text": "test"}),
+        ("POST", "/comm/call", {"bookingId": "bk_test123", "to": "partner"}),
+        ("POST", "/billing/capture/start", {"paymentIntentId": "pi_test", "amount": 100}),
+        ("POST", "/billing/capture/finish", {"paymentIntentId": "pi_test", "amount": 100}),
+        ("POST", "/support/sos", {"bookingId": "bk_test123", "lat": 37.7749, "lng": -122.4194, "role": "customer"})
+    ]
+    
+    auth_required_count = 0
+    
+    for method, endpoint, *data in endpoints_to_test:
+        request_data = data[0] if data else None
+        response = make_request(method, endpoint, request_data)
+        
+        if response and response.status_code in [401, 403]:
+            auth_required_count += 1
+        else:
+            results.add_result(f"Job Auth Required ({method} {endpoint})", False, f"Auth not enforced. Status: {response.status_code if response else 'No response'}")
+            return
+    
+    results.add_result("Job Endpoints Auth Required", True, f"All {auth_required_count} job endpoints properly require authentication")
+
+def test_job_role_access_control(results, customer_token, partner_token, owner_token, booking_id):
+    """Test role-based access control for job endpoints"""
+    
+    # Test customer trying to access partner-only endpoints
+    partner_endpoints = [
+        ("POST", f"/jobs/{booking_id}/location", {"lat": 37.7749, "lng": -122.4194, "heading": 0, "speed": 0}),
+        ("POST", f"/jobs/{booking_id}/arrived", {"timestamp": datetime.now().isoformat()}),
+        ("POST", f"/jobs/{booking_id}/verify/start", {"method": "face"}),
+        ("POST", f"/jobs/{booking_id}/start", {"verified": True}),
+        ("POST", f"/jobs/{booking_id}/pause", {"reason": "test"}),
+        ("POST", f"/jobs/{booking_id}/complete", {"notes": "test"})
+    ]
+    
+    partner_access_denied = 0
+    for method, endpoint, data in partner_endpoints:
+        response = make_request(method, endpoint, data, auth_token=customer_token)
+        if response and response.status_code == 403:
+            partner_access_denied += 1
+    
+    if partner_access_denied == len(partner_endpoints):
+        results.add_result("Job Role Access (Customer->Partner)", True, f"Customer properly denied access to {partner_access_denied} partner endpoints")
+    else:
+        results.add_result("Job Role Access (Customer->Partner)", False, f"Customer access control failed. Only {partner_access_denied}/{len(partner_endpoints)} endpoints denied")
+    
+    # Test partner trying to access customer-only endpoints
+    customer_endpoints = [
+        ("POST", f"/jobs/{booking_id}/approve", {}),
+        ("POST", f"/jobs/{booking_id}/issue", {"reason": "test", "photoIds": []})
+    ]
+    
+    customer_access_denied = 0
+    for method, endpoint, data in customer_endpoints:
+        response = make_request(method, endpoint, data, auth_token=partner_token)
+        if response and response.status_code == 403:
+            customer_access_denied += 1
+    
+    if customer_access_denied == len(customer_endpoints):
+        results.add_result("Job Role Access (Partner->Customer)", True, f"Partner properly denied access to {customer_access_denied} customer endpoints")
+    else:
+        results.add_result("Job Role Access (Partner->Customer)", False, f"Partner access control failed. Only {customer_access_denied}/{len(customer_endpoints)} endpoints denied")
+
 def main():
     """Run all SHINE Auth v3.0 tests"""
     print("🚀 Starting SHINE Auth v3.0 Backend Comprehensive Tests")
