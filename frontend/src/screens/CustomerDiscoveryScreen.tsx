@@ -1208,18 +1208,18 @@ const styles = StyleSheet.create({
   },
   disclaimerContainer: {
     backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 12,
     marginHorizontal: 16,
     marginBottom: 16,
-    padding: 12,
-    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#F59E0B',
   },
   disclaimerText: {
+    fontSize: 12,
     color: '#92400E',
-    fontSize: 14,
-    fontFamily: 'Inter',
     textAlign: 'center',
+    fontFamily: 'Inter',
   },
 });
 
