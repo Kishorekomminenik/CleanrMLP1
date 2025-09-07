@@ -521,9 +521,17 @@
                 return;
             }
             
-            if (type === 'signup' && password.length < 8) {
-                showResult('error', '❌ Password must be at least 8 characters');
-                return;
+            if (type === 'signup') {
+                if (password.length < 8) {
+                    showResult('error', '❌ Password must be at least 8 characters');
+                    return;
+                }
+                
+                const tosAccepted = document.getElementById('accept-tos').checked;
+                if (!tosAccepted) {
+                    showResult('error', '❌ Please accept the Terms of Service');
+                    return;
+                }
             }
             
             // Update button state
