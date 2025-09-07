@@ -104,6 +104,21 @@
 
 ## user_problem_statement: Build SHINE app - role-based mobile application with JWT authentication, role-specific navigation, and advanced features
 ## backend:
+  - task: "Enhanced SHINE Auth v3.0 System"
+    implemented: true
+    working: false
+    file: "server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented enhanced SHINE Auth v3.0 with comprehensive signup validation, enhanced login with email/username identifiers, password reset flow, MFA for owners, and all validation rules."
+        - working: false
+          agent: "testing"
+          comment: "CRITICAL BACKEND ISSUES FOUND - Enhanced signup validation working correctly (password, username, phone, ToS validation all functional). Username login working. JWT validation working. However, CRITICAL ISSUES: 1) Email login failing with 401 for valid credentials, 2) Database constraint error with username_lower index causing 500 errors when username is null, 3) Owner signup failing due to database constraint. These are blocking issues that prevent full v3.0 functionality."
+
   - task: "JWT Authentication System"
     implemented: true
     working: true
@@ -118,6 +133,9 @@
         - working: true
           agent: "testing"
           comment: "COMPREHENSIVE TESTING COMPLETED - All authentication endpoints working perfectly. Tested: Customer/Partner/Owner registration, login flows, MFA for owners, role switching, JWT validation, password hashing, error handling. 12/12 tests passed (100% success rate). All endpoints return proper HTTP status codes and handle edge cases correctly."
+        - working: true
+          agent: "testing"
+          comment: "JWT token generation and validation confirmed working in v3.0 testing. Valid tokens properly authenticated, invalid tokens properly rejected with 401."
 
   - task: "User Management API"
     implemented: true
@@ -174,13 +192,14 @@
 ## metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 0
+  test_sequence: 1
   run_ui: false
 
 ## test_plan:
   current_focus:
-    - "Role-Based Navigation Shell"
-  stuck_tasks: []
+    - "Enhanced SHINE Auth v3.0 System"
+  stuck_tasks:
+    - "Enhanced SHINE Auth v3.0 System"
   test_all: false
   test_priority: "high_first"
 
@@ -189,3 +208,5 @@
       message: "Phase 1 & 2 complete - Auth system and navigation shell implemented. Ready for backend testing to verify API endpoints and authentication flow."
     - agent: "testing"
       message: "BACKEND AUTHENTICATION TESTING COMPLETED SUCCESSFULLY - All authentication endpoints are working perfectly. Comprehensive testing performed on JWT auth system and user management API. 12/12 tests passed with 100% success rate. All endpoints handle authentication, authorization, role management, MFA, and error cases correctly. Backend is production-ready. Ready for frontend testing if needed."
+    - agent: "testing"
+      message: "SHINE AUTH v3.0 COMPREHENSIVE TESTING COMPLETED - Found critical backend issues that need immediate attention. WORKING FEATURES: Enhanced signup validation (password/username/phone/ToS), username-based login, JWT validation, password validation. CRITICAL ISSUES: Email login failing, database constraint errors with username_lower index causing 500 errors, owner signup failing. These database constraint issues are blocking v3.0 functionality and need main agent to fix the MongoDB index configuration."
