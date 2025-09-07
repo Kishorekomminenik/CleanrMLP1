@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useAuth } from '../src/context/AuthContext';
+import { useAuth } from '../src/contexts/AuthContext';
 import CustomerAddressScreen from '../src/screens/CustomerAddressScreen';
 import PartnerServiceAreaScreen from '../src/screens/PartnerServiceAreaScreen';
 import OwnerZonesScreen from '../src/screens/OwnerZonesScreen';
