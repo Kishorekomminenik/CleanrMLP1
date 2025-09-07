@@ -386,7 +386,12 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabCustomerFavorites' }}
             />
             <Tab.Screen
-              name="Profile"
+              name="Support"
+              component={CustomerSupportScreen}
+              options={{ tabBarTestID: 'tabCustomerSupport' }}
+            />
+            <Tab.Screen
+              name="Profile"  
               component={CustomerProfileScreen}
               options={{ tabBarTestID: 'tabCustomerProfile' }}
             />
