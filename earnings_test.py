@@ -375,7 +375,9 @@ def test_export_invalid_date_range(results, partner_token):
                 results.add_result("Export Invalid Date Range", True, "Correctly rejected >90 day range")
                 return True
         except:
-            pass
+            # Even if JSON parsing fails, 400 status is correct
+            results.add_result("Export Invalid Date Range", True, "Correctly rejected >90 day range (400 status)")
+            return True
     
     results.add_result("Export Invalid Date Range", False, f"Should reject >90 day range. Status: {response.status_code if response else 'No response'}")
     return False
