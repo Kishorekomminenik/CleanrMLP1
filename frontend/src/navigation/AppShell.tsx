@@ -308,8 +308,11 @@ export default function AppShell() {
         case 'Home':
           iconName = focused ? 'bar-chart' : 'bar-chart-outline';
           break;
-        case 'Reports':
-          iconName = focused ? 'flag' : 'flag-outline';
+        case 'Discover':
+          iconName = focused ? 'search' : 'search-outline';
+          break;
+        case 'Bookings':
+          iconName = focused ? 'calendar' : 'calendar-outline';
           break;
         case 'Analytics':
           iconName = focused ? 'analytics' : 'analytics-outline';
