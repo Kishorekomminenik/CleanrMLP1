@@ -19,6 +19,171 @@ import re
 import hashlib
 import random
 
+# Initialize mock booking data for PAGE-11-BOOKINGS testing
+async def initialize_mock_bookings():
+    """Initialize mock booking data for testing purposes"""
+    
+    # Sample customer bookings for different users
+    mock_bookings = [
+        # Upcoming booking
+        {
+            "booking_id": "bk_upcoming_001",
+            "user_id": "user_001",
+            "partner_id": None,
+            "status": "scheduled",
+            "service": {
+                "type": "Deep Clean",
+                "dwellingType": "House",
+                "bedrooms": 3,
+                "bathrooms": 2,
+                "masters": 1,
+                "addons": ["inside_fridge", "inside_oven"]
+            },
+            "address": {
+                "line1": "123 Pine St",
+                "city": "Springfield",
+                "postalCode": "94105",
+                "lat": 37.7749,
+                "lng": -122.4194
+            },
+            "access": {},
+            "totals": {
+                "base": 120.0,
+                "rooms": 30.0,
+                "surge": True,
+                "surgeAmount": 30.0,
+                "tax": 0.0,
+                "promo": 0.0,
+                "credits": 0.0,
+                "total": 180.0
+            },
+            "payment": {},
+            "promo_code": None,
+            "credits_applied": False,
+            "created_at": datetime.utcnow() + timedelta(days=1),
+            "updated_at": datetime.utcnow()
+        },
+        # In-progress booking
+        {
+            "booking_id": "bk_inprogress_002",
+            "user_id": "user_001",
+            "partner_id": "partner_001",
+            "status": "in_progress",
+            "service": {
+                "type": "Bathroom Only",
+                "dwellingType": "Apartment",
+                "bedrooms": 2,
+                "bathrooms": 1,
+                "masters": 0,
+                "addons": []
+            },
+            "address": {
+                "line1": "456 Oak Ave",
+                "city": "Springfield",
+                "postalCode": "94107",
+                "lat": 37.7849,
+                "lng": -122.4094
+            },
+            "access": {},
+            "totals": {
+                "base": 80.0,
+                "rooms": 0.0,
+                "surge": False,
+                "tax": 0.0,
+                "promo": -10.0,
+                "credits": 0.0,
+                "total": 70.0
+            },
+            "payment": {},
+            "promo_code": "SHINE10",
+            "credits_applied": False,
+            "created_at": datetime.utcnow() - timedelta(hours=2),
+            "updated_at": datetime.utcnow()
+        },
+        # Completed booking
+        {
+            "booking_id": "bk_completed_003",
+            "user_id": "user_001",
+            "partner_id": "partner_001",
+            "status": "completed",
+            "service": {
+                "type": "Standard Clean",
+                "dwellingType": "House",
+                "bedrooms": 4,
+                "bathrooms": 3,
+                "masters": 1,
+                "addons": ["inside_windows"]
+            },
+            "address": {
+                "line1": "789 Elm St",
+                "city": "Springfield",
+                "postalCode": "94108",
+                "lat": 37.7949,
+                "lng": -122.3994
+            },
+            "access": {},
+            "totals": {
+                "base": 100.0,
+                "rooms": 40.0,
+                "surge": False,
+                "tax": 0.0,
+                "promo": 0.0,
+                "credits": -25.0,
+                "total": 115.0
+            },
+            "payment": {},
+            "promo_code": None,
+            "credits_applied": True,
+            "created_at": datetime.utcnow() - timedelta(days=7),
+            "updated_at": datetime.utcnow() - timedelta(days=6)
+        },
+        # Partner job for today
+        {
+            "booking_id": "bk_partner_today_004",
+            "user_id": "user_002",
+            "partner_id": "partner_001",
+            "status": "assigned",
+            "service": {
+                "type": "Move-out Clean",
+                "dwellingType": "Apartment",
+                "bedrooms": 1,
+                "bathrooms": 1,
+                "masters": 0,
+                "addons": ["inside_fridge", "inside_oven", "inside_cabinets"]
+            },
+            "address": {
+                "line1": "321 Market St",
+                "city": "Downtown",
+                "postalCode": "94102",
+                "lat": 37.7849,
+                "lng": -122.4194
+            },
+            "access": {},
+            "totals": {
+                "base": 150.0,
+                "rooms": 0.0,
+                "surge": False,
+                "tax": 0.0,
+                "promo": 0.0,
+                "credits": 0.0,
+                "total": 150.0
+            },
+            "payment": {},
+            "promo_code": None,
+            "credits_applied": False,
+            "created_at": datetime.utcnow() - timedelta(hours=1),
+            "updated_at": datetime.utcnow()
+        }
+    ]
+    
+    # Insert mock bookings if they don't exist
+    for booking in mock_bookings:
+        existing = await db.bookings.find_one({"booking_id": booking["booking_id"]})
+        if not existing:
+            await db.bookings.insert_one(booking)
+    
+    print("Mock booking data initialized")
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
