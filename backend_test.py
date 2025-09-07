@@ -1949,6 +1949,50 @@ def main():
         # Test role-based access control (use switched token for customer role tests)
         test_dispatch_role_access_control(results, customer_token, partner_token, owner_token)
     
+    print("\n📋 TESTING JOB TRACKING & LIFECYCLE API ENDPOINTS...")
+    
+    # Test job tracking endpoints with different user roles
+    if customer_token and partner_token and owner_token:
+        # Use a booking ID for job testing
+        test_booking_id = booking_id_now if booking_id_now else "bk_test_job_tracking"
+        
+        # Test job lifecycle endpoints
+        test_get_job_details(results, customer_token, test_booking_id)
+        test_partner_location_updates(results, partner_token, test_booking_id)
+        test_partner_arrival(results, partner_token, test_booking_id)
+        
+        # Test verification flow
+        test_start_verification(results, partner_token, test_booking_id)
+        test_complete_verification(results, partner_token, test_booking_id)
+        
+        # Test photo upload and management
+        test_presigned_url_generation(results, customer_token)
+        test_add_job_photos(results, partner_token, test_booking_id)
+        
+        # Test job state management
+        test_start_job(results, partner_token, test_booking_id)
+        test_pause_resume_job(results, partner_token, test_booking_id)
+        test_complete_job(results, partner_token, test_booking_id)
+        
+        # Test customer approval/issue flow
+        test_customer_approve_completion(results, customer_token, test_booking_id)
+        test_customer_raise_issue(results, customer_token, test_booking_id)
+        
+        # Test communication features
+        test_chat_messaging(results, customer_token, partner_token, test_booking_id)
+        test_masked_call_initiation(results, customer_token, test_booking_id)
+        
+        # Test payment capture
+        test_payment_capture_start(results, partner_token, test_booking_id)
+        test_payment_capture_finish(results, partner_token, test_booking_id)
+        
+        # Test SOS functionality
+        test_sos_emergency_support(results, customer_token, test_booking_id)
+        
+        # Test authentication and role requirements for job endpoints
+        test_job_endpoints_require_auth(results)
+        test_job_role_access_control(results, customer_token, partner_token, owner_token, test_booking_id)
+    
     # Print final results
     results.print_summary()
     
