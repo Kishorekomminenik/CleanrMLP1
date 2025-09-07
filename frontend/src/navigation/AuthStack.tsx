@@ -12,7 +12,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useController, useForm } from 'react-hook-form';
 import { useAuth } from '../contexts/AuthContext';
 
 interface LoginForm {
