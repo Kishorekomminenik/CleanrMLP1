@@ -112,6 +112,7 @@ export default function PartnerEarningsScreen() {
   const [seriesData, setSeriesData] = useState<EarningsSeriesPoint[]>([]);
   const [statements, setStatements] = useState<StatementItem[]>([]);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
+  const [payoutCalc, setPayoutCalc] = useState<PayoutCalculation | null>(null);
   const [bankStatus, setBankStatus] = useState<BankStatus | null>(null);
   const [taxContext, setTaxContext] = useState<TaxContext | null>(null);
   
