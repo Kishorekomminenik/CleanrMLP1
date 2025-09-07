@@ -42,10 +42,14 @@ class TestResults:
         print(f"\n{'='*80}")
         print(f"PAGE-10-SUPPORT: SUPPORT & DISPUTES SYSTEM TEST SUMMARY")
         print(f"{'='*80}")
-        print(f"Total Tests: {self.passed + self.failed}")
+        total_tests = self.passed + self.failed
+        print(f"Total Tests: {total_tests}")
         print(f"Passed: {self.passed}")
         print(f"Failed: {self.failed}")
-        print(f"Success Rate: {(self.passed/(self.passed + self.failed)*100):.1f}%")
+        if total_tests > 0:
+            print(f"Success Rate: {(self.passed/total_tests*100):.1f}%")
+        else:
+            print("Success Rate: 0.0%")
         
         if self.failed > 0:
             print(f"\n❌ FAILED TESTS:")
