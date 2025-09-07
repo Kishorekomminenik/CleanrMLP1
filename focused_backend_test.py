@@ -11,7 +11,7 @@ from datetime import datetime
 import uuid
 
 # Configuration
-BASE_URL = "https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com/api"
+BASE_URL = "https://shine-app-debug.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 class TestResults:

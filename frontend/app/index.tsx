@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 export default function TestApp() {
   const testBackendConnection = async () => {
     try {
-      const backendUrl = 'https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com';
+      const backendUrl = 'https://shine-app-debug.preview.emergentagent.com';
       console.log('Testing connection to:', backendUrl);
       
       const response = await fetch(`${backendUrl}/api/auth/me`);
@@ -22,7 +22,7 @@ export default function TestApp() {
 
   const testLogin = async () => {
     try {
-      const backendUrl = 'https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com';
+      const backendUrl = 'https://shine-app-debug.preview.emergentagent.com';
       console.log('Testing signup to:', backendUrl);
       
       const response = await fetch(`${backendUrl}/api/auth/signup`, {

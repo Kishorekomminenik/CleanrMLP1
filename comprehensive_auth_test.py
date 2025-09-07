@@ -9,7 +9,7 @@ import json
 import uuid
 from datetime import datetime
 
-BASE_URL = "https://page-metrics.preview.emergentagent.com/api"
+BASE_URL = "https://shine-app-debug.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 class TestResults:
