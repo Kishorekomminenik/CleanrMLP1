@@ -107,11 +107,19 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       
       const quoteRequest = {
         serviceType: checkoutData.service.type || 'Deep Clean',
-        dwellingType: checkoutData.service.dwellingType || 'House',
-        bedrooms: checkoutData.service.bedrooms || 3,
-        bathrooms: checkoutData.service.bathrooms || 2,
-        timing: { when: 'now' }, // For surge pricing
-        address: checkoutData.address
+        dwelling: {
+          type: checkoutData.service.dwellingType || 'House',
+          bedrooms: checkoutData.service.bedrooms || 3,
+          bathrooms: checkoutData.service.bathrooms || 2,
+          masters: checkoutData.service.masters || 1
+        },
+        addons: checkoutData.service.addons || [],
+        when: { type: 'now' }, // For surge pricing
+        address: {
+          lat: checkoutData.address?.lat || 37.78,
+          lng: checkoutData.address?.lng || -122.4,
+          zoneId: 'Z-URBAN'
+        }
       };
 
       let response;
