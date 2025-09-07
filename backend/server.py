@@ -4546,14 +4546,13 @@ async def search_partners(
             )
         
         if matches_search:
-            # Calculate price hint
-            min_price = min(service["price"] for service in partner_data["services"])
-            price_hint = f"From ${int(min_price)}"
+            # Get platform-calculated fromPrice
+            from_price = partner_data.get("fromPrice", 0.0)
             
             matching_partners.append({
                 "partner_data": partner_data,
                 "distance": distance,
-                "price_hint": price_hint,
+                "from_price": from_price,
                 "is_favorite": partner_id in user_favs
             })
     
