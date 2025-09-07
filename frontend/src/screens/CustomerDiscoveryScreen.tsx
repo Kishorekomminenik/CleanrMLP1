@@ -707,19 +707,14 @@ const CustomerDiscoveryScreen: React.FC = () => {
                   </Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
+                <Button
+                  variant="primary"
                   testID="discBookNowBtn"
-                  style={[
-                    styles.bookNowButton,
-                    selectedPartner.status !== 'verified' && styles.bookNowButtonDisabled
-                  ]}
                   onPress={() => handleBookNow(selectedPartner.partnerId)}
                   disabled={selectedPartner.status !== 'verified'}
                 >
-                  <Text style={styles.bookNowText}>
-                    {selectedPartner.status === 'verified' ? 'Book Now' : 'Not Available'}
-                  </Text>
-                </TouchableOpacity>
+                  {selectedPartner.status === 'verified' ? 'Book Now' : 'Not Available'}
+                </Button>
               </View>
             </ScrollView>
           </SafeAreaView>
