@@ -292,7 +292,7 @@ export default function AppShell() {
           <>
             <Tab.Screen
               name="Home"
-              component={PartnerHomeScreen}
+              component={PartnerHomeComponent}
               options={{ tabBarTestID: 'tabPartnerHome' }}
             />
             <Tab.Screen
