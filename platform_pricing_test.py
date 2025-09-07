@@ -422,11 +422,11 @@ def test_discovery_search_api(results):
         
         # Verify response structure
         has_items = "items" in data
-        has_pagination = "pagination" in data
+        has_next_page = "nextPage" in data
         
         results.add_result("Discovery Search - Response Structure", 
-                         has_items and has_pagination,
-                         f"Items count: {len(data.get('items', []))}")
+                         has_items and has_next_page,
+                         f"Items count: {len(data.get('items', []))}, Has nextPage: {has_next_page}")
         
         # Verify platform pricing in results
         items = data.get("items", [])
