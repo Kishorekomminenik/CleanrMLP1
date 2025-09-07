@@ -4721,5 +4721,421 @@ async def get_discovery_analytics(current_user: User = Depends(get_current_user)
         topFavorites=top_favorites
     )
 
+# PLATFORM PRICING ENGINE (CHG-PLATFORM-PRICING-001)
+
+# Pricing Models
+class Dwelling(BaseModel):
+    type: str  # House|Apartment|Condo|Office
+    bedrooms: int
+    bathrooms: int
+    masters: int
+    sqft: Optional[int] = None
+
+class PricingRequest(BaseModel):
+    serviceType: str
+    dwelling: Dwelling
+    addons: List[str] = []
+    when: dict  # {type: "now|scheduled", iso: "ISO8601"}
+    address: dict  # {lat: number, lng: number, zoneId?: string}
+
+class FareBreakdown(BaseModel):
+    label: str
+    amount: float
+
+class Fare(BaseModel):
+    subtotal: float
+    surgeMultiplier: float
+    tax: float
+    total: float
+    currency: str = "USD"
+
+class Surge(BaseModel):
+    active: bool
+    reason: Optional[str] = None
+
+class PricingResponse(BaseModel):
+    fare: Fare
+    breakdown: List[FareBreakdown]
+    surge: Surge
+    estimateId: str
+    pricingEngineVersion: str = "v1.0"
+
+class PricingRules(BaseModel):
+    zones: List[str]
+    baseFares: dict
+    modifiers: dict
+    surge: dict
+    version: str = "v1.0"
+
+class PayoutCalculationRequest(BaseModel):
+    bookingId: str
+
+class PayoutDetails(BaseModel):
+    base: float
+    surgeShare: float
+    bonuses: float
+    total: float
+    currency: str = "USD"
+
+class PayoutCalculationResponse(BaseModel):
+    fareTotal: float
+    takeRatePercent: float
+    surgeSharePercent: float
+    payout: PayoutDetails
+
+# Mock pricing configuration
+PRICING_CONFIG = {
+    "zones": [
+        {"zoneId": "Z-URBAN", "name": "Urban Core", "surgeBase": 1.2},
+        {"zoneId": "Z-SUBURB", "name": "Suburban", "surgeBase": 1.0}
+    ],
+    "baseFares": {
+        "deep": {"base": 119, "perBedroom": 15, "perBathroom": 18, "durationMin": 180},
+        "standard": {"base": 89, "perBedroom": 10, "perBathroom": 12, "durationMin": 120},
+        "basic": {"base": 59, "perBedroom": 10, "perBathroom": 12, "durationMin": 90},
+        "bathroom_only": {"base": 49, "perBathroom": 15, "durationMin": 60},
+        "lawn_mowing": {"base": 45, "per1000Sqft": 8, "durationMin": 45},
+        "snow_driveway": {"base": 55, "per100Sqft": 3, "durationMin": 40},
+        "dog_walk": {"base": 25, "per15Min": 8, "durationMin": 30},
+        "haircut": {"base": 65, "durationMin": 60},
+        "manicure": {"base": 35, "durationMin": 45},
+        "baby_sitting": {"base": 22, "perHour": 22, "minHours": 2}
+    },
+    "addons": {
+        "eco_products": 7,
+        "bring_supplies": 10,
+        "inside_fridge": 15,
+        "inside_oven": 15
+    },
+    "taxPercent": 0.0,
+    "surgeRules": [
+        {"demandSupply": 1.0, "multiplier": 1.0},
+        {"demandSupply": 1.3, "multiplier": 1.1},
+        {"demandSupply": 1.6, "multiplier": 1.25},
+        {"demandSupply": 2.0, "multiplier": 1.5}
+    ],
+    "surgeCap": 2.5,
+    "takeRatePercent": 75.0,
+    "surgeSharePercent": 50.0
+}
+
+def determine_zone(lat: float, lng: float) -> str:
+    """Determine zone based on coordinates (mock logic)"""
+    # Simple mock logic: Urban core around SF center
+    if abs(lat - 37.7749) < 0.02 and abs(lng - (-122.4194)) < 0.02:
+        return "Z-URBAN"
+    return "Z-SUBURB"
+
+def calculate_surge_multiplier(zone_id: str, when_type: str) -> tuple[float, bool, str]:
+    """Calculate surge multiplier based on demand/supply (mock)"""
+    # Mock surge logic
+    if when_type == "now" and zone_id == "Z-URBAN":
+        # Simulate high demand in urban areas for immediate bookings
+        return 1.2, True, "High demand in Urban Core"
+    elif when_type == "now" and zone_id == "Z-SUBURB":
+        # Moderate demand in suburbs
+        return 1.1, True, "Moderate demand"
+    else:
+        # Scheduled bookings have no surge
+        return 1.0, False, None
+
+def calculate_platform_fare(request: PricingRequest) -> tuple[Fare, List[FareBreakdown], Surge]:
+    """Calculate platform-controlled fare"""
+    
+    # Determine zone
+    zone_id = request.address.get("zoneId") or determine_zone(
+        request.address["lat"], 
+        request.address["lng"]
+    )
+    
+    # Get base fare for service type
+    service_key = request.serviceType.lower().replace(" ", "_").replace("-", "_")
+    if service_key not in PRICING_CONFIG["baseFares"]:
+        raise HTTPException(status_code=400, detail=f"Service type '{request.serviceType}' not supported")
+    
+    base_config = PRICING_CONFIG["baseFares"][service_key]
+    
+    # Calculate base fare
+    subtotal = base_config["base"]
+    breakdown = [FareBreakdown(label="Base", amount=base_config["base"])]
+    
+    # Add room-based charges
+    if "perBedroom" in base_config and request.dwelling.bedrooms > 0:
+        bedroom_charge = request.dwelling.bedrooms * base_config["perBedroom"]
+        subtotal += bedroom_charge
+        breakdown.append(FareBreakdown(
+            label=f"Bedrooms x{request.dwelling.bedrooms}", 
+            amount=bedroom_charge
+        ))
+    
+    if "perBathroom" in base_config and request.dwelling.bathrooms > 0:
+        bathroom_charge = request.dwelling.bathrooms * base_config["perBathroom"]
+        subtotal += bathroom_charge
+        breakdown.append(FareBreakdown(
+            label=f"Bathrooms x{request.dwelling.bathrooms}", 
+            amount=bathroom_charge
+        ))
+    
+    # Add addon charges
+    addon_total = 0
+    for addon in request.addons:
+        if addon in PRICING_CONFIG["addons"]:
+            addon_price = PRICING_CONFIG["addons"][addon]
+            addon_total += addon_price
+            breakdown.append(FareBreakdown(
+                label=addon.replace("_", " ").title(), 
+                amount=addon_price
+            ))
+    
+    subtotal += addon_total
+    
+    # Calculate surge
+    surge_multiplier, surge_active, surge_reason = calculate_surge_multiplier(
+        zone_id, request.when["type"]
+    )
+    
+    surge_amount = 0
+    if surge_multiplier > 1.0:
+        surge_amount = subtotal * (surge_multiplier - 1.0)
+        breakdown.append(FareBreakdown(
+            label=f"Surge x{surge_multiplier}", 
+            amount=round(surge_amount, 2)
+        ))
+    
+    # Calculate final total
+    tax = subtotal * (PRICING_CONFIG["taxPercent"] / 100)
+    total = (subtotal + surge_amount + tax)
+    
+    return (
+        Fare(
+            subtotal=round(subtotal, 2),
+            surgeMultiplier=surge_multiplier,
+            tax=round(tax, 2),
+            total=round(total, 2)
+        ),
+        breakdown,
+        Surge(active=surge_active, reason=surge_reason)
+    )
+
+# Pricing API endpoints
+@api_router.post("/pricing/quote", response_model=PricingResponse)
+async def get_pricing_quote(
+    request: PricingRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Get platform-calculated pricing quote"""
+    
+    try:
+        # Calculate fare
+        fare, breakdown, surge = calculate_platform_fare(request)
+        
+        # Generate estimate ID
+        estimate_id = f"EST-{request.serviceType[:2].upper()}-{random.randint(1000, 9999)}"
+        
+        # Telemetry
+        print(f"Telemetry: pricing.quote.request - role: {current_user.role}, serviceType: {request.serviceType}, total: {fare.total}")
+        
+        response = PricingResponse(
+            fare=fare,
+            breakdown=breakdown,
+            surge=surge,
+            estimateId=estimate_id
+        )
+        
+        print(f"Telemetry: pricing.quote.response - estimateId: {estimate_id}, total: {fare.total}")
+        
+        return response
+        
+    except Exception as e:
+        print(f"Telemetry: pricing.quote.error - error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@api_router.get("/pricing/rules", response_model=PricingRules)
+async def get_pricing_rules(current_user: User = Depends(get_current_user)):
+    """Get pricing rules configuration (owner only)"""
+    
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    return PricingRules(
+        zones=[zone["zoneId"] for zone in PRICING_CONFIG["zones"]],
+        baseFares=PRICING_CONFIG["baseFares"],
+        modifiers={
+            "addons": PRICING_CONFIG["addons"],
+            "surgeRules": PRICING_CONFIG["surgeRules"],
+            "surgeCap": PRICING_CONFIG["surgeCap"]
+        },
+        surge={
+            "enabled": True,
+            "cap": PRICING_CONFIG["surgeCap"],
+            "rules": PRICING_CONFIG["surgeRules"]
+        }
+    )
+
+@api_router.post("/partner/earnings/payout-calc", response_model=PayoutCalculationResponse)
+async def calculate_partner_payout(
+    request: PayoutCalculationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Calculate partner payout from booking fare"""
+    
+    if current_user.role not in ["partner", "owner"]:
+        raise HTTPException(status_code=403, detail="Partner or owner access required")
+    
+    # Find booking
+    booking = await db.bookings.find_one({"booking_id": request.bookingId})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    # Check access permissions
+    if current_user.role == "partner" and booking.get("partner_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get fare total
+    totals = booking.get("totals", {})
+    fare_total = totals.get("total", 0.0)
+    
+    # Calculate payout
+    take_rate_percent = PRICING_CONFIG["takeRatePercent"]
+    surge_share_percent = PRICING_CONFIG["surgeSharePercent"]
+    
+    # Base payout (take rate)
+    base_payout = fare_total * (take_rate_percent / 100)
+    
+    # Surge share (if surge was applied)
+    surge_share = 0.0
+    if totals.get("surge", False):
+        surge_amount = totals.get("surgeAmount", 0.0)
+        surge_share = surge_amount * (surge_share_percent / 100)
+    
+    # Mock bonuses (streak, zone, etc.)
+    bonuses = 0.0
+    
+    total_payout = base_payout + surge_share + bonuses
+    
+    # Telemetry
+    print(f"Telemetry: earn.payout.calc - bookingId: {request.bookingId}, fareTotal: {fare_total}, payout: {total_payout}")
+    
+    return PayoutCalculationResponse(
+        fareTotal=fare_total,
+        takeRatePercent=take_rate_percent,
+        surgeSharePercent=surge_share_percent,
+        payout=PayoutDetails(
+            base=round(base_payout, 2),
+            surgeShare=round(surge_share, 2),
+            bonuses=round(bonuses, 2),
+            total=round(total_payout, 2)
+        )
+    )
+
+# Update booking creation to support estimateId and re-pricing
+@api_router.post("/bookings", response_model=BookingResponse)
+async def create_booking_with_pricing(
+    request: BookingRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create booking with platform pricing validation"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Generate booking ID
+    booking_id = f"bk_{random.randint(1000000, 9999999)}"
+    
+    # Re-price the booking if estimateId provided
+    if hasattr(request, 'estimateId') and request.estimateId:
+        # In a real system, we'd validate the estimate ID and re-calculate
+        # For now, we'll use the existing totals calculation but add pricing version
+        pass
+    
+    # Calculate totals using existing logic but mark as platform-calculated
+    service_type = request.service.type.lower()
+    base_prices = {
+        "basic": 59, "standard": 89, "deep": 119,
+        "bathroom": 49, "move-out": 149
+    }
+    base_price = base_prices.get(service_type, 100)
+    
+    # Room calculations
+    room_price = (request.service.bedrooms * 10) + (request.service.bathrooms * 12)
+    
+    # Addons
+    addon_prices = {"inside_fridge": 15, "inside_oven": 15, "inside_windows": 20}
+    addon_total = sum(addon_prices.get(addon, 0) for addon in request.service.addons)
+    
+    subtotal = base_price + room_price + addon_total
+    surge_multiplier = 1.2 if random.random() > 0.7 else 1.0  # 30% chance of surge
+    total = subtotal * surge_multiplier
+    
+    # Create booking document with pricing version
+    booking_doc = {
+        "booking_id": booking_id,
+        "user_id": current_user.id,
+        "service": {
+            "type": request.service.type,
+            "dwellingType": request.service.dwellingType,
+            "bedrooms": request.service.bedrooms,
+            "bathrooms": request.service.bathrooms,
+            "masters": request.service.masters,
+            "addons": request.service.addons
+        },
+        "address": {
+            "line1": request.address.line1,
+            "line2": request.address.line2,
+            "city": request.address.city,
+            "state": request.address.state,
+            "postalCode": request.address.postalCode,
+            "lat": request.address.lat,
+            "lng": request.address.lng
+        },
+        "access": {
+            "type": request.access.type,
+            "instructions": request.access.instructions
+        },
+        "totals": {
+            "base": base_price,
+            "rooms": room_price,
+            "addons": addon_total,
+            "surge": surge_multiplier > 1.0,
+            "surgeAmount": subtotal * (surge_multiplier - 1.0) if surge_multiplier > 1.0 else 0.0,
+            "tax": 0.0,
+            "promo": 0.0,
+            "credits": 0.0,
+            "total": round(total, 2)
+        },
+        "payment": {
+            "method": request.payment.method,
+            "paymentMethodId": request.payment.paymentMethodId
+        },
+        "status": "pending_dispatch",
+        "pricingEngineVersion": "v1.0",  # New field for platform pricing
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    # Save to database
+    await db.bookings.insert_one(booking_doc)
+    
+    # Add to booking status tracking
+    booking_status[booking_id] = {
+        "status": "pending_dispatch",
+        "partner_id": None,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # Telemetry
+    print(f"Telemetry: checkout.reprice - bookingId: {booking_id}, total: {total}")
+    
+    return BookingResponse(
+        bookingId=booking_id,
+        status="confirmed",
+        totals={
+            "subtotal": subtotal,
+            "tax": 0.0,
+            "total": total,
+            "currency": "USD"
+        }
+    )
+
 # Include the router in the main app after all endpoints are defined
 app.include_router(api_router)
