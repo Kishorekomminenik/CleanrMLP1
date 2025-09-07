@@ -39,6 +39,7 @@ interface PartnerProfile {
   description: string;
   photos: string[];
   services: PartnerService[];
+  fareCards?: FareCard[];
   recentReviews: PartnerReview[];
   status: string;
 }
