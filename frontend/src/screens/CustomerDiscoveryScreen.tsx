@@ -417,6 +417,12 @@ const CustomerDiscoveryScreen: React.FC = () => {
             <Text style={styles.badgeText}>{badge}</Text>
           </View>
         ))}
+        {/* Surge Chip */}
+        {item.surge && (
+          <View testID="discSurgeChip" style={styles.surgeChip}>
+            <Text style={styles.surgeChipText}>Surge</Text>
+          </View>
+        )}
       </View>
 
       <Text style={styles.serviceTypes}>
