@@ -155,6 +155,21 @@
           agent: "testing"
           comment: "USER MANAGEMENT FULLY FUNCTIONAL - Verified user creation with proper role assignment, partner pending status, owner MFA enablement, role switching from partner to customer, JWT token generation and validation. Database operations working correctly with MongoDB indexes."
 
+  - task: "Address API Endpoints (PAGE-4-ADDRESS)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented address API endpoints: GET /api/addresses (list saved addresses), POST /api/addresses (save new address), GET /api/places/autocomplete (address autocomplete), POST /api/eta/preview (ETA calculation). All endpoints include proper authentication, validation, and duplicate handling."
+        - working: true
+          agent: "testing"
+          comment: "ADDRESS API ENDPOINTS FULLY FUNCTIONAL - Comprehensive testing completed on all new address endpoints. ✅ WORKING PERFECTLY: GET /api/addresses returns empty list initially and populated list after saving, POST /api/addresses saves valid addresses and properly rejects duplicates with 409 conflict, Authentication properly enforced (403 Forbidden without valid token), Duplicate address detection working correctly, GET /api/places/autocomplete returns mock candidates for queries ≥3 chars, POST /api/eta/preview calculates realistic ETAs for both 'now' and 'scheduled' timing options. All endpoints handle edge cases correctly and return proper HTTP status codes. Address functionality is production-ready."
+
 ## frontend:
   - task: "Authentication Context & Screens"
     implemented: true
