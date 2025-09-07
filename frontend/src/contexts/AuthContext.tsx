@@ -63,36 +63,51 @@ export default function AuthProvider({ children }: AuthProviderProps) {
       console.log('Checking existing token...');
       console.log('Backend URL:', BACKEND_URL);
       
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
+      
       const token = await AsyncStorage.getItem(TOKEN_KEY);
       console.log('Retrieved token:', token ? 'Token exists' : 'No token found');
       
       if (token) {
         console.log('Verifying token with backend...');
-        // Verify token with backend
-        const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
+        
+        const fetchPromise = fetch(`${BACKEND_URL}/api/auth/me`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
+          timeout: 5000,
         });
 
-        console.log('Token verification response status:', response.status);
+        try {
+          const response = await Promise.race([fetchPromise, timeoutPromise]);
+          console.log('Token verification response status:', response.status);
 
-        if (response.ok) {
-          const userData = await response.json();
-          console.log('User data retrieved:', userData.email);
-          setUser(userData);
-        } else {
-          // Token is invalid, remove it
-          console.log('Token invalid, removing...');
-          await AsyncStorage.removeItem(TOKEN_KEY);
+          if (response.ok) {
+            const userData = await response.json();
+            console.log('User data retrieved:', userData.email);
+            setUser(userData);
+          } else {
+            // Token is invalid, remove it
+            console.log('Token invalid, removing...');
+            await AsyncStorage.removeItem(TOKEN_KEY);
+          }
+        } catch (networkError) {
+          console.log('Network error during token verification:', networkError.message);
+          // Don't remove token on network error, user can try login later
         }
       } else {
         console.log('No existing token found');
       }
     } catch (error) {
       console.error('Error checking existing token:', error);
-      await AsyncStorage.removeItem(TOKEN_KEY);
+      // Only remove token if it's not a network error
+      if (error.message !== 'Timeout') {
+        await AsyncStorage.removeItem(TOKEN_KEY);
+      }
     } finally {
       console.log('Setting loading to false');
       setLoading(false);
