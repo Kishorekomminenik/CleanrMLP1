@@ -3202,6 +3202,371 @@ async def set_notification_prefs(
         "tax": request.tax
     }
     
+# ================================================================================================
+# PAGE-10-SUPPORT: Support & Disputes System (Uber-like Help Center)
+# ================================================================================================
+
+# Support & Disputes Models
+class FAQItem(BaseModel):
+    id: str
+    question: str
+    answer: str
+
+class FAQListResponse(BaseModel):
+    items: List[FAQItem]
+
+class SupportIssue(BaseModel):
+    id: str
+    role: str  # customer|partner
+    category: str
+    status: str  # open|progress|closed
+    lastUpdate: str  # ISO format
+
+class SupportIssuesList(BaseModel):
+    items: List[SupportIssue]
+
+class CreateIssueRequest(BaseModel):
+    bookingId: Optional[str] = None
+    role: str
+    category: str
+    description: str
+    photoIds: List[str] = []
+
+class CreateIssueResponse(BaseModel):
+    id: str
+    status: str
+
+class UpdateIssueRequest(BaseModel):
+    status: str  # progress|closed
+    notes: Optional[str] = None
+
+class RefundRequest(BaseModel):
+    bookingId: str
+    amount: float
+    reason: str
+
+class RefundResponse(BaseModel):
+    ok: bool
+    creditIssued: bool
+
+class SupportTicket(BaseModel):
+    id: str
+    user: str
+    role: str
+    category: str
+    status: str
+    createdAt: str  # ISO format
+    sla: float  # hours
+
+class OwnerQueueResponse(BaseModel):
+    tickets: List[SupportTicket]
+
+class OwnerMetricsResponse(BaseModel):
+    open: int
+    avgSlaHours: float
+    escalated: int
+
+class TrainingGuide(BaseModel):
+    id: str
+    title: str
+    description: str
+    url: str
+
+class TrainingGuidesResponse(BaseModel):
+    items: List[TrainingGuide]
+
+# In-memory storage for support data (in production, use database)
+support_faqs = {}
+support_issues = {}
+support_tickets = {}
+training_guides = {}
+
+def initialize_support_data():
+    """Initialize mock support data"""
+    global support_faqs, training_guides
+    
+    # Initialize FAQs
+    if not support_faqs:
+        support_faqs = {
+            "faq_001": {
+                "id": "faq_001",
+                "question": "How do I book a cleaning service?",
+                "answer": "You can book a cleaning service by tapping the 'Book Now' button on the home screen, selecting your address, choosing your service type, and confirming payment."
+            },
+            "faq_002": {
+                "id": "faq_002",
+                "question": "What payment methods do you accept?",
+                "answer": "We accept all major credit cards (Visa, Mastercard, American Express) and debit cards. Payment is processed securely through our platform."
+            },
+            "faq_003": {
+                "id": "faq_003",
+                "question": "How do I cancel my booking?",
+                "answer": "You can cancel your booking through the app. Cancellations made more than 2 hours before the scheduled time are free. Later cancellations may incur a fee."
+            },
+            "faq_004": {
+                "id": "faq_004",
+                "question": "What if I'm not satisfied with the service?",
+                "answer": "If you're not satisfied, please report the issue through the app within 24 hours. We'll investigate and may offer a refund or re-service."
+            },
+            "faq_005": {
+                "id": "faq_005",
+                "question": "How do I become a partner?",
+                "answer": "To become a partner, sign up through the app, complete the verification process, and pass our background checks. Once approved, you can start accepting jobs."
+            },
+            "faq_006": {
+                "id": "faq_006",
+                "question": "When do I get paid as a partner?",
+                "answer": "Partners are paid weekly for completed jobs. You can also use instant payout for a small fee to get paid immediately."
+            },
+            "faq_007": {
+                "id": "faq_007",
+                "question": "How do I contact customer support?",
+                "answer": "You can contact customer support through this Help section, or use the emergency SOS feature during active jobs for immediate assistance."
+            },
+            "faq_008": {
+                "id": "faq_008",
+                "question": "What areas do you service?",
+                "answer": "We currently service major metropolitan areas. Check the app to see if service is available in your location."
+            }
+        }
+    
+    # Initialize training guides for partners
+    if not training_guides:
+        training_guides = {
+            "guide_001": {
+                "id": "guide_001",
+                "title": "Getting Started as a Partner",
+                "description": "Learn the basics of using the SHINE partner app and accepting your first jobs.",
+                "url": "https://help.shine.com/partner/getting-started"
+            },
+            "guide_002": {
+                "id": "guide_002",
+                "title": "Service Quality Standards",
+                "description": "Understand our quality standards and how to maintain high customer ratings.",
+                "url": "https://help.shine.com/partner/quality-standards"
+            },
+            "guide_003": {
+                "id": "guide_003",
+                "title": "Safety Guidelines",
+                "description": "Important safety guidelines to follow during service appointments.",
+                "url": "https://help.shine.com/partner/safety"
+            },
+            "guide_004": {
+                "id": "guide_004",
+                "title": "Payment and Earnings",
+                "description": "How payments work, when you get paid, and managing your earnings.",
+                "url": "https://help.shine.com/partner/payments"
+            },
+            "guide_005": {
+                "id": "guide_005",
+                "title": "Customer Communication",
+                "description": "Best practices for communicating with customers before, during, and after service.",
+                "url": "https://help.shine.com/partner/communication"
+            },
+            "guide_006": {
+                "id": "guide_006",
+                "title": "Dispute Resolution",
+                "description": "How to handle disputes and raise concerns about ratings or payments.",
+                "url": "https://help.shine.com/partner/disputes"
+            }
+        }
+
+# Support API Endpoints
+@api_router.get("/support/faqs", response_model=FAQListResponse)
+async def get_faqs(current_user: User = Depends(get_current_user)):
+    """Get list of frequently asked questions"""
+    initialize_support_data()
+    
+    faqs = list(support_faqs.values())
+    return FAQListResponse(items=faqs)
+
+@api_router.get("/support/issues", response_model=SupportIssuesList)
+async def list_support_issues(current_user: User = Depends(get_current_user)):
+    """List user's support issues and disputes"""
+    user_issues = []
+    
+    # Get issues for current user
+    for issue_id, issue_data in support_issues.items():
+        if issue_data.get("userId") == current_user.id:
+            user_issues.append(SupportIssue(
+                id=issue_id,
+                role=issue_data["role"],
+                category=issue_data["category"],
+                status=issue_data["status"],
+                lastUpdate=issue_data["lastUpdate"]
+            ))
+    
+    # Sort by last update (most recent first)
+    user_issues.sort(key=lambda x: x.lastUpdate, reverse=True)
+    
+    return SupportIssuesList(items=user_issues)
+
+@api_router.post("/support/issues", response_model=CreateIssueResponse)
+async def create_support_issue(
+    request: CreateIssueRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new support issue or dispute"""
+    
+    # Check for duplicate issues on same booking
+    if request.bookingId:
+        for issue_id, issue_data in support_issues.items():
+            if (issue_data.get("bookingId") == request.bookingId and 
+                issue_data.get("userId") == current_user.id and
+                issue_data.get("status") != "closed"):
+                raise HTTPException(status_code=409, detail="Issue already exists for this booking")
+    
+    # Create new issue
+    issue_id = f"sup_{secrets.token_urlsafe(16)}"
+    issue_data = {
+        "id": issue_id,
+        "userId": current_user.id,
+        "userEmail": current_user.email,
+        "bookingId": request.bookingId,
+        "role": request.role,
+        "category": request.category,
+        "description": request.description,
+        "photoIds": request.photoIds,
+        "status": "open",
+        "createdAt": datetime.utcnow().isoformat(),
+        "lastUpdate": datetime.utcnow().isoformat()
+    }
+    
+    support_issues[issue_id] = issue_data
+    
+    # Add to support tickets for owner queue
+    support_tickets[issue_id] = {
+        "id": issue_id,
+        "user": current_user.email,
+        "role": current_user.role,
+        "category": request.category,
+        "status": "open",
+        "createdAt": datetime.utcnow().isoformat(),
+        "sla": 0.0  # Will be calculated based on time elapsed
+    }
+    
+    return CreateIssueResponse(id=issue_id, status="open")
+
+@api_router.patch("/support/issues/{issue_id}", response_model=dict)
+async def update_support_issue(
+    issue_id: str,
+    request: UpdateIssueRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Update support issue status (Owner/Admin only for now)"""
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    if issue_id not in support_issues:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    
+    # Update issue
+    support_issues[issue_id]["status"] = request.status
+    support_issues[issue_id]["lastUpdate"] = datetime.utcnow().isoformat()
+    if request.notes:
+        support_issues[issue_id]["notes"] = request.notes
+    
+    # Update ticket in owner queue
+    if issue_id in support_tickets:
+        support_tickets[issue_id]["status"] = request.status
+    
+    return {"ok": True}
+
+@api_router.post("/billing/refund", response_model=RefundResponse)
+async def process_refund(
+    request: RefundRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Process refund for booking (Owner/Admin only)"""
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    # Mock refund processing
+    # In production, integrate with Stripe for actual refunds
+    
+    # For demo, always issue credit instead of refunding to card
+    credit_issued = True
+    
+    # Mock refund logic
+    if request.amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid refund amount")
+    
+    if request.amount > 500:  # Large refund threshold
+        credit_issued = False  # Refund to original payment method
+    
+    return RefundResponse(ok=True, creditIssued=credit_issued)
+
+@api_router.get("/owner/support/queue", response_model=OwnerQueueResponse)
+async def get_owner_support_queue(current_user: User = Depends(get_current_user)):
+    """Get support ticket queue for owners"""
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    tickets = []
+    current_time = datetime.utcnow()
+    
+    for ticket_id, ticket_data in support_tickets.items():
+        # Calculate SLA hours
+        created_at = datetime.fromisoformat(ticket_data["createdAt"].replace('Z', '+00:00'))
+        sla_hours = (current_time - created_at).total_seconds() / 3600
+        
+        tickets.append(SupportTicket(
+            id=ticket_data["id"],
+            user=ticket_data["user"],
+            role=ticket_data["role"],
+            category=ticket_data["category"],
+            status=ticket_data["status"],
+            createdAt=ticket_data["createdAt"],
+            sla=round(sla_hours, 1)
+        ))
+    
+    # Sort by SLA (longest first)
+    tickets.sort(key=lambda x: x.sla, reverse=True)
+    
+    return OwnerQueueResponse(tickets=tickets)
+
+@api_router.get("/owner/support/metrics", response_model=OwnerMetricsResponse)
+async def get_owner_support_metrics(current_user: User = Depends(get_current_user)):
+    """Get support metrics for owners"""
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    open_tickets = 0
+    total_sla_hours = 0.0
+    escalated_tickets = 0
+    current_time = datetime.utcnow()
+    
+    for ticket_data in support_tickets.values():
+        created_at = datetime.fromisoformat(ticket_data["createdAt"].replace('Z', '+00:00'))
+        sla_hours = (current_time - created_at).total_seconds() / 3600
+        
+        if ticket_data["status"] == "open":
+            open_tickets += 1
+            total_sla_hours += sla_hours
+            
+            # Consider escalated if open for more than 24 hours
+            if sla_hours > 24:
+                escalated_tickets += 1
+    
+    avg_sla_hours = total_sla_hours / max(open_tickets, 1)
+    
+    return OwnerMetricsResponse(
+        open=open_tickets,
+        avgSlaHours=round(avg_sla_hours, 1),
+        escalated=escalated_tickets
+    )
+
+@api_router.get("/partner/training/guides", response_model=TrainingGuidesResponse)
+async def get_training_guides(current_user: User = Depends(get_current_user)):
+    """Get training guides for partners"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    initialize_support_data()
+    
+    guides = list(training_guides.values())
+    return TrainingGuidesResponse(items=guides)
+
     return {"ok": True}
 
 # Original routes
