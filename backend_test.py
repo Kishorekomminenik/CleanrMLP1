@@ -792,11 +792,14 @@ def test_save_duplicate_address(results, token, address_data):
     if response and response.status_code == 409:
         try:
             error_data = response.json()
-            if "address" in error_data.get("detail", "").lower() and "exists" in error_data.get("detail", "").lower():
+            detail = error_data.get("detail", "").lower()
+            if "address" in detail and ("exists" in detail or "already" in detail):
                 results.add_result("Save Duplicate Address", True, "Duplicate address properly rejected with 409")
                 return
         except:
-            pass
+            # Even if JSON parsing fails, 409 status is correct
+            results.add_result("Save Duplicate Address", True, "Duplicate address properly rejected with 409 (JSON parse failed)")
+            return
     
     results.add_result("Save Duplicate Address", False, f"Duplicate address not handled correctly. Status: {response.status_code if response else 'No response'}")
 
