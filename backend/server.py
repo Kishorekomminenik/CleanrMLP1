@@ -627,7 +627,10 @@ async def shutdown_db_client():
 # Create indexes on startup
 @app.on_event("startup")
 async def create_indexes():
-    # Create unique indexes
+    # Create unique index on email
     await db.users.create_index("email", unique=True)
+    
+    # Create unique sparse index on username_lower (allows null values)
     await db.users.create_index("username_lower", unique=True, sparse=True)
+    
     logger.info("Created database indexes")
