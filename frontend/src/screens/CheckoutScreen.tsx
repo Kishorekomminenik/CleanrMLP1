@@ -618,23 +618,20 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         >
           <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.confirmButton,
-            (!selectedPaymentMethod || processingPayment) && styles.buttonDisabled
-          ]}
-          onPress={confirmPayment}
-          disabled={!selectedPaymentMethod || processingPayment}
-          testID="chkConfirmBtn"
+        <Button
+          variant={estimateUpdated ? "secondary" : "primary"}
+          testID={estimateUpdated ? "chkReconfirmBtn" : "chkConfirmBtn"}
+          loading={processingPayment}
+          disabled={!selectedPaymentMethod || processingPayment || quoteLoading}
+          onPress={() => {
+            if (estimateUpdated) {
+              setEstimateUpdated(false);
+            }
+            confirmPayment();
+          }}
         >
-          {processingPayment ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Text style={styles.confirmButtonText}>
-              Confirm & Pre-Authorize {formatPrice(total)}
-            </Text>
-          )}
-        </TouchableOpacity>
+          {estimateUpdated ? 'Confirm New Total' : 'Confirm Booking'}
+        </Button>
       </View>
 
       {/* Add Card Modal */}
