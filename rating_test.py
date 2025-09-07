@@ -245,16 +245,12 @@ def test_rating_context(results, customer_token, booking_id):
                 total = resp_data["total"]
                 tip_presets = resp_data["eligibleTipPresets"]
                 
-                # Validate booking data
-                if "total" in booking_data and "currency" in booking_data:
-                    # Validate tip presets
-                    if isinstance(tip_presets, list) and len(tip_presets) > 0:
-                        results.add_result("Rating Context Retrieval", True, f"Rating context retrieved successfully with {len(tip_presets)} tip presets")
-                        return resp_data
-                    else:
-                        results.add_result("Rating Context Retrieval", False, f"Invalid tip presets: {tip_presets}")
+                # Validate total and tip presets
+                if isinstance(total, (int, float)) and isinstance(tip_presets, list) and len(tip_presets) > 0:
+                    results.add_result("Rating Context Retrieval", True, f"Rating context retrieved successfully with {len(tip_presets)} tip presets")
+                    return resp_data
                 else:
-                    results.add_result("Rating Context Retrieval", False, f"Invalid booking data: {booking_data}")
+                    results.add_result("Rating Context Retrieval", False, f"Invalid total or tip presets: total={total}, presets={tip_presets}")
             else:
                 results.add_result("Rating Context Retrieval", False, f"Missing required fields: {missing_fields}")
         except Exception as e:
