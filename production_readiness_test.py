@@ -443,9 +443,20 @@ def test_partner_payout_calculation(results, partner_token, owner_token):
                 is_p1=True
             )
 
-def test_discovery_platform_pricing(results):
+def test_discovery_platform_pricing(results, customer_token):
     """Test Discovery search with platform pricing (fromPrice)"""
     print("\n--- Testing Discovery Platform Pricing ---")
+    
+    if not customer_token:
+        results.add_result(
+            "Discovery Platform Pricing", 
+            False, 
+            "No customer token available", 
+            "PRICING", 
+            None,
+            is_p1=True
+        )
+        return
     
     # Test GET /api/discovery/search
     search_params = {
@@ -458,7 +469,7 @@ def test_discovery_platform_pricing(results):
     # Convert to query string
     query_string = "&".join([f"{k}={v}" for k, v in search_params.items()])
     
-    response, response_time = make_request("GET", f"/discovery/search?{query_string}")
+    response, response_time = make_request("GET", f"/discovery/search?{query_string}", auth_token=customer_token)
     if response and response.status_code == 200:
         try:
             resp_data = response.json()
