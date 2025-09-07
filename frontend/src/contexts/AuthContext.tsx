@@ -6,17 +6,36 @@ import Constants from 'expo-constants';
 interface User {
   id: string;
   email: string;
+  username?: string;
   role: 'customer' | 'partner' | 'owner';
   partner_status?: 'pending' | 'verified';
   mfa_enabled: boolean;
+  phone?: string;
+}
+
+interface SignupData {
+  email: string;
+  username?: string;
+  password: string;
+  role: string;
+  phone?: string;
+  acceptTos: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; mfa_required?: boolean; dev_mfa_code?: string; error?: string }>;
-  register: (email: string, password: string, role: string) => Promise<{ success: boolean; error?: string }>;
-  verifyMFA: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  login: (identifier: string, password: string, roleHint?: string) => Promise<{ 
+    success: boolean; 
+    mfa_required?: boolean; 
+    user_id?: string;
+    dev_mfa_code?: string; 
+    error?: string 
+  }>;
+  register: (data: SignupData) => Promise<{ success: boolean; error?: string }>;
+  verifyMFA: (userId: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordStart: (emailOrPhone: string) => Promise<{ success: boolean; channel?: string; error?: string }>;
+  resetPasswordVerify: (emailOrPhone: string, otp: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   switchRole: () => Promise<{ success: boolean; error?: string }>;
 }
@@ -67,24 +86,33 @@ export default function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (identifier: string, password: string, roleHint?: string) => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ 
+          identifier: identifier.trim(), 
+          password, 
+          role_hint: roleHint 
+        }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
         if (data.mfa_required) {
-          return { success: true, mfa_required: true, dev_mfa_code: data.dev_mfa_code };
+          return { 
+            success: true, 
+            mfa_required: true, 
+            user_id: data.user_id,
+            dev_mfa_code: data.dev_mfa_code 
+          };
         } else {
           // Regular login success
-          await AsyncStorage.setItem(TOKEN_KEY, data.access_token);
+          await AsyncStorage.setItem(TOKEN_KEY, data.token);
           setUser(data.user);
           return { success: true };
         }
@@ -97,24 +125,31 @@ export default function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const register = async (email: string, password: string, role: string) => {
+  const register = async (data: SignupData) => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/auth/register`, {
+      const response = await fetch(`${BACKEND_URL}/api/auth/signup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password, role }),
+        body: JSON.stringify({
+          email: data.email.trim(),
+          username: data.username?.trim() || undefined,
+          password: data.password,
+          role: data.role,
+          phone: data.phone?.trim() || undefined,
+          accept_tos: data.acceptTos
+        }),
       });
 
-      const data = await response.json();
+      const responseData = await response.json();
 
       if (response.ok) {
-        await AsyncStorage.setItem(TOKEN_KEY, data.access_token);
-        setUser(data.user);
+        await AsyncStorage.setItem(TOKEN_KEY, responseData.token);
+        setUser(responseData.user);
         return { success: true };
       } else {
-        return { success: false, error: data.detail || 'Registration failed' };
+        return { success: false, error: responseData.detail || 'Registration failed' };
       }
     } catch (error) {
       console.error('Registration error:', error);
@@ -122,27 +157,79 @@ export default function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const verifyMFA = async (email: string, code: string) => {
+  const verifyMFA = async (userId: string, code: string) => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/auth/mfa`, {
+      const response = await fetch(`${BACKEND_URL}/api/auth/mfa/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, mfa_code: code }),
+        body: JSON.stringify({ user_id: userId, code }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        await AsyncStorage.setItem(TOKEN_KEY, data.access_token);
-        setUser(data.user);
+        if (data.token && data.user) {
+          await AsyncStorage.setItem(TOKEN_KEY, data.token);
+          setUser(data.user);
+        }
         return { success: true };
       } else {
         return { success: false, error: data.detail || 'MFA verification failed' };
       }
     } catch (error) {
       console.error('MFA verification error:', error);
+      return { success: false, error: 'Network error' };
+    }
+  };
+
+  const resetPasswordStart = async (emailOrPhone: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/reset/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email_or_phone: emailOrPhone.trim() }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        return { success: true, channel: data.channel };
+      } else {
+        return { success: false, error: data.detail || 'Failed to send reset code' };
+      }
+    } catch (error) {
+      console.error('Password reset start error:', error);
+      return { success: false, error: 'Network error' };
+    }
+  };
+
+  const resetPasswordVerify = async (emailOrPhone: string, otp: string, newPassword: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/reset/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          email_or_phone: emailOrPhone.trim(), 
+          otp: otp.trim(), 
+          new_password: newPassword 
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        return { success: true };
+      } else {
+        return { success: false, error: data.detail || 'Password reset failed' };
+      }
+    } catch (error) {
+      console.error('Password reset verify error:', error);
       return { success: false, error: 'Network error' };
     }
   };
@@ -174,7 +261,7 @@ export default function AuthProvider({ children }: AuthProviderProps) {
       const data = await response.json();
 
       if (response.ok) {
-        await AsyncStorage.setItem(TOKEN_KEY, data.access_token);
+        await AsyncStorage.setItem(TOKEN_KEY, data.token);
         setUser(data.user);
         return { success: true };
       } else {
@@ -192,6 +279,8 @@ export default function AuthProvider({ children }: AuthProviderProps) {
     login,
     register,
     verifyMFA,
+    resetPasswordStart,
+    resetPasswordVerify,
     logout,
     switchRole,
   };
