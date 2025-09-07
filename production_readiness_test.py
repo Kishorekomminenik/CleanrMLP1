@@ -511,14 +511,25 @@ def test_discovery_platform_pricing(results, customer_token):
             is_p1=True
         )
 
-def test_partner_profile_farecards(results):
+def test_partner_profile_farecards(results, customer_token):
     """Test Partner profile fareCards with platform pricing"""
     print("\n--- Testing Partner Profile FareCards ---")
+    
+    if not customer_token:
+        results.add_result(
+            "Partner Profile FareCards", 
+            False, 
+            "No customer token available", 
+            "PRICING", 
+            None,
+            is_p1=True
+        )
+        return
     
     # Test GET /api/partners/{partnerId}/profile
     partner_id = "pa_101"  # Mock partner ID
     
-    response, response_time = make_request("GET", f"/partners/{partner_id}/profile")
+    response, response_time = make_request("GET", f"/partners/{partner_id}/profile", auth_token=customer_token)
     if response and response.status_code == 200:
         try:
             resp_data = response.json()
