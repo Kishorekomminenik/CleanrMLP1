@@ -367,14 +367,14 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabCustomerHome' }}
             />
             <Tab.Screen
+              name="Discover"
+              component={CustomerDiscoveryScreen}
+              options={{ tabBarTestID: 'tabCustomerDiscover' }}
+            />
+            <Tab.Screen
               name="Bookings"
               component={CustomerBookingsScreen}
               options={{ tabBarTestID: 'tabCustomerBookings' }}
-            />
-            <Tab.Screen
-              name="Favorites"
-              component={CustomerFavoritesScreen}
-              options={{ tabBarTestID: 'tabCustomerFavorites' }}
             />
             <Tab.Screen
               name="Support"
