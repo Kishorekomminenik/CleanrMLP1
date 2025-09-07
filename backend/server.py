@@ -479,6 +479,221 @@ async def get_owner_tiles(current_user: User = Depends(get_current_user)):
         "gmvToday": random.randint(1500, 8500)
     }
 
+# Service Selection APIs
+
+@api_router.get("/services/catalog")
+async def get_services_catalog():
+    """Get available cleaning services catalog"""
+    services = [
+        {
+            "code": "basic",
+            "name": "Basic Clean",
+            "basePrice": 80,
+            "defaults": {
+                "bedrooms": 2,
+                "bathrooms": 1
+            },
+            "desc": "Standard tidy & surfaces - dusting, vacuuming, basic bathroom and kitchen clean"
+        },
+        {
+            "code": "deep",
+            "name": "Deep Clean", 
+            "basePrice": 150,
+            "defaults": {
+                "bedrooms": 2,
+                "bathrooms": 1
+            },
+            "desc": "Detailed clean incl. baseboards - comprehensive cleaning including inside appliances, baseboards, and detailed scrubbing"
+        },
+        {
+            "code": "bathroom",
+            "name": "Bathroom-only",
+            "basePrice": 45,
+            "defaults": {
+                "bathrooms": 1
+            },
+            "desc": "Bathrooms only - thorough cleaning of all bathroom fixtures, tiles, and surfaces"
+        }
+    ]
+    
+    return {"services": services}
+
+@api_router.post("/media/presign")
+async def create_presigned_upload(request: dict):
+    """Create presigned URL for photo upload"""
+    content_type = request.get("contentType", "image/jpeg")
+    
+    # Validate content type
+    if content_type not in ["image/jpeg", "image/png"]:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported media type"
+        )
+    
+    # Generate unique file ID
+    file_id = f"photo_{uuid.uuid4().hex[:12]}"
+    
+    # In production, this would generate a real presigned URL to S3/GCS
+    # For demo, return a mock URL
+    upload_url = f"https://mockupload.example.com/upload/{file_id}"
+    
+    return {
+        "uploadUrl": upload_url,
+        "fileId": file_id
+    }
+
+@api_router.post("/pricing/quote")
+async def get_pricing_quote(request: dict):
+    """Calculate pricing quote for service"""
+    service_type = request.get("serviceType")
+    dwelling_type = request.get("dwellingType")
+    bedrooms = request.get("bedrooms", 0)
+    bathrooms = request.get("bathrooms", 1)
+    masters = request.get("masters", 0)
+    photo_ids = request.get("photoIds", [])
+    when = request.get("when", "now")
+    schedule_at = request.get("scheduleAt")
+    lat = request.get("lat")
+    lng = request.get("lng")
+
+    # Validation
+    if service_type not in ["basic", "deep", "bathroom"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid service type"
+        )
+    
+    if dwelling_type not in ["House", "Apartment", "Condo", "Office"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid dwelling type"
+        )
+    
+    # Validate photo requirements
+    if service_type in ["deep", "bathroom"] and len(photo_ids) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deep Clean and Bathroom-only require at least 2 photos"
+        )
+    
+    # Base prices
+    base_prices = {
+        "basic": 80,
+        "deep": 150,
+        "bathroom": 45
+    }
+    
+    base_price = base_prices[service_type]
+    
+    # Calculate price based on rooms
+    room_multipliers = {
+        "basic": {"bedroom": 15, "bathroom": 10, "master": 20},
+        "deep": {"bedroom": 25, "bathroom": 20, "master": 35},
+        "bathroom": {"bedroom": 0, "bathroom": 15, "master": 0}
+    }
+    
+    multiplier = room_multipliers[service_type]
+    room_price = (bedrooms * multiplier["bedroom"] + 
+                  bathrooms * multiplier["bathroom"] + 
+                  masters * multiplier["master"])
+    
+    # Dwelling type adjustment
+    dwelling_multipliers = {
+        "House": 1.0,
+        "Apartment": 0.9,
+        "Condo": 1.1,
+        "Office": 1.3
+    }
+    
+    dwelling_adjustment = dwelling_multipliers.get(dwelling_type, 1.0)
+    
+    # Calculate base total
+    subtotal = (base_price + room_price) * dwelling_adjustment
+    
+    # Check for surge pricing
+    import random
+    surge_active = random.random() < 0.2  # 20% chance
+    surge_multiplier = round(random.uniform(1.2, 2.0), 1) if surge_active else 1.0
+    
+    # Apply surge
+    final_price = subtotal * surge_multiplier
+    
+    # Estimate duration (minutes)
+    base_durations = {
+        "basic": 90,
+        "deep": 180,
+        "bathroom": 60
+    }
+    
+    base_duration = base_durations[service_type]
+    room_duration = bedrooms * 15 + bathrooms * 20 + masters * 25
+    total_duration = base_duration + room_duration
+    
+    # Create breakdown
+    breakdown = [
+        {"label": f"{service_type.title()} Clean Base", "amount": base_price},
+    ]
+    
+    if room_price > 0:
+        breakdown.append({"label": "Room adjustments", "amount": room_price})
+    
+    if dwelling_adjustment != 1.0:
+        adjustment_amount = subtotal - (base_price + room_price)
+        breakdown.append({"label": f"{dwelling_type} adjustment", "amount": adjustment_amount})
+    
+    if surge_active:
+        surge_amount = final_price - subtotal
+        breakdown.append({"label": f"Surge x{surge_multiplier}", "amount": surge_amount})
+    
+    # Generate quote ID
+    quote_id = f"quote_{uuid.uuid4().hex[:8]}"
+    
+    return {
+        "quoteId": quote_id,
+        "price": round(final_price, 2),
+        "durationMinutes": total_duration,
+        "surge": {
+            "active": surge_active,
+            "multiplier": surge_multiplier
+        },
+        "breakdown": breakdown
+    }
+
+@api_router.post("/partner/capabilities")
+async def set_partner_capabilities(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Set partner service capabilities"""
+    if current_user.role != UserRole.PARTNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Partner access required"
+        )
+    
+    services_offered = request.get("servicesOffered", [])
+    
+    # Validate services
+    valid_services = ["basic", "deep", "bathroom"]
+    for service in services_offered:
+        if service not in valid_services:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid service: {service}"
+            )
+    
+    # In production, save to partner profile in database
+    # For now, just return success
+    await db.users.update_one(
+        {"_id": ObjectId(current_user.id)},
+        {"$set": {
+            "services_offered": services_offered,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    
+    return {"ok": True}
+
 @api_router.post("/auth/login")
 async def login(user_data: UserLogin):
     # Validate identifier format
