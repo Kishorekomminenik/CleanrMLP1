@@ -511,6 +511,13 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             💡 You won't be charged yet. We place a hold until your service is completed.
           </Text>
         </View>
+
+        {/* Pricing Disclaimer */}
+        <View style={styles.disclaimerContainer}>
+          <Text testID="chkPricingDisclaimer" style={styles.disclaimerText}>
+            Prices set by SHINE. Final total may vary with surge and add-ons.
+          </Text>
+        </View>
       </ScrollView>
 
       {/* Confirm Button */}
