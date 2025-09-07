@@ -280,8 +280,6 @@ async def signup(user_data: UserSignup):
     # Create user document
     user_dict = {
         "email": user_data.email,
-        "username": user_data.username,
-        "username_lower": normalize_username(user_data.username) if user_data.username else None,
         "password_hash": hashed_password,
         "phone": user_data.phone,
         "role": user_data.role,
@@ -291,6 +289,11 @@ async def signup(user_data: UserSignup):
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
+    
+    # Only add username fields if username is provided
+    if user_data.username:
+        user_dict["username"] = user_data.username
+        user_dict["username_lower"] = normalize_username(user_data.username)
     
     result = await db.users.insert_one(user_dict)
     user_id = str(result.inserted_id)
