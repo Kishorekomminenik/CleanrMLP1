@@ -60,8 +60,14 @@ export default function AuthProvider({ children }: AuthProviderProps) {
 
   const checkExistingToken = async () => {
     try {
+      console.log('Checking existing token...');
+      console.log('Backend URL:', BACKEND_URL);
+      
       const token = await AsyncStorage.getItem(TOKEN_KEY);
+      console.log('Retrieved token:', token ? 'Token exists' : 'No token found');
+      
       if (token) {
+        console.log('Verifying token with backend...');
         // Verify token with backend
         const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
           headers: {
@@ -70,18 +76,25 @@ export default function AuthProvider({ children }: AuthProviderProps) {
           },
         });
 
+        console.log('Token verification response status:', response.status);
+
         if (response.ok) {
           const userData = await response.json();
+          console.log('User data retrieved:', userData.email);
           setUser(userData);
         } else {
           // Token is invalid, remove it
+          console.log('Token invalid, removing...');
           await AsyncStorage.removeItem(TOKEN_KEY);
         }
+      } else {
+        console.log('No existing token found');
       }
     } catch (error) {
       console.error('Error checking existing token:', error);
       await AsyncStorage.removeItem(TOKEN_KEY);
     } finally {
+      console.log('Setting loading to false');
       setLoading(false);
     }
   };
