@@ -4303,10 +4303,10 @@ async def initialize_mock_discovery_data():
                 "https://cdn.example.com/partners/sparkle-pros-2.jpg",
                 "https://cdn.example.com/partners/sparkle-pros-3.jpg"
             ],
-            "services": [
-                {"serviceType": "Deep Clean", "price": 149.0, "duration": 180},
-                {"serviceType": "Standard Clean", "price": 89.0, "duration": 120},
-                {"serviceType": "Bathroom Only", "price": 49.0, "duration": 60}
+            "fareCards": [
+                {"serviceType": "Deep Clean", "fromPrice": 119.0, "duration": 180},
+                {"serviceType": "Standard Clean", "fromPrice": 89.0, "duration": 120},
+                {"serviceType": "Bathroom Only", "fromPrice": 49.0, "duration": 60}
             ],
             "recentReviews": [
                 {"customerName": "Sarah M.", "rating": 5.0, "comment": "Amazing work! Left my home spotless and smelling fresh."},
@@ -4317,7 +4317,8 @@ async def initialize_mock_discovery_data():
             "serviceTypes": ["Deep Clean", "Standard Clean", "Bathroom Only"],
             "lat": 37.7749,
             "lng": -122.4194,
-            "tags": ["eco", "green", "non-toxic", "family-safe", "pet-safe"]
+            "tags": ["eco", "green", "non-toxic", "family-safe", "pet-safe"],
+            "fromPrice": 49.0  # Lowest price for discovery display
         },
         "pa_102": {
             "partnerId": "pa_102",
@@ -4329,9 +4330,9 @@ async def initialize_mock_discovery_data():
                 "https://cdn.example.com/partners/shiny-homes-1.jpg",
                 "https://cdn.example.com/partners/shiny-homes-2.jpg"
             ],
-            "services": [
-                {"serviceType": "Standard Clean", "price": 79.0, "duration": 90},
-                {"serviceType": "Move-out Clean", "price": 129.0, "duration": 150}
+            "fareCards": [
+                {"serviceType": "Standard Clean", "fromPrice": 89.0, "duration": 90},
+                {"serviceType": "Move-out Clean", "fromPrice": 149.0, "duration": 150}
             ],
             "recentReviews": [
                 {"customerName": "Mike D.", "rating": 4.5, "comment": "Good value for money. Got the job done."},
@@ -4341,7 +4342,8 @@ async def initialize_mock_discovery_data():
             "serviceTypes": ["Standard Clean", "Move-out Clean"],
             "lat": 37.7849,
             "lng": -122.4094,
-            "tags": ["fast", "affordable", "same-day", "reliable"]
+            "tags": ["fast", "affordable", "same-day", "reliable"],
+            "fromPrice": 89.0
         },
         "pa_103": {
             "partnerId": "pa_103",
@@ -4353,10 +4355,10 @@ async def initialize_mock_discovery_data():
                 "https://cdn.example.com/partners/greenthumb-1.jpg",
                 "https://cdn.example.com/partners/greenthumb-2.jpg"
             ],
-            "services": [
-                {"serviceType": "Lawn Mowing", "price": 45.0, "duration": 45},
-                {"serviceType": "Landscaping", "price": 120.0, "duration": 240},
-                {"serviceType": "Seasonal Cleanup", "price": 85.0, "duration": 120}
+            "fareCards": [
+                {"serviceType": "Lawn Mowing", "fromPrice": 45.0, "duration": 45},
+                {"serviceType": "Landscaping", "fromPrice": 120.0, "duration": 240},
+                {"serviceType": "Seasonal Cleanup", "fromPrice": 85.0, "duration": 120}
             ],
             "recentReviews": [
                 {"customerName": "Robert L.", "rating": 5.0, "comment": "Transformed my backyard! Professional and knowledgeable."},
@@ -4366,7 +4368,8 @@ async def initialize_mock_discovery_data():
             "serviceTypes": ["Lawn Mowing", "Landscaping", "Seasonal Cleanup"],
             "lat": 37.7649,
             "lng": -122.4294,
-            "tags": ["organic", "lawn", "landscaping", "seasonal", "backyard"]
+            "tags": ["organic", "lawn", "landscaping", "seasonal", "backyard"],
+            "fromPrice": 45.0
         },
         "pa_104": {
             "partnerId": "pa_104",
@@ -4377,9 +4380,9 @@ async def initialize_mock_discovery_data():
             "photos": [
                 "https://cdn.example.com/partners/paws-walk-1.jpg"
             ],
-            "services": [
-                {"serviceType": "Dog Walk", "price": 25.0, "duration": 30},
-                {"serviceType": "Pet Sitting", "price": 40.0, "duration": 60}
+            "fareCards": [
+                {"serviceType": "Dog Walk", "fromPrice": 25.0, "duration": 30},
+                {"serviceType": "Pet Sitting", "fromPrice": 40.0, "duration": 60}
             ],
             "recentReviews": [
                 {"customerName": "Jennifer S.", "rating": 4.8, "comment": "Love the GPS tracking! My dog is always happy after walks."},
@@ -4389,7 +4392,8 @@ async def initialize_mock_discovery_data():
             "serviceTypes": ["Dog Walk", "Pet Sitting"],
             "lat": 37.7549,
             "lng": -122.4394,
-            "tags": ["dog", "pet", "walk", "sitting", "gps", "insured"]
+            "tags": ["dog", "pet", "walk", "sitting", "gps", "insured"],
+            "fromPrice": 25.0
         },
         "pa_105": {
             "partnerId": "pa_105",
@@ -4400,9 +4404,9 @@ async def initialize_mock_discovery_data():
             "photos": [
                 "https://cdn.example.com/partners/beauty-home-1.jpg"
             ],
-            "services": [
-                {"serviceType": "Hair Cut", "price": 65.0, "duration": 60},
-                {"serviceType": "Manicure", "price": 35.0, "duration": 45}
+            "fareCards": [
+                {"serviceType": "Hair Cut", "fromPrice": 65.0, "duration": 60},
+                {"serviceType": "Manicure", "fromPrice": 35.0, "duration": 45}
             ],
             "recentReviews": [
                 {"customerName": "Amanda R.", "rating": 4.5, "comment": "Convenient service but still working on consistency."}
@@ -4411,7 +4415,8 @@ async def initialize_mock_discovery_data():
             "serviceTypes": ["Hair Cut", "Manicure"],
             "lat": 37.7749,
             "lng": -122.4094,
-            "tags": ["beauty", "hair", "nails", "mobile", "home"]
+            "tags": ["beauty", "hair", "nails", "mobile", "home"],
+            "fromPrice": 35.0
         }
     }
     
