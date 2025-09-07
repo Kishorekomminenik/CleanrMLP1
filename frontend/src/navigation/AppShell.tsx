@@ -290,28 +290,27 @@ export default function AppShell() {
   };
 
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused }) => getTabBarIcon(route.name, focused),
-          tabBarActiveTintColor: '#3A8DFF',
-          tabBarInactiveTintColor: '#6C757D',
-          tabBarStyle: {
-            backgroundColor: '#FFFFFF',
-            borderTopWidth: 1,
-            borderTopColor: '#E0E0E0',
-            paddingTop: 8,
-            paddingBottom: 8,
-            height: 80,
-          },
-          tabBarLabelStyle: {
-            fontSize: 12,
-            fontWeight: '500',
-          },
-          headerShown: false,
-        })}
-        testID="globalBottomNav"
-      >
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        tabBarIcon: ({ focused }) => getTabBarIcon(route.name, focused),
+        tabBarActiveTintColor: '#3A8DFF',
+        tabBarInactiveTintColor: '#6C757D',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1,
+          borderTopColor: '#E0E0E0',
+          paddingTop: 8,
+          paddingBottom: 8,
+          height: 80,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '500',
+        },
+        headerShown: false,
+      })}
+      testID="globalBottomNav"
+    >
         {user.role === 'customer' && (
           <>
             <Tab.Screen
