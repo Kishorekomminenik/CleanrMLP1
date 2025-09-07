@@ -1637,17 +1637,17 @@ def main():
     
     results = ProductionTestResults()
     
-    # PRIORITY 1: Platform Pricing System
-    test_platform_pricing_engine(results)
-    
     # Create test users for subsequent tests
     customer_token, partner_token, owner_token = test_authentication_system(results)
+    
+    # PRIORITY 1: Platform Pricing System
+    test_platform_pricing_engine(results, customer_token)
     
     # Continue with Priority 1 tests that require authentication
     test_owner_pricing_configuration(results, owner_token)
     test_partner_payout_calculation(results, partner_token, owner_token)
-    test_discovery_platform_pricing(results)
-    test_partner_profile_farecards(results)
+    test_discovery_platform_pricing(results, customer_token)
+    test_partner_profile_farecards(results, customer_token)
     booking_id = test_booking_platform_pricing(results, customer_token)
     
     # PRIORITY 2: Core Marketplace Functions
