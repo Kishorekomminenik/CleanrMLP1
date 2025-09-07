@@ -8,6 +8,9 @@ import PartnerEarningsScreen from '../screens/PartnerEarningsScreen';
 import CustomerSupportScreen from '../screens/CustomerSupportScreen';
 import PartnerSupportScreen from '../screens/PartnerSupportScreen';
 import OwnerSupportScreen from '../screens/OwnerSupportScreen';
+import CustomerBookingsScreen from '../screens/CustomerBookingsScreen';
+import PartnerJobsScreen from '../screens/PartnerJobsScreen';
+import OwnerBookingsScreen from '../screens/OwnerBookingsScreen';
 
 const Tab = createBottomTabNavigator();
 
