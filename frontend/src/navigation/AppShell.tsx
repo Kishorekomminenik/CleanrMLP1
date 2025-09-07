@@ -383,14 +383,19 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabCustomerBookings' }}
             />
             <Tab.Screen
+              name="Subscriptions"
+              component={CustomerSubscriptionsScreen}
+              options={{ tabBarTestID: 'tabCustomerSubscriptions' }}
+            />
+            <Tab.Screen
               name="Support"
               component={CustomerSupportScreen}
               options={{ tabBarTestID: 'tabCustomerSupport' }}
             />
             <Tab.Screen
-              name="Profile"  
-              component={CustomerProfileScreen}
-              options={{ tabBarTestID: 'tabCustomerProfile' }}
+              name="Settings"  
+              component={SettingsScreen}
+              options={{ tabBarTestID: 'tabCustomerSettings' }}
             />
           </>
         )}
