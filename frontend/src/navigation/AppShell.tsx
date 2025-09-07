@@ -5,6 +5,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import PartnerEarningsScreen from '../screens/PartnerEarningsScreen';
+import CustomerSupportScreen from '../screens/CustomerSupportScreen';
+import PartnerSupportScreen from '../screens/PartnerSupportScreen';
+import OwnerSupportScreen from '../screens/OwnerSupportScreen';
 
 const Tab = createBottomTabNavigator();
 
