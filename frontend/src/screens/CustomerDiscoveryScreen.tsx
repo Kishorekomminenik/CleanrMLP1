@@ -901,6 +901,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'Inter',
   },
+  surgeChip: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  surgeChipText: {
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: 'Inter',
+  },
   serviceTypes: {
     fontSize: 14,
     color: '#6C757D',
