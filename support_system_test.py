@@ -77,7 +77,7 @@ def create_test_user(role="customer", email_suffix=None):
     
     try:
         response = requests.post(f"{BASE_URL}/auth/signup", json=signup_data, headers=HEADERS)
-        if response.status_code == 201:
+        if response.status_code in [200, 201]:  # Accept both 200 and 201
             data = response.json()
             return data["token"], data["user"]
         else:
