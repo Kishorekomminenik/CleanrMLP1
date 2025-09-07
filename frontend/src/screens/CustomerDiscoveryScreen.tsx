@@ -928,7 +928,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  priceHint: {
+  fromPrice: {
     fontSize: 16,
     fontWeight: '600',
     color: '#10B981',
