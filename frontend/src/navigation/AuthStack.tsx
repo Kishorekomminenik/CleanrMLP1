@@ -40,11 +40,15 @@ export default function AuthStack() {
     email: '',
   });
 
-  const loginForm = useForm<LoginForm>();
-  const registerForm = useForm<RegisterForm>({
-    defaultValues: { role: 'customer' },
+  // Simple controlled state instead of react-hook-form
+  const [loginData, setLoginData] = useState({ email: '', password: '' });
+  const [registerData, setRegisterData] = useState({ 
+    email: '', 
+    password: '', 
+    confirmPassword: '', 
+    role: 'customer' 
   });
-  const mfaForm = useForm<MFAForm>();
+  const [mfaCode, setMfaCode] = useState('');
 
   const handleLogin = async (data: LoginForm) => {
     setLoading(true);
