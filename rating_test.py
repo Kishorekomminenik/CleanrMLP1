@@ -416,15 +416,7 @@ def test_large_tip_failure(results, customer_token):
     response = make_request("POST", "/billing/tip", large_tip_data, auth_token=customer_token)
     
     if response and response.status_code == 402:
-        try:
-            error_data = response.json()
-            detail = error_data.get("detail", "").lower()
-            if ("tip" in detail and "declined" in detail) or "declined" in detail:
-                results.add_result("Large Tip Failure", True, "Large tip payment failure properly handled")
-                return
-        except:
-            pass
-        results.add_result("Large Tip Failure", True, "Large tip payment failure properly handled (402 status)")
+        results.add_result("Large Tip Failure", True, "Large tip payment failure properly handled with 402 status")
     else:
         results.add_result("Large Tip Failure", False, f"Large tip failure not handled correctly. Status: {response.status_code if response else 'No response'}")
 
