@@ -41,15 +41,6 @@ function CustomerHomeComponent() {
   );
 }
 
-function CustomerBookingsScreen() {
-  return (
-    <SafeAreaView style={styles.screen}>
-      <Text style={styles.screenTitle}>My Bookings</Text>
-      <Text style={styles.screenSubtitle}>View your service bookings</Text>
-    </SafeAreaView>
-  );
-}
-
 function CustomerFavoritesScreen() {
   return (
     <SafeAreaView style={styles.screen}>
