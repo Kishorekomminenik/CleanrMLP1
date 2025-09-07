@@ -398,6 +398,18 @@ export default function PartnerEarningsScreen() {
           </View>
         </View>
 
+        {/* Payout Rate Info */}
+        <View style={styles.payoutInfoContainer}>
+          <View style={styles.payoutInfoRow} testID="earnPayoutRateRow">
+            <Text style={styles.payoutInfoLabel}>Payout Rate</Text>
+            <Text style={styles.payoutInfoValue}>75% of fare</Text>
+          </View>
+          <View style={styles.payoutInfoRow} testID="earnSurgeShareRow">
+            <Text style={styles.payoutInfoLabel}>Surge Share</Text>
+            <Text style={styles.payoutInfoValue}>75% of surge premium</Text>
+          </View>
+        </View>
+
         {/* Filters */}
         <View style={styles.filtersRow} testID="earnFilters">
           {(['Week', 'Month', 'Custom'] as const).map((range) => (
