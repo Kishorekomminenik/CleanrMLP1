@@ -2452,7 +2452,7 @@ async def submit_customer_rating(
     tip_payment_intent_id = ""
     tip_capture_success = True
     
-    if request.tip.amount > 0:
+    if request.tip and request.tip.amount > 0:
         # Mock tip capture (in production, integrate with Stripe)
         tip_payment_intent_id = f"pi_tip_{secrets.token_urlsafe(16)}"
         
@@ -2469,7 +2469,7 @@ async def submit_customer_rating(
         "stars": request.stars,
         "compliments": request.compliments,
         "comment": request.comment,
-        "tip": request.tip.dict(),
+        "tip": request.tip.dict() if request.tip else None,
         "idempotencyKey": request.idempotencyKey,
         "tipPaymentIntentId": tip_payment_intent_id,
         "submittedAt": datetime.utcnow().isoformat(),
