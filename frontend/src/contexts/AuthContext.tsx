@@ -59,14 +59,44 @@ export default function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const checkExistingToken = async () => {
-    console.log('AuthContext: Bypassing token check for testing');
-    
-    // TEMPORARY: Skip all token checking for testing
-    // Go straight to auth screen
-    setTimeout(() => {
-      console.log('AuthContext: Setting loading to false after 1 second');
+    try {
+      console.log('AuthContext: Starting token check');
+      
+      // Check if we have a stored token
+      const token = await AsyncStorage.getItem(TOKEN_KEY);
+      if (!token) {
+        console.log('AuthContext: No token found, showing auth screen');
+        setLoading(false);
+        return;
+      }
+
+      console.log('AuthContext: Token found, verifying with backend');
+      
+      // Verify token with backend
+      const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        console.log('AuthContext: Token valid, setting user:', userData.role);
+        setUser(userData);
+      } else {
+        console.log('AuthContext: Token invalid, removing from storage');
+        await AsyncStorage.removeItem(TOKEN_KEY);
+      }
+    } catch (error) {
+      console.error('AuthContext: Error checking token:', error);
+      // Remove potentially corrupted token
+      await AsyncStorage.removeItem(TOKEN_KEY);
+    } finally {
+      console.log('AuthContext: Token check complete, setting loading to false');
       setLoading(false);
-    }, 1000);
+    }
   };
 
   const login = async (identifier: string, password: string, roleHint?: string) => {
