@@ -1580,6 +1580,40 @@ def main():
     test_eta_preview_now(results)
     test_eta_preview_scheduled(results)
     
+    print("\n💳 TESTING CHECKOUT & PAYMENT API ENDPOINTS...")
+    
+    # Test checkout & payment endpoints with authentication
+    if customer_token:
+        # Test authentication requirements for checkout endpoints
+        test_checkout_endpoints_require_auth(results)
+        
+        # Test payment methods management
+        payment_methods = test_list_payment_methods(results, customer_token)
+        setup_client_secret = test_create_setup_intent(results, customer_token)
+        test_attach_payment_method(results, customer_token)
+        
+        # Test promo code functionality
+        test_apply_valid_promo_codes(results, customer_token)
+        test_apply_invalid_promo_code(results, customer_token)
+        test_apply_promo_with_credits(results, customer_token)
+        
+        # Test payment pre-authorization scenarios
+        pi_id, client_secret = test_payment_preauth_success(results, customer_token)
+        test_payment_preauth_declined(results, customer_token)
+        sca_pi_id = test_payment_preauth_sca_required(results, customer_token)
+        
+        # Test Stripe action confirmation
+        if sca_pi_id:
+            test_confirm_stripe_action(results, sca_pi_id)
+        
+        # Test booking creation
+        booking_id_now = test_create_booking_now(results, customer_token)
+        booking_id_scheduled = test_create_booking_scheduled(results, customer_token)
+        
+        # Test payment void
+        if pi_id:
+            test_void_preauth(results, pi_id)
+    
     # Print final results
     results.print_summary()
     
