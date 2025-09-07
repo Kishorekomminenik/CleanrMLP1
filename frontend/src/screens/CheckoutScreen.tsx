@@ -386,9 +386,12 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
 
         {/* Price Breakdown */}
         <View style={styles.card} testID="chkBreakdown">
-          <Text style={styles.cardTitle}>Price Breakdown</Text>
+          <Text testID="chkFareBlock" style={styles.cardTitle}>Fare breakdown (SHINE pricing)</Text>
           {priceBreakdown.map((item, index) => (
-            <View key={index} style={styles.priceRow}>
+            <View key={index} style={[
+              styles.priceRow,
+              item.label.includes('Surge') && { testID: 'chkSurgeRow' }
+            ]}>
               <Text style={[
                 styles.priceLabel,
                 item.label === 'Total' && styles.priceLabelTotal
