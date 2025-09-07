@@ -175,6 +175,9 @@ export default function PartnerEarningsScreen() {
       setLoading(true);
       setError(null);
       
+      // Load payout calculation
+      await fetchPayoutCalculation();
+
       await Promise.all([
         loadSummary(),
         loadSeries(),
