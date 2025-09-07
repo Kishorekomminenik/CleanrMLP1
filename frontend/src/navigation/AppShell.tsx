@@ -11,6 +11,9 @@ import OwnerSupportScreen from '../screens/OwnerSupportScreen';
 import CustomerBookingsScreen from '../screens/CustomerBookingsScreen';
 import PartnerJobsScreen from '../screens/PartnerJobsScreen';
 import OwnerBookingsScreen from '../screens/OwnerBookingsScreen';
+import CustomerDiscoveryScreen from '../screens/CustomerDiscoveryScreen';
+import PartnerDiscoveryScreen from '../screens/PartnerDiscoveryScreen';
+import OwnerDiscoveryScreen from '../screens/OwnerDiscoveryScreen';
 
 const Tab = createBottomTabNavigator();
 
