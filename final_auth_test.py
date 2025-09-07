@@ -7,7 +7,7 @@ import requests
 import json
 import uuid
 
-BASE_URL = "https://shine-role-router.preview.emergentagent.com/api"
+BASE_URL = "https://home-dashboard-2.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 def test_complete_auth_flow():
