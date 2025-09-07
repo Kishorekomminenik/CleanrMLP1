@@ -1614,6 +1614,40 @@ def main():
         if pi_id:
             test_void_preauth(results, pi_id)
     
+    print("\n🚚 TESTING DISPATCH & OFFER API ENDPOINTS...")
+    
+    # Test dispatch endpoints with different user roles
+    if customer_token and partner_token and owner_token:
+        # Test customer dispatch status tracking
+        if booking_id_now:
+            test_customer_dispatch_status(results, customer_token, booking_id_now)
+        
+        # Test partner offer polling and handling
+        test_partner_offer_polling(results, partner_token)
+        
+        # Create a test offer and test accept/decline
+        test_offer_id = create_test_dispatch_offer(results, booking_id_now if booking_id_now else "bk_test123")
+        if test_offer_id:
+            test_partner_accept_offer(results, partner_token, test_offer_id)
+            
+            # Create another offer for decline test
+            test_offer_id_2 = create_test_dispatch_offer(results, "bk_test456")
+            if test_offer_id_2:
+                test_partner_decline_offer(results, partner_token, test_offer_id_2)
+        
+        # Test customer booking cancellation
+        if booking_id_now:
+            test_customer_cancel_booking(results, customer_token, booking_id_now)
+        
+        # Test owner dispatch dashboard
+        test_owner_dispatch_dashboard(results, owner_token)
+        
+        # Test authentication requirements for dispatch endpoints
+        test_dispatch_endpoints_require_auth(results)
+        
+        # Test role-based access control
+        test_dispatch_role_access_control(results, customer_token, partner_token, owner_token)
+    
     # Print final results
     results.print_summary()
     
