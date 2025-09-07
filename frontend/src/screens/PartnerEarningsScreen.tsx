@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LineChart } from 'react-native-chart-kit';
 import { useAuth } from '../contexts/AuthContext';
+import Button from '../components/Button';
+import MockApiService from '../services/mockData';
 import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 
