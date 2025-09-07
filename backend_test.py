@@ -1052,6 +1052,39 @@ def main():
     if partner_token:
         switched_token = test_partner_role_switching(results, partner_token)
     
+    print("\n🏠 TESTING ADDRESS API ENDPOINTS...")
+    
+    # Test address endpoints with authentication
+    if customer_token:
+        # Test authentication requirements
+        test_addresses_require_auth(results)
+        
+        # Test address listing (empty initially)
+        test_list_addresses_empty(results, customer_token)
+        
+        # Test saving a valid address
+        address_id, saved_address = test_save_address_valid(results, customer_token)
+        
+        # Test listing addresses after saving
+        if address_id:
+            test_list_addresses_with_data(results, customer_token)
+            
+            # Test saving duplicate address
+            if saved_address:
+                test_save_duplicate_address(results, customer_token, saved_address)
+    
+    print("\n🔍 TESTING AUTOCOMPLETE API...")
+    
+    # Test autocomplete endpoints (no auth required)
+    test_autocomplete_short_query(results)
+    test_autocomplete_normal_query(results)
+    
+    print("\n⏱️ TESTING ETA PREVIEW API...")
+    
+    # Test ETA preview endpoints (no auth required)
+    test_eta_preview_now(results)
+    test_eta_preview_scheduled(results)
+    
     # Print final results
     results.print_summary()
     
