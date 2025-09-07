@@ -558,6 +558,13 @@ const CustomerDiscoveryScreen: React.FC = () => {
         </View>
       )}
 
+      {/* Pricing Disclaimer */}
+      <View style={styles.disclaimerContainer}>
+        <Text testID="discDisclaimer" style={styles.disclaimerText}>
+          💡 Prices set by SHINE. Final total may vary with surge and add-ons.
+        </Text>
+      </View>
+
       {/* Results List */}
       <FlatList
         testID="discResultsList"
