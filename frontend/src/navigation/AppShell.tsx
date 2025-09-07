@@ -470,7 +470,10 @@ export default function AppShell() {
             />
           </>
         )}
-      </Tab.Navigator>
+      
+      {/* Screen Watermark Overlay */}
+      <ScreenWatermark />
+    </Tab.Navigator>
   );
 }
 
