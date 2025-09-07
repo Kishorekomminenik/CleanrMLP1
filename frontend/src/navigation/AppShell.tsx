@@ -386,7 +386,6 @@ export default function AppShell() {
           </>
         )}
       </Tab.Navigator>
-    </NavigationContainer>
   );
 }
 
