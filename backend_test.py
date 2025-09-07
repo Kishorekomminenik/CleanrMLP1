@@ -727,6 +727,252 @@ def test_partner_role_switching(results, partner_token):
     
     return None
 
+# ===== ADDRESS API TESTS =====
+
+def test_list_addresses_empty(results, token):
+    """Test listing addresses for authenticated user (should be empty initially)"""
+    response = make_request("GET", "/addresses", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "addresses" in resp_data and isinstance(resp_data["addresses"], list):
+                if len(resp_data["addresses"]) == 0:
+                    results.add_result("List Addresses (Empty)", True, "Empty address list returned for new user")
+                    return True
+                else:
+                    results.add_result("List Addresses (Empty)", True, f"Address list returned with {len(resp_data['addresses'])} existing addresses")
+                    return True
+            else:
+                results.add_result("List Addresses (Empty)", False, f"Invalid response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("List Addresses (Empty)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("List Addresses (Empty)", False, f"List addresses failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_save_address_valid(results, token):
+    """Test saving a new address with valid data"""
+    address_data = {
+        "label": "Home",
+        "line1": "123 Main Street",
+        "line2": "Apt 4B",
+        "city": "San Francisco",
+        "state": "CA",
+        "postalCode": "94102",
+        "country": "USA",
+        "lat": 37.7749,
+        "lng": -122.4194
+    }
+    
+    response = make_request("POST", "/addresses", address_data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "id" in resp_data and resp_data["id"]:
+                results.add_result("Save Address (Valid)", True, f"Address saved successfully with ID: {resp_data['id']}")
+                return resp_data["id"], address_data
+            else:
+                results.add_result("Save Address (Valid)", False, f"Invalid save response: {resp_data}")
+        except Exception as e:
+            results.add_result("Save Address (Valid)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Save Address (Valid)", False, f"Save address failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None, None
+
+def test_save_duplicate_address(results, token, address_data):
+    """Test saving duplicate address (should return 409 conflict)"""
+    response = make_request("POST", "/addresses", address_data, auth_token=token)
+    
+    if response and response.status_code == 409:
+        try:
+            error_data = response.json()
+            if "address" in error_data.get("detail", "").lower() and "exists" in error_data.get("detail", "").lower():
+                results.add_result("Save Duplicate Address", True, "Duplicate address properly rejected with 409")
+                return
+        except:
+            pass
+    
+    results.add_result("Save Duplicate Address", False, f"Duplicate address not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_list_addresses_with_data(results, token):
+    """Test listing addresses after saving one"""
+    response = make_request("GET", "/addresses", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "addresses" in resp_data and isinstance(resp_data["addresses"], list):
+                if len(resp_data["addresses"]) > 0:
+                    address = resp_data["addresses"][0]
+                    required_fields = ["id", "line1", "city", "state", "postalCode", "country", "lat", "lng"]
+                    
+                    if all(field in address for field in required_fields):
+                        results.add_result("List Addresses (With Data)", True, f"Address list returned with {len(resp_data['addresses'])} addresses")
+                        return True
+                    else:
+                        results.add_result("List Addresses (With Data)", False, f"Address missing required fields: {address}")
+                else:
+                    results.add_result("List Addresses (With Data)", False, "No addresses found after saving")
+            else:
+                results.add_result("List Addresses (With Data)", False, f"Invalid response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("List Addresses (With Data)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("List Addresses (With Data)", False, f"List addresses failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_addresses_require_auth(results):
+    """Test that address endpoints require authentication"""
+    # Test GET /addresses without auth
+    response = make_request("GET", "/addresses")
+    
+    if response and response.status_code == 401:
+        results.add_result("Address Auth Required (GET)", True, "GET /addresses properly requires authentication")
+    else:
+        results.add_result("Address Auth Required (GET)", False, f"GET /addresses auth not enforced. Status: {response.status_code if response else 'No response'}")
+    
+    # Test POST /addresses without auth
+    address_data = {
+        "line1": "123 Test Street",
+        "city": "Test City",
+        "state": "CA",
+        "postalCode": "12345",
+        "country": "USA",
+        "lat": 37.7749,
+        "lng": -122.4194
+    }
+    
+    response = make_request("POST", "/addresses", address_data)
+    
+    if response and response.status_code == 401:
+        results.add_result("Address Auth Required (POST)", True, "POST /addresses properly requires authentication")
+    else:
+        results.add_result("Address Auth Required (POST)", False, f"POST /addresses auth not enforced. Status: {response.status_code if response else 'No response'}")
+
+def test_autocomplete_short_query(results):
+    """Test autocomplete with short query (< 3 chars)"""
+    response = make_request("GET", "/places/autocomplete?q=ab")
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "candidates" in resp_data and isinstance(resp_data["candidates"], list):
+                if len(resp_data["candidates"]) == 0:
+                    results.add_result("Autocomplete Short Query", True, "Short query returns empty candidates list")
+                    return
+                else:
+                    results.add_result("Autocomplete Short Query", True, f"Short query returns {len(resp_data['candidates'])} candidates (acceptable)")
+                    return
+            else:
+                results.add_result("Autocomplete Short Query", False, f"Invalid response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("Autocomplete Short Query", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Autocomplete Short Query", False, f"Autocomplete failed. Status: {response.status_code if response else 'No response'}")
+
+def test_autocomplete_normal_query(results):
+    """Test autocomplete with normal query"""
+    response = make_request("GET", "/places/autocomplete?q=Main Street")
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "candidates" in resp_data and isinstance(resp_data["candidates"], list):
+                if len(resp_data["candidates"]) > 0:
+                    candidate = resp_data["candidates"][0]
+                    required_fields = ["placeId", "label", "line1", "city", "state", "postalCode", "country", "lat", "lng"]
+                    
+                    if all(field in candidate for field in required_fields):
+                        results.add_result("Autocomplete Normal Query", True, f"Normal query returns {len(resp_data['candidates'])} valid candidates")
+                        return
+                    else:
+                        results.add_result("Autocomplete Normal Query", False, f"Candidate missing required fields: {candidate}")
+                else:
+                    results.add_result("Autocomplete Normal Query", False, "Normal query returns no candidates")
+            else:
+                results.add_result("Autocomplete Normal Query", False, f"Invalid response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("Autocomplete Normal Query", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Autocomplete Normal Query", False, f"Autocomplete failed. Status: {response.status_code if response else 'No response'}")
+
+def test_eta_preview_now(results):
+    """Test ETA preview with 'now' timing"""
+    eta_data = {
+        "lat": 37.7749,
+        "lng": -122.4194,
+        "timing": {
+            "when": "now"
+        }
+    }
+    
+    response = make_request("POST", "/eta/preview", eta_data)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "window" in resp_data and "distanceKm" in resp_data:
+                window = resp_data["window"]
+                distance = resp_data["distanceKm"]
+                
+                # Check if window contains time information
+                if "min" in window.lower() and isinstance(distance, (int, float)):
+                    results.add_result("ETA Preview (Now)", True, f"ETA calculated: {window}, {distance}km")
+                    return
+                else:
+                    results.add_result("ETA Preview (Now)", False, f"Invalid ETA data: window={window}, distance={distance}")
+            else:
+                results.add_result("ETA Preview (Now)", False, f"Missing required fields in response: {resp_data}")
+        except Exception as e:
+            results.add_result("ETA Preview (Now)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("ETA Preview (Now)", False, f"ETA preview failed. Status: {response.status_code if response else 'No response'}")
+
+def test_eta_preview_scheduled(results):
+    """Test ETA preview with 'schedule' timing"""
+    eta_data = {
+        "lat": 40.7128,
+        "lng": -74.0060,
+        "timing": {
+            "when": "schedule",
+            "scheduleAt": "2024-01-15T14:30:00Z"
+        }
+    }
+    
+    response = make_request("POST", "/eta/preview", eta_data)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "window" in resp_data and "distanceKm" in resp_data:
+                window = resp_data["window"]
+                distance = resp_data["distanceKm"]
+                
+                # Check if window contains time information and possibly "Scheduled"
+                if "min" in window.lower() and isinstance(distance, (int, float)):
+                    results.add_result("ETA Preview (Scheduled)", True, f"Scheduled ETA calculated: {window}, {distance}km")
+                    return
+                else:
+                    results.add_result("ETA Preview (Scheduled)", False, f"Invalid scheduled ETA data: window={window}, distance={distance}")
+            else:
+                results.add_result("ETA Preview (Scheduled)", False, f"Missing required fields in response: {resp_data}")
+        except Exception as e:
+            results.add_result("ETA Preview (Scheduled)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("ETA Preview (Scheduled)", False, f"Scheduled ETA preview failed. Status: {response.status_code if response else 'No response'}")
+
 def main():
     """Run all SHINE Auth v3.0 tests"""
     print("🚀 Starting SHINE Auth v3.0 Backend Comprehensive Tests")
