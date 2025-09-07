@@ -131,9 +131,20 @@ def make_request(method, endpoint, data=None, headers=None, auth_token=None):
 
 # ===== PRIORITY 1: PLATFORM PRICING SYSTEM =====
 
-def test_platform_pricing_engine(results):
+def test_platform_pricing_engine(results, customer_token):
     """Test PRIORITY 1: Platform Pricing System - Core pricing engine with surge calculation"""
     print(f"\n🏷️ TESTING PRIORITY 1: PLATFORM PRICING SYSTEM")
+    
+    if not customer_token:
+        results.add_result(
+            "Platform Pricing Engine Setup", 
+            False, 
+            "No customer token available", 
+            "PRICING", 
+            None,
+            is_critical=True
+        )
+        return
     
     # Test 1: Core Pricing Engine - POST /api/pricing/quote
     print("\n--- Testing Core Pricing Engine ---")
@@ -154,7 +165,7 @@ def test_platform_pricing_engine(results):
         }
     }
     
-    response, response_time = make_request("POST", "/pricing/quote", pricing_data)
+    response, response_time = make_request("POST", "/pricing/quote", pricing_data, auth_token=customer_token)
     if response and response.status_code == 200:
         try:
             resp_data = response.json()
