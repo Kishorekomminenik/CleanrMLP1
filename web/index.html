@@ -486,6 +486,8 @@
         
         // Switch between auth tabs
         function switchAuthTab(tab) {
+            console.log('Switching to tab:', tab);
+            
             // Update tab appearance
             document.querySelectorAll('.auth-tab').forEach(t => {
                 t.classList.remove('active');
@@ -493,8 +495,18 @@
             event.target.classList.add('active');
             
             // Show/hide forms
-            document.getElementById('signup-form').style.display = tab === 'signup' ? 'block' : 'none';
-            document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+            const signupForm = document.getElementById('signup-form');
+            const loginForm = document.getElementById('login-form');
+            
+            if (tab === 'signup') {
+                signupForm.style.display = 'block';
+                loginForm.style.display = 'none';
+                console.log('Showing signup form');
+            } else {
+                signupForm.style.display = 'none';
+                loginForm.style.display = 'block';
+                console.log('Showing login form');
+            }
             
             clearResults();
         }
