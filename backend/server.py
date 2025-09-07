@@ -4219,3 +4219,505 @@ async def create_indexes():
     
     # Initialize mock booking data for testing
     await initialize_mock_bookings()
+    
+    # Initialize mock discovery data for PAGE-12-DISCOVERY
+    await initialize_mock_discovery_data()
+
+# PAGE-12-DISCOVERY: Search & Favorites APIs
+
+# Discovery Models
+class SearchResultItem(BaseModel):
+    partnerId: str
+    partnerName: str
+    rating: float
+    badges: List[str]
+    serviceTypes: List[str]
+    distanceKm: float
+    priceHint: str
+    fav: bool
+
+class SearchResponse(BaseModel):
+    items: List[SearchResultItem]
+    nextPage: Optional[int] = None
+
+class PartnerService(BaseModel):
+    serviceType: str
+    price: float
+    duration: int  # minutes
+
+class PartnerReview(BaseModel):
+    customerName: str
+    rating: float
+    comment: str
+
+class PartnerProfile(BaseModel):
+    partnerId: str
+    name: str
+    rating: float
+    badges: List[str]
+    description: str
+    photos: List[str]
+    services: List[PartnerService]
+    recentReviews: List[PartnerReview]
+    status: str
+
+class FavoriteToggleRequest(BaseModel):
+    fav: bool
+
+class FavoriteToggleResponse(BaseModel):
+    ok: bool = True
+
+class FavoritesListResponse(BaseModel):
+    items: List[str]
+
+class TopSearchTerm(BaseModel):
+    term: str
+    count: int
+
+class TopFavoritePartner(BaseModel):
+    partnerId: str
+    count: int
+
+class DiscoveryAnalytics(BaseModel):
+    topSearches: List[TopSearchTerm]
+    topFavorites: List[TopFavoritePartner]
+
+# Mock data storage for discovery
+mock_partners = {}
+user_favorites = {}  # user_id -> set of partner_ids
+search_analytics = {}  # search_term -> count
+favorite_analytics = {}  # partner_id -> count
+
+async def initialize_mock_discovery_data():
+    """Initialize mock partner profiles and discovery data"""
+    global mock_partners
+    
+    mock_partners = {
+        "pa_101": {
+            "partnerId": "pa_101",
+            "name": "Sparkle Pros",
+            "rating": 4.9,
+            "badges": ["verified", "eco"],
+            "description": "Premium eco-friendly home cleaning service with 5+ years experience. We use only non-toxic, biodegradable products safe for families and pets. Fully insured and bonded.",
+            "photos": [
+                "https://cdn.example.com/partners/sparkle-pros-1.jpg",
+                "https://cdn.example.com/partners/sparkle-pros-2.jpg",
+                "https://cdn.example.com/partners/sparkle-pros-3.jpg"
+            ],
+            "services": [
+                {"serviceType": "Deep Clean", "price": 149.0, "duration": 180},
+                {"serviceType": "Standard Clean", "price": 89.0, "duration": 120},
+                {"serviceType": "Bathroom Only", "price": 49.0, "duration": 60}
+            ],
+            "recentReviews": [
+                {"customerName": "Sarah M.", "rating": 5.0, "comment": "Amazing work! Left my home spotless and smelling fresh."},
+                {"customerName": "James K.", "rating": 5.0, "comment": "On time, professional, and thorough. Highly recommend!"},
+                {"customerName": "Lisa R.", "rating": 4.8, "comment": "Great eco-friendly products. My allergies didn't act up at all."}
+            ],
+            "status": "verified",
+            "serviceTypes": ["Deep Clean", "Standard Clean", "Bathroom Only"],
+            "lat": 37.7749,
+            "lng": -122.4194,
+            "tags": ["eco", "green", "non-toxic", "family-safe", "pet-safe"]
+        },
+        "pa_102": {
+            "partnerId": "pa_102",
+            "name": "Shiny Homes",
+            "rating": 4.7,
+            "badges": ["verified"],
+            "description": "Reliable and affordable home cleaning services. Quick turnaround for busy families. Same-day service available.",
+            "photos": [
+                "https://cdn.example.com/partners/shiny-homes-1.jpg",
+                "https://cdn.example.com/partners/shiny-homes-2.jpg"
+            ],
+            "services": [
+                {"serviceType": "Standard Clean", "price": 79.0, "duration": 90},
+                {"serviceType": "Move-out Clean", "price": 129.0, "duration": 150}
+            ],
+            "recentReviews": [
+                {"customerName": "Mike D.", "rating": 4.5, "comment": "Good value for money. Got the job done."},
+                {"customerName": "Anna T.", "rating": 5.0, "comment": "Super fast and efficient. Perfect for my busy schedule."}
+            ],
+            "status": "verified",
+            "serviceTypes": ["Standard Clean", "Move-out Clean"],
+            "lat": 37.7849,
+            "lng": -122.4094,
+            "tags": ["fast", "affordable", "same-day", "reliable"]
+        },
+        "pa_103": {
+            "partnerId": "pa_103",
+            "name": "GreenThumb Lawn Care",
+            "rating": 4.8,
+            "badges": ["verified", "seasonal"],
+            "description": "Professional lawn care and landscaping services. Specializing in organic lawn treatments and seasonal maintenance.",
+            "photos": [
+                "https://cdn.example.com/partners/greenthumb-1.jpg",
+                "https://cdn.example.com/partners/greenthumb-2.jpg"
+            ],
+            "services": [
+                {"serviceType": "Lawn Mowing", "price": 45.0, "duration": 45},
+                {"serviceType": "Landscaping", "price": 120.0, "duration": 240},
+                {"serviceType": "Seasonal Cleanup", "price": 85.0, "duration": 120}
+            ],
+            "recentReviews": [
+                {"customerName": "Robert L.", "rating": 5.0, "comment": "Transformed my backyard! Professional and knowledgeable."},
+                {"customerName": "Emily W.", "rating": 4.6, "comment": "Great organic approach. My lawn has never looked better."}
+            ],
+            "status": "verified",
+            "serviceTypes": ["Lawn Mowing", "Landscaping", "Seasonal Cleanup"],
+            "lat": 37.7649,
+            "lng": -122.4294,
+            "tags": ["organic", "lawn", "landscaping", "seasonal", "backyard"]
+        },
+        "pa_104": {
+            "partnerId": "pa_104",
+            "name": "Paws & Walk",
+            "rating": 4.6,
+            "badges": ["verified", "insured"],
+            "description": "Trusted dog walking and pet care services. All walkers are background-checked and insured. GPS tracking for all walks.",
+            "photos": [
+                "https://cdn.example.com/partners/paws-walk-1.jpg"
+            ],
+            "services": [
+                {"serviceType": "Dog Walk", "price": 25.0, "duration": 30},
+                {"serviceType": "Pet Sitting", "price": 40.0, "duration": 60}
+            ],
+            "recentReviews": [
+                {"customerName": "Jennifer S.", "rating": 4.8, "comment": "Love the GPS tracking! My dog is always happy after walks."},
+                {"customerName": "Mark P.", "rating": 4.4, "comment": "Reliable and trustworthy. Great communication."}
+            ],
+            "status": "verified",
+            "serviceTypes": ["Dog Walk", "Pet Sitting"],
+            "lat": 37.7549,
+            "lng": -122.4394,
+            "tags": ["dog", "pet", "walk", "sitting", "gps", "insured"]
+        },
+        "pa_105": {
+            "partnerId": "pa_105",
+            "name": "Beauty At Home",
+            "rating": 4.5,
+            "badges": ["pending"],
+            "description": "Mobile beauty services brought to your home. Licensed cosmetologist with 10+ years experience.",
+            "photos": [
+                "https://cdn.example.com/partners/beauty-home-1.jpg"
+            ],
+            "services": [
+                {"serviceType": "Hair Cut", "price": 65.0, "duration": 60},
+                {"serviceType": "Manicure", "price": 35.0, "duration": 45}
+            ],
+            "recentReviews": [
+                {"customerName": "Amanda R.", "rating": 4.5, "comment": "Convenient service but still working on consistency."}
+            ],
+            "status": "pending",
+            "serviceTypes": ["Hair Cut", "Manicure"],
+            "lat": 37.7749,
+            "lng": -122.4094,
+            "tags": ["beauty", "hair", "nails", "mobile", "home"]
+        }
+    }
+    
+    # Initialize search analytics
+    global search_analytics, favorite_analytics
+    search_analytics = {
+        "clean": 145,
+        "cleaning": 132,
+        "lawn": 89,
+        "dog walk": 67,
+        "beauty": 43,
+        "sparkle": 28,
+        "eco": 19,
+        "deep clean": 15
+    }
+    
+    favorite_analytics = {
+        "pa_101": 32,
+        "pa_102": 28,
+        "pa_103": 21,
+        "pa_104": 19,
+        "pa_105": 8
+    }
+    
+    print("Mock discovery data initialized")
+
+def calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Calculate distance between two points in kilometers (simplified)"""
+    # Simplified distance calculation for demo
+    import math
+    
+    lat_diff = abs(lat1 - lat2)
+    lng_diff = abs(lng1 - lng2)
+    
+    # Rough approximation: 1 degree ≈ 111 km
+    distance = math.sqrt((lat_diff * 111) ** 2 + (lng_diff * 111) ** 2)
+    return round(distance, 1)
+
+def fuzzy_match(query: str, text: str, max_distance: int = 1) -> bool:
+    """Simple fuzzy matching with edit distance"""
+    if len(query) < 4:
+        return query.lower() in text.lower()
+    
+    # Simple edit distance for fuzzy matching
+    query = query.lower()
+    text = text.lower()
+    
+    if query in text:
+        return True
+    
+    # Check for single character differences
+    for i in range(len(query)):
+        modified = query[:i] + query[i+1:]  # Remove character
+        if modified in text:
+            return True
+        
+        if i < len(text):
+            modified = query[:i] + text[i] + query[i+1:]  # Replace character
+            if modified in text:
+                return True
+    
+    return False
+
+@api_router.get("/discovery/search", response_model=SearchResponse)
+async def search_partners(
+    q: str = Query("", description="Search query"),
+    filter: str = Query("All", description="Service category filter"),
+    lat: float = Query(37.7749, description="User latitude"),
+    lng: float = Query(-122.4194, description="User longitude"),
+    radiusKm: float = Query(10.0, description="Search radius in km"),
+    sort: str = Query("relevance", description="Sort order: relevance|rating|distance"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """Search for partners with filters and pagination"""
+    
+    # Validate query length
+    if q and len(q) < 2:
+        raise HTTPException(status_code=400, detail="Search query must be at least 2 characters")
+    
+    # Sanitize query
+    q = q.strip()[:64] if q else ""
+    
+    # Get user's favorites
+    user_favs = user_favorites.get(current_user.id, set())
+    
+    # Filter partners
+    matching_partners = []
+    
+    for partner_id, partner_data in mock_partners.items():
+        # Calculate distance
+        distance = calculate_distance(lat, lng, partner_data["lat"], partner_data["lng"])
+        
+        # Filter by radius
+        if distance > radiusKm:
+            continue
+        
+        # Filter by category
+        if filter != "All":
+            category_mapping = {
+                "Cleaning": ["Deep Clean", "Standard Clean", "Bathroom Only", "Move-out Clean"],
+                "Lawn": ["Lawn Mowing", "Landscaping", "Seasonal Cleanup"],
+                "Dog Walk": ["Dog Walk", "Pet Sitting"],
+                "Beauty": ["Hair Cut", "Manicure"],
+                "Snow": ["Snow Removal"],
+                "Baby Care": ["Baby Care"]
+            }
+            
+            if filter in category_mapping:
+                category_services = category_mapping[filter]
+                if not any(service in partner_data["serviceTypes"] for service in category_services):
+                    continue
+        
+        # Search matching
+        matches_search = True
+        if q:
+            # Check partner name, service types, and tags
+            search_fields = [
+                partner_data["name"],
+                " ".join(partner_data["serviceTypes"]),
+                " ".join(partner_data.get("tags", []))
+            ]
+            
+            matches_search = any(
+                fuzzy_match(q, field) for field in search_fields
+            )
+        
+        if matches_search:
+            # Calculate price hint
+            min_price = min(service["price"] for service in partner_data["services"])
+            price_hint = f"From ${int(min_price)}"
+            
+            matching_partners.append({
+                "partner_data": partner_data,
+                "distance": distance,
+                "price_hint": price_hint,
+                "is_favorite": partner_id in user_favs
+            })
+    
+    # Sort results
+    if sort == "rating":
+        matching_partners.sort(key=lambda x: x["partner_data"]["rating"], reverse=True)
+    elif sort == "distance":
+        matching_partners.sort(key=lambda x: x["distance"])
+    else:  # relevance (default)
+        # Simple relevance: rating + inverse distance
+        matching_partners.sort(key=lambda x: x["partner_data"]["rating"] - (x["distance"] / 10), reverse=True)
+    
+    # Pagination
+    start_idx = (page - 1) * size
+    end_idx = start_idx + size
+    page_partners = matching_partners[start_idx:end_idx + 1]  # Get one extra to check if there's next page
+    
+    has_next_page = len(page_partners) > size
+    if has_next_page:
+        page_partners = page_partners[:-1]  # Remove extra item
+    
+    # Build response
+    items = []
+    for partner_info in page_partners:
+        partner_data = partner_info["partner_data"]
+        items.append(SearchResultItem(
+            partnerId=partner_data["partnerId"],
+            partnerName=partner_data["name"],
+            rating=partner_data["rating"],
+            badges=partner_data["badges"],
+            serviceTypes=partner_data["serviceTypes"],
+            distanceKm=partner_info["distance"],
+            priceHint=partner_info["price_hint"],
+            fav=partner_info["is_favorite"]
+        ))
+    
+    # Track search analytics
+    if q:
+        search_analytics[q.lower()] = search_analytics.get(q.lower(), 0) + 1
+    
+    # Telemetry
+    print(f"Telemetry: discovery.search - role: {current_user.role}, query: '{q}', filter: {filter}, results: {len(items)}")
+    
+    return SearchResponse(
+        items=items,
+        nextPage=page + 1 if has_next_page else None
+    )
+
+@api_router.get("/partners/{partner_id}/profile", response_model=PartnerProfile)
+async def get_partner_profile(
+    partner_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed partner profile"""
+    
+    if partner_id not in mock_partners:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    
+    partner_data = mock_partners[partner_id]
+    
+    # Convert to response format
+    services = [
+        PartnerService(
+            serviceType=service["serviceType"],
+            price=service["price"],
+            duration=service["duration"]
+        )
+        for service in partner_data["services"]
+    ]
+    
+    reviews = [
+        PartnerReview(
+            customerName=review["customerName"],
+            rating=review["rating"],
+            comment=review["comment"]
+        )
+        for review in partner_data["recentReviews"]
+    ]
+    
+    # Telemetry
+    print(f"Telemetry: discovery.partner.profile.open - role: {current_user.role}, partnerId: {partner_id}")
+    
+    return PartnerProfile(
+        partnerId=partner_data["partnerId"],
+        name=partner_data["name"],
+        rating=partner_data["rating"],
+        badges=partner_data["badges"],
+        description=partner_data["description"],
+        photos=partner_data["photos"],
+        services=services,
+        recentReviews=reviews,
+        status=partner_data["status"]
+    )
+
+@api_router.post("/favorites/{partner_id}", response_model=FavoriteToggleResponse)
+async def toggle_favorite(
+    partner_id: str,
+    request: FavoriteToggleRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle partner favorite status"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Only customers can manage favorites")
+    
+    if partner_id not in mock_partners:
+        raise HTTPException(status_code=404, detail="Partner not found")
+    
+    # Initialize user favorites if not exists
+    if current_user.id not in user_favorites:
+        user_favorites[current_user.id] = set()
+    
+    user_favs = user_favorites[current_user.id]
+    
+    # Check favorites limit
+    if request.fav and len(user_favs) >= 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 favorites allowed")
+    
+    # Toggle favorite
+    if request.fav:
+        user_favs.add(partner_id)
+        # Update analytics
+        favorite_analytics[partner_id] = favorite_analytics.get(partner_id, 0) + 1
+    else:
+        user_favs.discard(partner_id)
+        # Update analytics (decrement)
+        if partner_id in favorite_analytics and favorite_analytics[partner_id] > 0:
+            favorite_analytics[partner_id] -= 1
+    
+    # Telemetry
+    print(f"Telemetry: discovery.favorite.toggle - role: {current_user.role}, partnerId: {partner_id}, favState: {request.fav}")
+    
+    return FavoriteToggleResponse(ok=True)
+
+@api_router.get("/favorites", response_model=FavoritesListResponse)
+async def list_favorites(current_user: User = Depends(get_current_user)):
+    """Get user's favorite partners"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Only customers can view favorites")
+    
+    user_favs = user_favorites.get(current_user.id, set())
+    
+    return FavoritesListResponse(items=list(user_favs))
+
+@api_router.get("/analytics/discovery", response_model=DiscoveryAnalytics)
+async def get_discovery_analytics(current_user: User = Depends(get_current_user)):
+    """Get discovery analytics for owners"""
+    
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    # Top searches (sorted by count)
+    top_searches = [
+        TopSearchTerm(term=term, count=count)
+        for term, count in sorted(search_analytics.items(), key=lambda x: x[1], reverse=True)[:10]
+    ]
+    
+    # Top favorites (sorted by count)
+    top_favorites = [
+        TopFavoritePartner(partnerId=partner_id, count=count)
+        for partner_id, count in sorted(favorite_analytics.items(), key=lambda x: x[1], reverse=True)[:10]
+    ]
+    
+    # Telemetry
+    print(f"Telemetry: discovery.analytics.view - role: {current_user.role}")
+    
+    return DiscoveryAnalytics(
+        topSearches=top_searches,
+        topFavorites=top_favorites
+    )
