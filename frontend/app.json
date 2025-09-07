@@ -8,6 +8,9 @@
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "extra": {
+      "EXPO_PUBLIC_BACKEND_URL": "https://4d887c9a-9eda-43bf-b7bc-8ea882f55f7b.preview.emergentagent.com"
+    },
     "ios": {
       "supportsTablet": true
     },
