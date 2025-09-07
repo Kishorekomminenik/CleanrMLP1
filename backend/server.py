@@ -1404,6 +1404,345 @@ async def void_preauth(request: VoidPreauthRequest):
     # Mock successful void
     return VoidPreauthResponse(ok=True)
 
+# Dispatch & Offer Models
+class PartnerInfo(BaseModel):
+    id: str
+    name: str
+    rating: float
+    etaMinutes: int
+    distanceKm: float
+
+class CustomerStatusResponse(BaseModel):
+    state: str  # searching|assigned|no_match|cancelled
+    waitMins: int
+    zone: str
+    partner: Optional[PartnerInfo] = None
+
+class Offer(BaseModel):
+    offerId: str
+    bookingId: str
+    serviceType: str
+    addressShort: str
+    distanceKm: float
+    etaMinutes: int
+    when: str
+    scheduleAt: Optional[str] = None
+    payout: float
+    currency: str = "usd"
+    surge: dict
+    countdownSec: int
+
+class OfferMessage(BaseModel):
+    type: str
+    offer: Optional[Offer] = None
+    offerId: Optional[str] = None
+    detail: Optional[str] = None
+
+class AcceptOfferRequest(BaseModel):
+    idempotencyKey: str
+
+class AcceptOfferResponse(BaseModel):
+    assigned: bool
+    bookingId: str
+
+class DeclineOfferResponse(BaseModel):
+    ok: bool
+
+class CustomerCancelRequest(BaseModel):
+    reason: str
+
+class CustomerCancelResponse(BaseModel):
+    ok: bool
+    refundCredit: Optional[float] = None
+    fee: Optional[float] = None
+
+class OwnerDispatchKPIs(BaseModel):
+    avgTimeToAssign: float
+    acceptRate: float
+    offersActive: int
+    offersExpired: int
+
+class OwnerDispatchOffer(BaseModel):
+    offerId: str
+    bookingId: str
+    zone: str
+    state: str
+    pings: int
+    surge: float
+
+class OwnerDispatchResponse(BaseModel):
+    kpis: OwnerDispatchKPIs
+    offers: List[OwnerDispatchOffer]
+
+# In-memory dispatch state (in production, use Redis)
+active_offers = {}  # offerId -> offer_data
+booking_status = {}  # bookingId -> status_data
+partner_connections = {}  # partner_id -> websocket_connection
+
+# Dispatch API Endpoints
+@api_router.get("/dispatch/status/{booking_id}", response_model=CustomerStatusResponse)
+async def get_customer_dispatch_status(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get customer dispatch status for a booking"""
+    
+    # Mock dispatch status based on booking_id
+    if booking_id not in booking_status:
+        # Initialize new booking dispatch
+        booking_status[booking_id] = {
+            "state": "searching",
+            "waitMins": 3,
+            "zone": "downtown_sf",
+            "startTime": datetime.utcnow(),
+            "partner": None
+        }
+    
+    status = booking_status[booking_id]
+    
+    # Simulate progression over time
+    elapsed_mins = (datetime.utcnow() - status["startTime"]).total_seconds() / 60
+    
+    if elapsed_mins > 8:  # After 8 minutes, assign a partner
+        if status["state"] == "searching":
+            status["state"] = "assigned"
+            status["partner"] = {
+                "id": "partner_123",
+                "name": "Alex M.",
+                "rating": 4.8,
+                "etaMinutes": 12,
+                "distanceKm": 2.3
+            }
+    elif elapsed_mins > 15:  # After 15 minutes, no match
+        if status["state"] == "searching":
+            status["state"] = "no_match"
+    
+    return CustomerStatusResponse(
+        state=status["state"],
+        waitMins=max(1, int(status["waitMins"] - elapsed_mins)),
+        zone=status["zone"],
+        partner=PartnerInfo(**status["partner"]) if status["partner"] else None
+    )
+
+@api_router.get("/partner/offers/poll")
+async def poll_partner_offers(current_user: User = Depends(get_current_user)):
+    """Polling fallback for partner offers"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Check for active offers for this partner
+    partner_offers = [
+        offer for offer in active_offers.values() 
+        if offer.get("targetPartnerId") == current_user.id
+    ]
+    
+    if partner_offers:
+        offer_data = partner_offers[0]  # Return first offer
+        return {"offer": offer_data}
+    
+    return {"offer": None}
+
+@api_router.post("/partner/offers/{offer_id}/accept", response_model=AcceptOfferResponse)
+async def accept_offer(
+    offer_id: str,
+    request: AcceptOfferRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Accept a partner offer"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Check if offer exists and is still valid
+    if offer_id not in active_offers:
+        raise HTTPException(status_code=410, detail="Offer expired")
+    
+    offer = active_offers[offer_id]
+    
+    # Check if already taken by another partner
+    if offer.get("status") == "accepted":
+        raise HTTPException(status_code=409, detail="Offer already taken")
+    
+    # Check partner eligibility
+    if current_user.partner_status != "verified":
+        raise HTTPException(status_code=423, detail="Partner not eligible")
+    
+    # Accept the offer
+    offer["status"] = "accepted"
+    offer["acceptedBy"] = current_user.id
+    offer["acceptedAt"] = datetime.utcnow()
+    
+    # Update booking status
+    booking_id = offer["bookingId"]
+    if booking_id in booking_status:
+        booking_status[booking_id]["state"] = "assigned"
+        booking_status[booking_id]["partner"] = {
+            "id": current_user.id,
+            "name": f"{current_user.email.split('@')[0]} P.",
+            "rating": 4.7,
+            "etaMinutes": offer["etaMinutes"],
+            "distanceKm": offer["distanceKm"]
+        }
+    
+    # Store idempotency key to prevent double accepts
+    offer["idempotencyKey"] = request.idempotencyKey
+    
+    return AcceptOfferResponse(
+        assigned=True,
+        bookingId=booking_id
+    )
+
+@api_router.post("/partner/offers/{offer_id}/decline", response_model=DeclineOfferResponse)
+async def decline_offer(
+    offer_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Decline a partner offer"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Mark offer as declined
+    if offer_id in active_offers:
+        active_offers[offer_id]["status"] = "declined"
+        active_offers[offer_id]["declinedBy"] = current_user.id
+        active_offers[offer_id]["declinedAt"] = datetime.utcnow()
+    
+    return DeclineOfferResponse(ok=True)
+
+@api_router.post("/bookings/{booking_id}/cancel", response_model=CustomerCancelResponse)
+async def cancel_booking(
+    booking_id: str,
+    request: CustomerCancelRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Cancel a customer booking"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Check booking status
+    if booking_id not in booking_status:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    status = booking_status[booking_id]
+    
+    # Check if can cancel
+    if status["state"] == "assigned":
+        raise HTTPException(status_code=409, detail="Cannot cancel after partner accepted")
+    
+    # Calculate cancellation fee/refund based on timing
+    elapsed_mins = (datetime.utcnow() - status["startTime"]).total_seconds() / 60
+    
+    fee = None
+    refund_credit = None
+    
+    if elapsed_mins < 5:  # Free cancellation window
+        refund_credit = 0.0
+    elif elapsed_mins < 10:  # Small fee
+        fee = 5.0
+    else:  # Larger fee  
+        fee = 10.0
+    
+    # Update booking status
+    status["state"] = "cancelled"
+    status["cancelReason"] = request.reason
+    status["cancelledAt"] = datetime.utcnow()
+    
+    return CustomerCancelResponse(
+        ok=True,
+        refundCredit=refund_credit,
+        fee=fee
+    )
+
+@api_router.get("/owner/dispatch", response_model=OwnerDispatchResponse)
+async def get_owner_dispatch_dashboard(current_user: User = Depends(get_current_user)):
+    """Get owner dispatch dashboard with live metrics"""
+    
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    # Calculate KPIs from active data
+    total_offers = len(active_offers)
+    accepted_offers = len([o for o in active_offers.values() if o.get("status") == "accepted"])
+    expired_offers = len([o for o in active_offers.values() if o.get("status") == "expired"])
+    
+    accept_rate = (accepted_offers / max(1, total_offers)) * 100
+    
+    # Mock average time to assign
+    avg_time_to_assign = 4.2  # minutes
+    
+    kpis = OwnerDispatchKPIs(
+        avgTimeToAssign=avg_time_to_assign,
+        acceptRate=accept_rate,
+        offersActive=total_offers - accepted_offers - expired_offers,
+        offersExpired=expired_offers
+    )
+    
+    # Format offers for table
+    offers_list = []
+    for offer_id, offer_data in active_offers.items():
+        offers_list.append(OwnerDispatchOffer(
+            offerId=offer_id,
+            bookingId=offer_data.get("bookingId", ""),
+            zone=offer_data.get("zone", "downtown_sf"),
+            state=offer_data.get("status", "offered"),
+            pings=offer_data.get("pings", 1),
+            surge=offer_data.get("surge", {}).get("multiplier", 1.0)
+        ))
+    
+    return OwnerDispatchResponse(
+        kpis=kpis,
+        offers=offers_list
+    )
+
+# Helper function to create mock offers (called when bookings are created)
+def create_dispatch_offer(booking_id: str, service_data: dict):
+    """Create a new dispatch offer for partners"""
+    
+    offer_id = f"of_{secrets.token_urlsafe(16)}"
+    
+    # Mock surge based on time/demand
+    current_hour = datetime.utcnow().hour
+    surge_active = current_hour in [7, 8, 17, 18, 19]  # Rush hours
+    surge_multiplier = 1.5 if surge_active else 1.0
+    
+    offer_data = {
+        "offerId": offer_id,
+        "bookingId": booking_id,
+        "serviceType": service_data.get("serviceType", "basic"),
+        "addressShort": "Downtown SF",  # Masked address
+        "distanceKm": round(2.0 + (hash(booking_id) % 5), 1),
+        "etaMinutes": 8 + (hash(booking_id) % 10),
+        "when": service_data.get("timing", {}).get("when", "now"),
+        "scheduleAt": service_data.get("timing", {}).get("scheduleAt"),
+        "payout": 45.0 * surge_multiplier,
+        "currency": "usd",
+        "surge": {
+            "active": surge_active,
+            "multiplier": surge_multiplier
+        },
+        "countdownSec": 25,
+        "status": "offered",
+        "createdAt": datetime.utcnow(),
+        "zone": "downtown_sf",
+        "pings": 1
+    }
+    
+    active_offers[offer_id] = offer_data
+    
+    # Initialize booking status for customer tracking
+    booking_status[booking_id] = {
+        "state": "searching",
+        "waitMins": 5,
+        "zone": "downtown_sf",
+        "startTime": datetime.utcnow(),
+        "partner": None
+    }
+    
+    return offer_data
+
 # Original routes
 @api_router.get("/")
 async def root():
