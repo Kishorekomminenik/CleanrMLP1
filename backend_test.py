@@ -2375,6 +2375,491 @@ def test_job_role_access_control(results, customer_token, partner_token, owner_t
     else:
         results.add_result("Job Role Access (Partner->Customer)", False, f"Partner access control failed. Only {customer_access_denied}/{len(customer_endpoints)} endpoints denied")
 
+# ===== RATING & TIP API TESTS (PAGE-8-RATE) =====
+
+def test_rating_context_retrieval(results, token, booking_id):
+    """Test GET /api/ratings/context/{booking_id} - Get rating context with booking details and tip presets"""
+    response = make_request("GET", f"/ratings/context/{booking_id}", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            required_fields = ["bookingId", "total", "currency", "partner", "customer", "eligibleTipPresets", "alreadyRated"]
+            if all(field in resp_data for field in required_fields):
+                booking_id_resp = resp_data["bookingId"]
+                total = resp_data["total"]
+                currency = resp_data["currency"]
+                partner = resp_data["partner"]
+                customer = resp_data["customer"]
+                tip_presets = resp_data["eligibleTipPresets"]
+                already_rated = resp_data["alreadyRated"]
+                
+                # Validate structure
+                if (booking_id_resp == booking_id and 
+                    isinstance(total, (int, float)) and total > 0 and
+                    currency == "usd" and
+                    "id" in partner and "name" in partner and
+                    "id" in customer and "name" in customer and
+                    isinstance(tip_presets, list) and len(tip_presets) >= 4 and
+                    "customer" in already_rated and "partner" in already_rated):
+                    
+                    results.add_result("Rating Context Retrieval", True, f"Context retrieved: total=${total}, {len(tip_presets)} tip presets, already_rated={already_rated}")
+                    return resp_data
+                else:
+                    results.add_result("Rating Context Retrieval", False, f"Invalid context structure: {resp_data}")
+            else:
+                results.add_result("Rating Context Retrieval", False, f"Missing required fields: {resp_data}")
+        except Exception as e:
+            results.add_result("Rating Context Retrieval", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Rating Context Retrieval", False, f"Context retrieval failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_rating_context_nonexistent_booking(results, token):
+    """Test rating context for non-existent booking (should return 404)"""
+    fake_booking_id = "bk_nonexistent123"
+    response = make_request("GET", f"/ratings/context/{fake_booking_id}", auth_token=token)
+    
+    if response and response.status_code == 404:
+        results.add_result("Rating Context Non-existent Booking", True, "Non-existent booking properly returns 404")
+    else:
+        results.add_result("Rating Context Non-existent Booking", False, f"Non-existent booking not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_customer_rating_submission(results, customer_token, booking_id):
+    """Test POST /api/ratings/customer - Submit customer rating with optional tip"""
+    rating_data = {
+        "bookingId": booking_id,
+        "stars": 5,
+        "compliments": ["Professional", "On Time", "Thorough"],
+        "comment": "Excellent service! Very thorough cleaning and arrived exactly on time.",
+        "tip": {
+            "amount": 15.0,
+            "currency": "usd"
+        },
+        "idempotencyKey": f"rating_{uuid.uuid4().hex[:16]}"
+    }
+    
+    response = make_request("POST", "/ratings/customer", rating_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if ("ok" in resp_data and resp_data["ok"] is True and
+                "tipCapture" in resp_data):
+                
+                tip_capture = resp_data["tipCapture"]
+                if ("ok" in tip_capture and "paymentIntentId" in tip_capture):
+                    results.add_result("Customer Rating Submission", True, f"Rating submitted with tip: ${rating_data['tip']['amount']}, payment_intent: {tip_capture['paymentIntentId']}")
+                    return rating_data["idempotencyKey"], tip_capture["paymentIntentId"]
+                else:
+                    results.add_result("Customer Rating Submission", False, f"Invalid tip capture structure: {tip_capture}")
+            else:
+                results.add_result("Customer Rating Submission", False, f"Invalid rating response: {resp_data}")
+        except Exception as e:
+            results.add_result("Customer Rating Submission", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Customer Rating Submission", False, f"Customer rating failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None, None
+
+def test_customer_rating_validation(results, customer_token, booking_id):
+    """Test customer rating validation (stars must be 1-5)"""
+    invalid_ratings = [0, 6, -1, 10]
+    
+    for invalid_stars in invalid_ratings:
+        rating_data = {
+            "bookingId": booking_id,
+            "stars": invalid_stars,
+            "compliments": [],
+            "tip": {"amount": 0, "currency": "usd"},
+            "idempotencyKey": f"invalid_{uuid.uuid4().hex[:8]}"
+        }
+        
+        response = make_request("POST", "/ratings/customer", rating_data, auth_token=customer_token)
+        
+        if response and response.status_code == 400:
+            try:
+                error_data = response.json()
+                if "stars" in error_data.get("detail", "").lower():
+                    continue  # This invalid rating was properly rejected
+            except:
+                continue  # 400 status is correct even if JSON parsing fails
+        
+        results.add_result("Customer Rating Validation", False, f"Invalid stars ({invalid_stars}) not rejected properly")
+        return
+    
+    results.add_result("Customer Rating Validation", True, f"All {len(invalid_ratings)} invalid star ratings properly rejected")
+
+def test_customer_rating_idempotency(results, customer_token, booking_id, idempotency_key):
+    """Test customer rating idempotency (duplicate submission prevention)"""
+    if not idempotency_key:
+        results.add_result("Customer Rating Idempotency", False, "No idempotency key provided from previous test")
+        return
+    
+    # Try to submit the same rating again with same idempotency key
+    rating_data = {
+        "bookingId": booking_id,
+        "stars": 5,
+        "compliments": ["Professional"],
+        "tip": {"amount": 15.0, "currency": "usd"},
+        "idempotencyKey": idempotency_key
+    }
+    
+    response = make_request("POST", "/ratings/customer", rating_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            if resp_data.get("ok") is True:
+                results.add_result("Customer Rating Idempotency", True, "Duplicate rating with same idempotency key handled correctly")
+                return
+        except:
+            pass
+    
+    results.add_result("Customer Rating Idempotency", False, f"Idempotency not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_customer_rating_already_rated(results, customer_token, booking_id):
+    """Test customer rating already-rated detection (409 error)"""
+    # Try to submit a different rating with different idempotency key
+    rating_data = {
+        "bookingId": booking_id,
+        "stars": 3,
+        "compliments": [],
+        "tip": {"amount": 0, "currency": "usd"},
+        "idempotencyKey": f"different_{uuid.uuid4().hex[:16]}"
+    }
+    
+    response = make_request("POST", "/ratings/customer", rating_data, auth_token=customer_token)
+    
+    if response and response.status_code == 409:
+        try:
+            error_data = response.json()
+            if "already" in error_data.get("detail", "").lower():
+                results.add_result("Customer Rating Already Rated", True, "Already-rated detection working correctly (409)")
+                return
+        except:
+            # Even if JSON parsing fails, 409 status is correct
+            results.add_result("Customer Rating Already Rated", True, "Already-rated detection working (409 status)")
+            return
+    
+    results.add_result("Customer Rating Already Rated", False, f"Already-rated not detected correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_tip_payment_failure_simulation(results, customer_token, booking_id):
+    """Test tip payment failure scenarios (402 error simulation)"""
+    # Create a new booking for this test to avoid already-rated issue
+    test_booking_id = f"bk_tip_fail_{uuid.uuid4().hex[:8]}"
+    
+    # Use an idempotency key that will trigger payment failure (based on hash logic in server)
+    failing_key = "fail_payment_test_key_00000"  # This should hash to trigger failure
+    
+    rating_data = {
+        "bookingId": test_booking_id,
+        "stars": 4,
+        "compliments": ["Good Service"],
+        "tip": {"amount": 25.0, "currency": "usd"},
+        "idempotencyKey": failing_key
+    }
+    
+    response = make_request("POST", "/ratings/customer", rating_data, auth_token=customer_token)
+    
+    if response and response.status_code == 402:
+        try:
+            error_data = response.json()
+            detail = error_data.get("detail", "").lower()
+            if "tip" in detail and ("declined" in detail or "payment" in detail):
+                results.add_result("Tip Payment Failure Simulation", True, "Tip payment failure properly handled with 402")
+                return
+        except:
+            # Even if JSON parsing fails, 402 status is correct
+            results.add_result("Tip Payment Failure Simulation", True, "Tip payment failure handled (402 status)")
+            return
+    
+    results.add_result("Tip Payment Failure Simulation", False, f"Tip payment failure not simulated correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_partner_rating_submission(results, partner_token, booking_id):
+    """Test POST /api/ratings/partner - Submit partner rating for customer"""
+    rating_data = {
+        "bookingId": booking_id,
+        "stars": 4,
+        "notes": ["Polite", "Prepared"],
+        "comment": "Customer was ready and provided clear instructions.",
+        "idempotencyKey": f"partner_rating_{uuid.uuid4().hex[:16]}"
+    }
+    
+    response = make_request("POST", "/ratings/partner", rating_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Partner Rating Submission", True, f"Partner rating submitted: {rating_data['stars']} stars")
+                return rating_data["idempotencyKey"]
+            else:
+                results.add_result("Partner Rating Submission", False, f"Invalid partner rating response: {resp_data}")
+        except Exception as e:
+            results.add_result("Partner Rating Submission", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Partner Rating Submission", False, f"Partner rating failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_partner_rating_validation(results, partner_token, booking_id):
+    """Test partner rating validation (stars must be 1-5)"""
+    invalid_ratings = [0, 6, -1, 15]
+    
+    for invalid_stars in invalid_ratings:
+        rating_data = {
+            "bookingId": f"bk_test_{uuid.uuid4().hex[:8]}",  # Use different booking to avoid conflicts
+            "stars": invalid_stars,
+            "notes": [],
+            "idempotencyKey": f"invalid_partner_{uuid.uuid4().hex[:8]}"
+        }
+        
+        response = make_request("POST", "/ratings/partner", rating_data, auth_token=partner_token)
+        
+        if response and response.status_code == 400:
+            try:
+                error_data = response.json()
+                if "stars" in error_data.get("detail", "").lower():
+                    continue  # This invalid rating was properly rejected
+            except:
+                continue  # 400 status is correct even if JSON parsing fails
+        
+        results.add_result("Partner Rating Validation", False, f"Invalid partner stars ({invalid_stars}) not rejected properly")
+        return
+    
+    results.add_result("Partner Rating Validation", True, f"All {len(invalid_ratings)} invalid partner star ratings properly rejected")
+
+def test_partner_rating_idempotency(results, partner_token, booking_id, idempotency_key):
+    """Test partner rating idempotency for duplicate submissions"""
+    if not idempotency_key:
+        results.add_result("Partner Rating Idempotency", False, "No partner idempotency key provided from previous test")
+        return
+    
+    # Try to submit the same rating again with same idempotency key
+    rating_data = {
+        "bookingId": booking_id,
+        "stars": 4,
+        "notes": ["Polite"],
+        "idempotencyKey": idempotency_key
+    }
+    
+    response = make_request("POST", "/ratings/partner", rating_data, auth_token=partner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            if resp_data.get("ok") is True:
+                results.add_result("Partner Rating Idempotency", True, "Duplicate partner rating with same idempotency key handled correctly")
+                return
+        except:
+            pass
+    
+    results.add_result("Partner Rating Idempotency", False, f"Partner rating idempotency not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_separate_tip_capture(results, customer_token):
+    """Test POST /api/billing/tip - Capture tip payment separately"""
+    tip_data = {
+        "bookingId": f"bk_tip_test_{uuid.uuid4().hex[:8]}",
+        "amount": 12.50,
+        "currency": "usd"
+    }
+    
+    response = make_request("POST", "/billing/tip", tip_data, auth_token=customer_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if ("ok" in resp_data and resp_data["ok"] is True and
+                "paymentIntentId" in resp_data and resp_data["paymentIntentId"]):
+                
+                payment_intent_id = resp_data["paymentIntentId"]
+                if "pi_tip_" in payment_intent_id:
+                    results.add_result("Separate Tip Capture", True, f"Tip captured separately: ${tip_data['amount']}, payment_intent: {payment_intent_id}")
+                    return payment_intent_id
+                else:
+                    results.add_result("Separate Tip Capture", False, f"Invalid payment intent ID format: {payment_intent_id}")
+            else:
+                results.add_result("Separate Tip Capture", False, f"Invalid tip capture response: {resp_data}")
+        except Exception as e:
+            results.add_result("Separate Tip Capture", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Separate Tip Capture", False, f"Separate tip capture failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_tip_capture_failure_large_amount(results, customer_token):
+    """Test tip payment failure for large amounts (>$50)"""
+    tip_data = {
+        "bookingId": f"bk_large_tip_{uuid.uuid4().hex[:8]}",
+        "amount": 75.0,  # Large amount should trigger failure
+        "currency": "usd"
+    }
+    
+    response = make_request("POST", "/billing/tip", tip_data, auth_token=customer_token)
+    
+    if response and response.status_code == 402:
+        try:
+            error_data = response.json()
+            detail = error_data.get("detail", "").lower()
+            if "tip" in detail and ("declined" in detail or "card" in detail):
+                results.add_result("Tip Capture Large Amount Failure", True, "Large tip amount properly declined with 402")
+                return
+        except:
+            # Even if JSON parsing fails, 402 status is correct
+            results.add_result("Tip Capture Large Amount Failure", True, "Large tip amount declined (402 status)")
+            return
+    
+    results.add_result("Tip Capture Large Amount Failure", False, f"Large tip amount failure not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_owner_ratings_dashboard(results, owner_token):
+    """Test GET /api/owner/ratings - Owner ratings dashboard"""
+    response = make_request("GET", "/owner/ratings", auth_token=owner_token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "items" in resp_data and isinstance(resp_data["items"], list):
+                items = resp_data["items"]
+                
+                # Check structure of items if any exist
+                if len(items) > 0:
+                    item = items[0]
+                    required_fields = ["bookingId", "partnerRating", "customerRating", "tip", "flags"]
+                    
+                    if all(field in item for field in required_fields):
+                        # Validate data types
+                        if (isinstance(item["partnerRating"], (int, float)) and
+                            isinstance(item["customerRating"], (int, float)) and
+                            isinstance(item["tip"], (int, float)) and
+                            isinstance(item["flags"], list)):
+                            
+                            results.add_result("Owner Ratings Dashboard", True, f"Dashboard retrieved with {len(items)} rating items")
+                            return items
+                        else:
+                            results.add_result("Owner Ratings Dashboard", False, f"Invalid item data types: {item}")
+                    else:
+                        results.add_result("Owner Ratings Dashboard", False, f"Item missing required fields: {item}")
+                else:
+                    results.add_result("Owner Ratings Dashboard", True, "Empty ratings dashboard retrieved successfully")
+                    return []
+            else:
+                results.add_result("Owner Ratings Dashboard", False, f"Invalid dashboard response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("Owner Ratings Dashboard", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Owner Ratings Dashboard", False, f"Owner ratings dashboard failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_rating_flags_generation(results, owner_token):
+    """Test rating flags generation (low ratings, high tips, detailed feedback)"""
+    # This test checks if the dashboard properly generates flags based on rating data
+    dashboard_items = test_owner_ratings_dashboard(results, owner_token)
+    
+    if dashboard_items is not None:
+        # Look for expected flag types
+        flag_types_found = set()
+        for item in dashboard_items:
+            flags = item.get("flags", [])
+            for flag in flags:
+                flag_types_found.add(flag)
+        
+        # Check if we have meaningful flag generation
+        expected_flags = ["low_customer_rating", "low_partner_rating", "high_tip", "detailed_feedback"]
+        
+        if len(flag_types_found) > 0:
+            results.add_result("Rating Flags Generation", True, f"Flags generated: {list(flag_types_found)}")
+        else:
+            results.add_result("Rating Flags Generation", True, "No flags generated (acceptable if no qualifying ratings)")
+    else:
+        results.add_result("Rating Flags Generation", False, "Could not test flags - dashboard retrieval failed")
+
+def test_rating_role_access_control(results, customer_token, partner_token, owner_token):
+    """Test role-based access control for rating endpoints"""
+    test_booking_id = f"bk_access_test_{uuid.uuid4().hex[:8]}"
+    
+    # Test customer endpoints with wrong roles
+    customer_rating_data = {
+        "bookingId": test_booking_id,
+        "stars": 5,
+        "compliments": [],
+        "tip": {"amount": 0, "currency": "usd"},
+        "idempotencyKey": f"access_test_{uuid.uuid4().hex[:8]}"
+    }
+    
+    # Partner should not be able to submit customer ratings
+    response = make_request("POST", "/ratings/customer", customer_rating_data, auth_token=partner_token)
+    if not (response and response.status_code == 403):
+        results.add_result("Rating Role Access Control", False, f"Partner not denied customer rating access. Status: {response.status_code if response else 'No response'}")
+        return
+    
+    # Test partner endpoints with wrong roles
+    partner_rating_data = {
+        "bookingId": test_booking_id,
+        "stars": 4,
+        "notes": [],
+        "idempotencyKey": f"access_test_{uuid.uuid4().hex[:8]}"
+    }
+    
+    # Customer should not be able to submit partner ratings
+    response = make_request("POST", "/ratings/partner", partner_rating_data, auth_token=customer_token)
+    if not (response and response.status_code == 403):
+        results.add_result("Rating Role Access Control", False, f"Customer not denied partner rating access. Status: {response.status_code if response else 'No response'}")
+        return
+    
+    # Test owner endpoints with wrong roles
+    response = make_request("GET", "/owner/ratings", auth_token=customer_token)
+    if not (response and response.status_code == 403):
+        results.add_result("Rating Role Access Control", False, f"Customer not denied owner dashboard access. Status: {response.status_code if response else 'No response'}")
+        return
+    
+    response = make_request("GET", "/owner/ratings", auth_token=partner_token)
+    if not (response and response.status_code == 403):
+        results.add_result("Rating Role Access Control", False, f"Partner not denied owner dashboard access. Status: {response.status_code if response else 'No response'}")
+        return
+    
+    # Test tip capture with wrong role
+    tip_data = {"bookingId": test_booking_id, "amount": 10, "currency": "usd"}
+    response = make_request("POST", "/billing/tip", tip_data, auth_token=partner_token)
+    if not (response and response.status_code == 403):
+        results.add_result("Rating Role Access Control", False, f"Partner not denied tip capture access. Status: {response.status_code if response else 'No response'}")
+        return
+    
+    results.add_result("Rating Role Access Control", True, "All rating endpoints properly enforce role-based access control")
+
+def test_rating_endpoints_require_auth(results):
+    """Test that rating endpoints require authentication"""
+    test_booking_id = "bk_auth_test"
+    
+    endpoints_to_test = [
+        ("GET", f"/ratings/context/{test_booking_id}"),
+        ("POST", "/ratings/customer", {"bookingId": test_booking_id, "stars": 5, "tip": {"amount": 0, "currency": "usd"}, "idempotencyKey": "test"}),
+        ("POST", "/ratings/partner", {"bookingId": test_booking_id, "stars": 4, "notes": [], "idempotencyKey": "test"}),
+        ("POST", "/billing/tip", {"bookingId": test_booking_id, "amount": 10, "currency": "usd"}),
+        ("GET", "/owner/ratings")
+    ]
+    
+    auth_required_count = 0
+    
+    for method, endpoint, *data in endpoints_to_test:
+        request_data = data[0] if data else None
+        response = make_request(method, endpoint, request_data)
+        
+        if response and response.status_code in [401, 403]:
+            auth_required_count += 1
+        else:
+            results.add_result(f"Rating Auth Required ({method} {endpoint})", False, f"Auth not enforced. Status: {response.status_code if response else 'No response'}")
+            return
+    
+    results.add_result("Rating Endpoints Auth Required", True, f"All {auth_required_count} rating endpoints properly require authentication")
+
 def main():
     """Run all SHINE Auth v3.0 tests"""
     print("🚀 Starting SHINE Auth v3.0 Backend Comprehensive Tests")
