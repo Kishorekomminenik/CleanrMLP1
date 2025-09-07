@@ -232,13 +232,13 @@ def test_payout_calculation_api(results):
     """Test POST /api/partner/earnings/payout-calc - Partner payout calculation"""
     print("\n🧪 Testing POST /api/partner/earnings/payout-calc - Payout Calculation")
     
-    # Create partner user
-    partner_token, partner_user = create_test_user("partner")
-    if not partner_token:
-        results.add_result("Payout Calc - Partner Creation", False, "Failed to create partner user")
+    # Create owner user (owners can access all bookings)
+    owner_token, owner_user = create_test_user("owner")
+    if not owner_token:
+        results.add_result("Payout Calc - Owner Creation", False, "Failed to create owner user")
         return
     
-    partner_headers = {**HEADERS, "Authorization": f"Bearer {partner_token}"}
+    owner_headers = {**HEADERS, "Authorization": f"Bearer {owner_token}"}
     
     # First, create a booking to test with
     customer_token, customer_user = create_test_user("customer")
@@ -288,10 +288,10 @@ def test_payout_calculation_api(results):
     if booking_response.status_code == 200:
         booking_id = booking_response.json().get("bookingId")
         
-        # Test payout calculation with valid booking
+        # Test payout calculation with valid booking (using owner access)
         payout_request = {"bookingId": booking_id}
         response = requests.post(f"{BASE_URL}/partner/earnings/payout-calc", 
-                               json=payout_request, headers=partner_headers)
+                               json=payout_request, headers=owner_headers)
         
         if response.status_code == 200:
             data = response.json()
@@ -323,7 +323,7 @@ def test_payout_calculation_api(results):
     # Test with invalid booking ID
     invalid_request = {"bookingId": "invalid_booking_123"}
     response = requests.post(f"{BASE_URL}/partner/earnings/payout-calc", 
-                           json=invalid_request, headers=partner_headers)
+                           json=invalid_request, headers=owner_headers)
     not_found_correct = response.status_code == 404
     results.add_result("Payout Calc - Invalid Booking ID", not_found_correct,
                      f"Status: {response.status_code} (expected 404)")
