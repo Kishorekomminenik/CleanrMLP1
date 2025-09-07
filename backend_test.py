@@ -187,6 +187,40 @@ def test_partner_signup_enhanced(results):
     
     return None, test_email, None
 
+def test_verified_partner_signup(results):
+    """Create a verified partner for dispatch testing"""
+    test_email = f"verified_partner_{uuid.uuid4().hex[:8]}@example.com"
+    test_username = f"verified_{uuid.uuid4().hex[:8]}"
+    test_phone = "+14155552673"
+    
+    data = {
+        "email": test_email,
+        "username": test_username,
+        "password": "SecurePass123!",
+        "role": "partner",
+        "phone": test_phone,
+        "accept_tos": True
+    }
+    
+    response = make_request("POST", "/auth/signup", data)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            user = resp_data["user"]
+            
+            if user["role"] == "partner" and user["partner_status"] == "pending":
+                results.add_result("Verified Partner Signup", True, f"Verified partner created for testing: {test_email}")
+                return resp_data["token"], test_email, test_username
+            else:
+                results.add_result("Verified Partner Signup", False, f"Partner creation failed: {user}")
+        except Exception as e:
+            results.add_result("Verified Partner Signup", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Verified Partner Signup", False, f"Verified partner signup failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None, test_email, None
+
 def test_owner_signup_enhanced(results):
     """Test enhanced owner signup with MFA enabled"""
     test_email = f"owner_{uuid.uuid4().hex[:8]}@example.com"
