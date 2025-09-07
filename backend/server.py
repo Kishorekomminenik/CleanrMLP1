@@ -2590,7 +2590,137 @@ async def get_owner_ratings_dashboard(current_user: User = Depends(get_current_u
     
     return OwnerRatingsResponse(items=items)
 
-# Helper function to get earnings summary for partner
+# ================================================================================================
+# PAGE-9-EARNINGS: Partner Earnings & Payouts System (Uber-like)
+# ================================================================================================
+
+# Earnings & Payouts Models
+class EarningsSummaryResponse(BaseModel):
+    currency: str
+    thisWeek: dict  # amount, jobs
+    tipsYtd: float
+    availableBalance: float
+
+class EarningsSeriesPoint(BaseModel):
+    date: str  # ISO format
+    earnings: float
+    tips: float
+
+class EarningsSeriesResponse(BaseModel):
+    points: List[EarningsSeriesPoint]
+
+class StatementItem(BaseModel):
+    id: str
+    weekLabel: str
+    amount: float
+    trips: int
+    status: str  # finalized|pending
+    payoutDate: str  # ISO format
+
+class StatementsListResponse(BaseModel):
+    items: List[StatementItem]
+    nextPage: Optional[int] = None
+
+class JobLineItem(BaseModel):
+    bookingId: str
+    date: str  # ISO format
+    service: str
+    duration: int  # minutes
+    payout: float
+    tip: float
+
+class StatementDetail(BaseModel):
+    id: str
+    period: dict  # from, to ISO dates
+    currency: str
+    gross: float
+    tips: float
+    surge: float
+    adjustments: float
+    fees: float
+    taxWithheld: float
+    net: float
+    jobs: List[JobLineItem]
+
+class StatementPdfResponse(BaseModel):
+    url: str
+
+class ExportRequest(BaseModel):
+    fromDate: str  # ISO format
+    toDate: str  # ISO format
+    serviceType: str = "all"
+
+class ExportResponse(BaseModel):
+    jobId: str
+    status: str  # queued
+
+class ExportStatusResponse(BaseModel):
+    status: str  # queued|ready|error
+    url: Optional[str] = None
+
+class PayoutItem(BaseModel):
+    id: str
+    date: str  # ISO format
+    amount: float
+    status: str  # in_transit|paid|failed
+    destination: str  # masked bank info
+
+class PayoutsListResponse(BaseModel):
+    items: List[PayoutItem]
+
+class InstantPayoutRequest(BaseModel):
+    amount: float
+    currency: str = "usd"
+    idempotencyKey: str
+
+class InstantPayoutResponse(BaseModel):
+    payoutId: str
+    fee: float
+    status: str  # in_transit
+
+class BankOnboardRequest(BaseModel):
+    returnUrl: str
+
+class BankOnboardResponse(BaseModel):
+    url: str
+
+class BankStatusResponse(BaseModel):
+    verified: bool
+    bankLast4: Optional[str] = None
+
+class TaxContextResponse(BaseModel):
+    status: str  # complete|incomplete
+    availableForms: List[str]
+    year: int
+
+class TaxOnboardRequest(BaseModel):
+    returnUrl: str
+
+class TaxOnboardResponse(BaseModel):
+    url: str
+
+class TaxFormResponse(BaseModel):
+    url: str
+
+class NotificationPrefsResponse(BaseModel):
+    payouts: bool
+    statements: bool
+    tax: bool
+
+class NotificationPrefsRequest(BaseModel):
+    payouts: bool
+    statements: bool
+    tax: bool
+
+# In-memory storage for earnings data (in production, use database)
+partner_earnings_data = {}
+export_jobs = {}
+payout_history = {}
+bank_accounts = {}
+tax_info = {}
+notification_prefs = {}
+
+# Helper function to get partner earnings summary
 def get_partner_earnings_summary(booking_id: str, partner_id: str):
     """Get partner earnings summary including tips"""
     
@@ -2615,6 +2745,464 @@ def get_partner_earnings_summary(booking_id: str, partner_id: str):
         "total": total,
         "currency": "usd"
     }
+
+def generate_earnings_data(partner_id: str):
+    """Generate mock earnings data for partner"""
+    if partner_id not in partner_earnings_data:
+        # Generate mock data for past 12 weeks
+        weeks_data = []
+        total_tips_ytd = 0
+        available_balance = 0
+        
+        for i in range(12):
+            week_earnings = random.uniform(200, 800)
+            week_tips = random.uniform(50, 200)
+            jobs_count = random.randint(8, 25)
+            
+            weeks_data.append({
+                "week": i + 1,
+                "earnings": week_earnings,
+                "tips": week_tips,
+                "jobs": jobs_count,
+                "date": (datetime.utcnow() - timedelta(weeks=11-i)).isoformat()
+            })
+            
+            total_tips_ytd += week_tips
+            if i >= 10:  # Last 2 weeks available for payout
+                available_balance += week_earnings + week_tips
+        
+        partner_earnings_data[partner_id] = {
+            "weeks": weeks_data,
+            "tips_ytd": total_tips_ytd,
+            "available_balance": available_balance
+        }
+    
+    return partner_earnings_data[partner_id]
+
+# Partner Earnings API Endpoints
+@api_router.get("/partner/earnings/summary", response_model=EarningsSummaryResponse)
+async def get_earnings_summary(current_user: User = Depends(get_current_user)):
+    """Get partner earnings summary"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    earnings_data = generate_earnings_data(current_user.id)
+    current_week = earnings_data["weeks"][-1]
+    
+    return EarningsSummaryResponse(
+        currency="usd",
+        thisWeek={
+            "amount": current_week["earnings"] + current_week["tips"],
+            "jobs": current_week["jobs"]
+        },
+        tipsYtd=earnings_data["tips_ytd"],
+        availableBalance=earnings_data["available_balance"]
+    )
+
+@api_router.get("/partner/earnings/series", response_model=EarningsSeriesResponse)
+async def get_earnings_series(
+    fromDate: Optional[str] = Query(None),
+    toDate: Optional[str] = Query(None),
+    bucket: str = Query("week", regex="^(day|week)$"),
+    current_user: User = Depends(get_current_user)
+):
+    """Get earnings series data for charts"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    earnings_data = generate_earnings_data(current_user.id)
+    
+    # Return weekly data points
+    points = []
+    for week_data in earnings_data["weeks"]:
+        points.append(EarningsSeriesPoint(
+            date=week_data["date"],
+            earnings=week_data["earnings"],
+            tips=week_data["tips"]
+        ))
+    
+    return EarningsSeriesResponse(points=points)
+
+@api_router.get("/partner/earnings/statements", response_model=StatementsListResponse)
+async def list_statements(
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(get_current_user)
+):
+    """List partner earnings statements"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    earnings_data = generate_earnings_data(current_user.id)
+    
+    # Generate mock statements
+    statements = []
+    for i, week_data in enumerate(earnings_data["weeks"]):
+        statement_id = f"st_{current_user.id}_{i:02d}"
+        week_start = datetime.fromisoformat(week_data["date"].replace('Z', '+00:00'))
+        week_label = f"Week {week_start.strftime('%b %d')} - {(week_start + timedelta(days=6)).strftime('%b %d')}"
+        
+        statements.append(StatementItem(
+            id=statement_id,
+            weekLabel=week_label,
+            amount=week_data["earnings"] + week_data["tips"],
+            trips=week_data["jobs"],
+            status="finalized" if i < 11 else "pending",
+            payoutDate=(week_start + timedelta(days=7)).isoformat()
+        ))
+    
+    # Reverse to show most recent first
+    statements.reverse()
+    
+    # Pagination
+    start_idx = (page - 1) * size
+    end_idx = start_idx + size
+    page_statements = statements[start_idx:end_idx]
+    
+    next_page = page + 1 if end_idx < len(statements) else None
+    
+    return StatementsListResponse(
+        items=page_statements,
+        nextPage=next_page
+    )
+
+@api_router.get("/partner/earnings/statements/{statement_id}", response_model=StatementDetail)
+async def get_statement_detail(
+    statement_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed statement information"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Parse statement ID to get week index
+    try:
+        week_idx = int(statement_id.split('_')[-1])
+    except:
+        raise HTTPException(status_code=404, detail="Statement not found")
+    
+    earnings_data = generate_earnings_data(current_user.id)
+    
+    if week_idx >= len(earnings_data["weeks"]):
+        raise HTTPException(status_code=404, detail="Statement not found")
+    
+    week_data = earnings_data["weeks"][week_idx]
+    week_start = datetime.fromisoformat(week_data["date"].replace('Z', '+00:00'))
+    
+    # Generate mock job line items
+    jobs = []
+    for j in range(week_data["jobs"]):
+        job_date = week_start + timedelta(days=random.randint(0, 6))
+        service_types = ["Cleaning", "Lawn Care", "Snow Removal", "Dog Walking", "Beauty", "Baby Care"]
+        
+        jobs.append(JobLineItem(
+            bookingId=f"bk_{secrets.token_urlsafe(8)}",
+            date=job_date.isoformat(),
+            service=random.choice(service_types),
+            duration=random.randint(30, 180),
+            payout=random.uniform(15, 80),
+            tip=random.uniform(0, 25)
+        ))
+    
+    gross = week_data["earnings"] + week_data["tips"]
+    fees = gross * 0.15  # 15% platform fee
+    tax_withheld = gross * 0.1  # 10% tax withheld
+    net = gross - fees - tax_withheld
+    
+    return StatementDetail(
+        id=statement_id,
+        period={
+            "from": week_start.isoformat(),
+            "to": (week_start + timedelta(days=6)).isoformat()
+        },
+        currency="usd",
+        gross=gross,
+        tips=week_data["tips"],
+        surge=week_data["earnings"] * 0.1,  # 10% surge
+        adjustments=0.0,
+        fees=fees,
+        taxWithheld=tax_withheld,
+        net=net,
+        jobs=jobs
+    )
+
+@api_router.get("/partner/earnings/statements/{statement_id}/pdf", response_model=StatementPdfResponse)
+async def download_statement_pdf(
+    statement_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Generate PDF download URL for statement"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Mock PDF URL - in production, generate actual PDF
+    pdf_url = f"https://statements.shine.com/pdf/{statement_id}.pdf?token={secrets.token_urlsafe(32)}"
+    
+    return StatementPdfResponse(url=pdf_url)
+
+@api_router.post("/partner/earnings/export", response_model=ExportResponse)
+async def request_export(
+    request: ExportRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Request CSV export of earnings data"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Validate date range
+    try:
+        from_date = datetime.fromisoformat(request.fromDate.replace('Z', '+00:00'))
+        to_date = datetime.fromisoformat(request.toDate.replace('Z', '+00:00'))
+        
+        if (to_date - from_date).days > 90:
+            raise HTTPException(status_code=400, detail="Date range cannot exceed 90 days")
+            
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+    
+    # Create export job
+    job_id = f"exp_{secrets.token_urlsafe(16)}"
+    export_jobs[job_id] = {
+        "partnerId": current_user.id,
+        "status": "queued",
+        "fromDate": request.fromDate,
+        "toDate": request.toDate,
+        "serviceType": request.serviceType,
+        "createdAt": datetime.utcnow().isoformat()
+    }
+    
+    return ExportResponse(jobId=job_id, status="queued")
+
+@api_router.get("/partner/earnings/export/{job_id}", response_model=ExportStatusResponse)
+async def get_export_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get export job status"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if job_id not in export_jobs:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    
+    job = export_jobs[job_id]
+    if job["partnerId"] != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Mock processing - in production, check actual job status
+    created_at = datetime.fromisoformat(job["createdAt"].replace('Z', '+00:00'))
+    if (datetime.utcnow() - created_at).seconds > 30:  # 30 seconds processing time
+        job["status"] = "ready"
+        job["url"] = f"https://exports.shine.com/csv/{job_id}.csv?token={secrets.token_urlsafe(32)}"
+    
+    return ExportStatusResponse(
+        status=job["status"],
+        url=job.get("url")
+    )
+
+# Payout Management APIs
+@api_router.get("/partner/payouts", response_model=PayoutsListResponse)
+async def list_payouts(current_user: User = Depends(get_current_user)):
+    """List partner payout history"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Generate mock payout history
+    if current_user.id not in payout_history:
+        payouts = []
+        for i in range(8):
+            payout_date = datetime.utcnow() - timedelta(weeks=i)
+            amount = random.uniform(300, 1200)
+            
+            payouts.append(PayoutItem(
+                id=f"po_{secrets.token_urlsafe(16)}",
+                date=payout_date.isoformat(),
+                amount=amount,
+                status=random.choice(["paid", "in_transit"]) if i > 0 else "paid",
+                destination="Bank ****1234"
+            ))
+        
+        payout_history[current_user.id] = payouts
+    
+    return PayoutsListResponse(items=payout_history[current_user.id])
+
+@api_router.post("/partner/payouts/instant", response_model=InstantPayoutResponse)
+async def instant_payout(
+    request: InstantPayoutRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Process instant payout"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Check bank verification
+    bank_info = bank_accounts.get(current_user.id, {"verified": False})
+    if not bank_info["verified"]:
+        raise HTTPException(status_code=409, detail="Bank account not verified")
+    
+    # Check minimum amount
+    if request.amount < 1.0:
+        raise HTTPException(status_code=400, detail="Below minimum amount ($1.00)")
+    
+    # Check available balance
+    earnings_data = generate_earnings_data(current_user.id)
+    if request.amount > earnings_data["available_balance"]:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+    
+    # Calculate fee
+    fee_percent = 1.5  # 1.5% fee
+    min_fee = 0.50
+    fee = max(min_fee, request.amount * fee_percent / 100)
+    
+    # Mock payout failure for large amounts (testing)
+    if request.amount > 500:
+        raise HTTPException(status_code=402, detail="Payout failed - high amount detected")
+    
+    # Create payout
+    payout_id = f"po_{secrets.token_urlsafe(16)}"
+    
+    # Update balance
+    earnings_data["available_balance"] -= request.amount
+    
+    # Add to history
+    if current_user.id not in payout_history:
+        payout_history[current_user.id] = []
+    
+    payout_history[current_user.id].insert(0, PayoutItem(
+        id=payout_id,
+        date=datetime.utcnow().isoformat(),
+        amount=request.amount,
+        status="in_transit",
+        destination="Bank ****1234"
+    ))
+    
+    return InstantPayoutResponse(
+        payoutId=payout_id,
+        fee=fee,
+        status="in_transit"
+    )
+
+# Bank Account Management APIs
+@api_router.post("/partner/bank/onboard", response_model=BankOnboardResponse)
+async def onboard_bank_account(
+    request: BankOnboardRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Start bank account onboarding process"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Mock Stripe Connect onboarding URL
+    onboard_url = f"https://connect.stripe.com/setup/e/{secrets.token_urlsafe(32)}?return_url={request.returnUrl}"
+    
+    return BankOnboardResponse(url=onboard_url)
+
+@api_router.get("/partner/bank/status", response_model=BankStatusResponse)
+async def get_bank_status(current_user: User = Depends(get_current_user)):
+    """Get bank account verification status"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Initialize bank info if not exists
+    if current_user.id not in bank_accounts:
+        bank_accounts[current_user.id] = {
+            "verified": random.choice([True, False]),  # Random for demo
+            "bankLast4": "1234" if random.choice([True, False]) else None
+        }
+    
+    bank_info = bank_accounts[current_user.id]
+    
+    return BankStatusResponse(
+        verified=bank_info["verified"],
+        bankLast4=bank_info["bankLast4"]
+    )
+
+# Tax Management APIs
+@api_router.get("/partner/tax/context", response_model=TaxContextResponse)
+async def get_tax_context(current_user: User = Depends(get_current_user)):
+    """Get tax information context"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Mock tax info
+    current_year = datetime.utcnow().year
+    
+    return TaxContextResponse(
+        status=random.choice(["complete", "incomplete"]),
+        availableForms=["1099", "W-9"],
+        year=current_year - 1
+    )
+
+@api_router.post("/partner/tax/onboard", response_model=TaxOnboardResponse)
+async def onboard_tax_info(
+    request: TaxOnboardRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Start tax information onboarding"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Mock tax onboarding URL
+    tax_url = f"https://tax.stripe.com/setup/{secrets.token_urlsafe(32)}?return_url={request.returnUrl}"
+    
+    return TaxOnboardResponse(url=tax_url)
+
+@api_router.get("/partner/tax/forms/{form}/{year}", response_model=TaxFormResponse)
+async def download_tax_form(
+    form: str,
+    year: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Download tax form"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if form not in ["1099", "W-9", "W-8BEN"]:
+        raise HTTPException(status_code=404, detail="Form not found")
+    
+    # Mock tax form URL
+    form_url = f"https://tax-forms.shine.com/{form}/{year}/{current_user.id}.pdf?token={secrets.token_urlsafe(32)}"
+    
+    return TaxFormResponse(url=form_url)
+
+# Notification Preferences APIs
+@api_router.get("/partner/notifications/prefs", response_model=NotificationPrefsResponse)
+async def get_notification_prefs(current_user: User = Depends(get_current_user)):
+    """Get notification preferences"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if current_user.id not in notification_prefs:
+        notification_prefs[current_user.id] = {
+            "payouts": True,
+            "statements": True,
+            "tax": True
+        }
+    
+    prefs = notification_prefs[current_user.id]
+    
+    return NotificationPrefsResponse(
+        payouts=prefs["payouts"],
+        statements=prefs["statements"],
+        tax=prefs["tax"]
+    )
+
+@api_router.post("/partner/notifications/prefs", response_model=dict)
+async def set_notification_prefs(
+    request: NotificationPrefsRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Set notification preferences"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    notification_prefs[current_user.id] = {
+        "payouts": request.payouts,
+        "statements": request.statements,
+        "tax": request.tax
+    }
+    
+    return {"ok": True}
 
 # Original routes
 @api_router.get("/")
