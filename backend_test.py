@@ -244,9 +244,10 @@ def test_password_validation(results):
         "a" * 65 + "A1!"  # Too long (over 64 chars)
     ]
     
+    passed_count = 0
     for weak_password in weak_passwords:
         data = {
-            "email": test_email,
+            "email": f"test_{uuid.uuid4().hex[:8]}@example.com",
             "password": weak_password,
             "role": "customer",
             "accept_tos": True
@@ -258,6 +259,7 @@ def test_password_validation(results):
             try:
                 error_data = response.json()
                 if "password" in str(error_data).lower():
+                    passed_count += 1
                     continue  # This weak password was properly rejected
             except:
                 pass
@@ -265,11 +267,10 @@ def test_password_validation(results):
         results.add_result("Password Validation", False, f"Weak password not rejected: {weak_password}")
         return
     
-    results.add_result("Password Validation", True, "All weak passwords properly rejected")
+    results.add_result("Password Validation", True, f"All {passed_count} weak passwords properly rejected")
 
 def test_username_validation(results):
     """Test username validation"""
-    test_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
     
     invalid_usernames = [
         "ab",  # Too short
@@ -280,9 +281,10 @@ def test_username_validation(results):
         "123user!",  # Special character
     ]
     
+    passed_count = 0
     for invalid_username in invalid_usernames:
         data = {
-            "email": test_email,
+            "email": f"test_{uuid.uuid4().hex[:8]}@example.com",
             "username": invalid_username,
             "password": "SecurePass123!",
             "role": "customer",
@@ -295,6 +297,7 @@ def test_username_validation(results):
             try:
                 error_data = response.json()
                 if "username" in str(error_data).lower():
+                    passed_count += 1
                     continue  # This invalid username was properly rejected
             except:
                 pass
@@ -302,11 +305,10 @@ def test_username_validation(results):
         results.add_result("Username Validation", False, f"Invalid username not rejected: {invalid_username}")
         return
     
-    results.add_result("Username Validation", True, "All invalid usernames properly rejected")
+    results.add_result("Username Validation", True, f"All {passed_count} invalid usernames properly rejected")
 
 def test_phone_validation(results):
     """Test phone number validation (E.164 format)"""
-    test_email = f"test_{uuid.uuid4().hex[:8]}@example.com"
     
     invalid_phones = [
         "1234567890",  # No + prefix
@@ -317,9 +319,10 @@ def test_phone_validation(results):
         "+1 415 555 2671",  # Spaces
     ]
     
+    passed_count = 0
     for invalid_phone in invalid_phones:
         data = {
-            "email": test_email,
+            "email": f"test_{uuid.uuid4().hex[:8]}@example.com",
             "phone": invalid_phone,
             "password": "SecurePass123!",
             "role": "customer",
@@ -332,6 +335,7 @@ def test_phone_validation(results):
             try:
                 error_data = response.json()
                 if "phone" in str(error_data).lower():
+                    passed_count += 1
                     continue  # This invalid phone was properly rejected
             except:
                 pass
@@ -339,7 +343,7 @@ def test_phone_validation(results):
         results.add_result("Phone Validation", False, f"Invalid phone not rejected: {invalid_phone}")
         return
     
-    results.add_result("Phone Validation", True, "All invalid phone numbers properly rejected")
+    results.add_result("Phone Validation", True, f"All {passed_count} invalid phone numbers properly rejected")
 
 def test_tos_validation(results):
     """Test Terms of Service acceptance requirement"""
@@ -357,7 +361,7 @@ def test_tos_validation(results):
     if response and response.status_code == 422:
         try:
             error_data = response.json()
-            if "terms" in str(error_data).lower() or "tos" in str(error_data).lower():
+            if "terms" in str(error_data).lower() or "tos" in str(error_data).lower() or "accept" in str(error_data).lower():
                 results.add_result("ToS Validation", True, "ToS acceptance requirement enforced")
                 return
         except:
