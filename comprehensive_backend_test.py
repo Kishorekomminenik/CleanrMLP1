@@ -13,7 +13,7 @@ import re
 import sys
 
 # Configuration
-BASE_URL = "https://shine-app-debug.preview.emergentagent.com/api"
+BASE_URL = "https://service-hub-shine.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 class ComprehensiveTestResults:

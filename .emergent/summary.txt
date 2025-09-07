@@ -1,75 +1,99 @@
 <analysis>
-The previous AI engineer successfully initiated the SHINE application, moving from a detailed product specification to a fully functional authentication and role-based home screen system. The work followed a phased approach, starting with authentication (Phase 1 & 2), then role-specific screens (Phase 3), and has just begun implementing the service selection (Phase 3). Key challenges included resolving  and  conflicts, adapting  for web compatibility, addressing MongoDB unique index issues with null values, and fixing Pydantic  validation. The engineer demonstrated a systematic debugging process, leveraging backend and frontend logs, and comprehensive testing to ensure feature stability. The backend is robust, and the frontend currently presents a working authentication flow and simplified home screens, with the next focus on completing service selection UIs.
+The previous AI engineer's work trajectory involved building and debugging the SHINE application from initial concept through several key features. Initially, significant time was spent troubleshooting environment and connectivity issues, including Expo React Native file watching limits and external URL routing, leading to the creation and extensive debugging of a simplified HTML/JavaScript web preview. Core development focused on implementing PAGE-9-EARNINGS and PAGE-10-SUPPORT. After addressing persistent authentication flow problems in both the web preview and the main React Native application, the engineer successfully delivered PAGE-11-BOOKINGS (booking management for all roles) and PAGE-12-DISCOVERY (search, favorites, partner profiles). Currently, the engineer is mid-way through a significant architectural change: implementing a platform-set pricing model, having successfully completed the backend API migration (Phase 1) and is about to start the frontend page patches (Phase 2).
 </analysis>
 
 <product_requirements>
-The SHINE application is a role-based mobile platform for Customers, Partners, and Owners.
-**App Shell (PAGE-0-APP-SHELL):** Provides a global bottom tab navigation structure, with tabs and routing dynamically displayed based on the user's role. It includes a partner pending verification banner and a partner-to-customer role switcher in the profile.
-**Authentication (PAGE-1-AUTH):** Features a comprehensive JWT-based authentication system. Users can sign up and log in using email or an optional username, with strong password policies and confirmation. It supports an OTP-based password reset flow, and Owners are required to pass MFA upon login. Social login is feature-flagged. The UI includes segmented tabs for roles (Customer/Partner) and authentication modes (Sign In/Sign Up), with specific input fields and validations.
-**Home/Landing (PAGE-2-HOME):** Offers role-specific dashboards:
-- **Customer:** Displays a map with nearby partners, a search bar, a surge pricing banner (if active), and a Book Now call-to-action button.
-- **Partner:** Features an Online/Offline toggle (disabled if verification is pending), a job queue, and quick action buttons (Training, Earnings).
-- **Owner:** Shows a grid of read-only key metric tiles (Active Jobs, Partners Online, Support Tickets, GMV Today) and a chart stub for bookings.
-**Service Selection (PAGE-3-SERVICE):** (Currently being implemented) For Customers, this involves selecting a cleaning service (Basic, Deep, Bathroom-only), configuring home details (dwelling type, rooms), uploading photos (required for certain services), getting a price quote, and choosing a timing (Now/Schedule). Partners can set their service capabilities, and Owners view a read-only service catalog.
+The SHINE application is a full-stack platform for professional services, targeting Customer, Partner, and Owner roles, aimed at building an Uber-like home services marketplace.
+
+**Completed Features:**
+1.  **PAGE-9-EARNINGS (Partner Earnings & Payouts):** Allows partners to view earnings, charts, statements, manage instant payouts, bank accounts, and tax forms. Owners have read-only aggregate views.
+2.  **PAGE-10-SUPPORT (Support & Disputes):** A comprehensive in-app help center for customers (FAQs, issues, refunds), partners (training, disputes), and owners (queue, metrics, refund approval).
+3.  **PAGE-11-BOOKINGS (Bookings — Lists & Details):** An Uber-style booking management system for all roles. Customers view upcoming/past trips, track, cancel, rebook, and download invoices. Partners manage jobs, navigate, and access live job tracking. Owners view a read-only table with filters.
+4.  **PAGE-12-DISCOVERY (Discovery & Favorites):** A customer-facing feature for searching services/partners, browsing categories, marking favorites, and viewing partner profiles. Partners can preview their profiles, and owners see aggregated analytics.
+
+**Current Major Change Request (CHG-PLATFORM-PRICING-001):**
+Switching to an Uber-style platform-set pricing model where SHINE, not partners, controls all pricing. This involves updating APIs, relevant frontend pages (Checkout, Earnings, Discovery, Subscriptions, Settings), and the data model.
 </product_requirements>
 
 <key_technical_concepts>
-- **Expo Router:** File-based routing for the mobile frontend.
-- **React Native:** Core UI framework for cross-platform mobile development.
-- **FastAPI:** Python framework for building the backend API.
-- **MongoDB:** NoSQL database for data persistence.
-- **JWT (JSON Web Tokens):** For user authentication and session management.
-- **Role-Based Access Control:** Conditional rendering and API access based on user roles.
-- **Zustand (implied):** State management for the frontend.
-- **Bcrypt:** Password hashing.
-- ** & :** For location and map functionalities.
+-   **Full-stack Architecture**: React Native (Expo) frontend, FastAPI backend, MongoDB database.
+-   **API Design**: RESTful API endpoints, prefixed with .
+-   **Authentication**: JWT-based, role-based access control (Customer, Partner, Owner), MFA.
+-   **UI Framework**: React Native (Expo) with Expo Router for navigation, and a plain HTML/JavaScript web preview for debugging.
+-   **Environment Management**:  files for  and .
+-   **Package Management**: Yarn for frontend dependencies.
 </key_technical_concepts>
 
 <code_architecture>
-The application follows a full-stack architecture, comprising an Expo (React Native) frontend, a FastAPI backend, and a MongoDB database.
-
-**Detailed Directory Structure:**
 
 
-**Key Files and Their Importance:**
-
--   : This is the core of the backend. It hosts the FastAPI application, defining all API endpoints for authentication (signup, login, MFA, password reset), user management, home screen data (nearby partners, surge pricing, partner dashboard, owner tiles), and initial service catalog/pricing APIs. It interacts directly with MongoDB for data persistence, including handling unique sparse indexes and password hashing.
--   : The primary entry point for the Expo Router application. It orchestrates the initial navigation flow, conditionally rendering the  (for unauthenticated users) or the  (for authenticated users), utilizing the  to manage the authentication state.
--   : Manages the global authentication state for the frontend. It stores the JWT token, user information (including role and partner status), and provides functions for logging in, registering, and logging out. This context drives role-based routing and UI elements.
--   : Defines the navigation stack for unauthenticated users. It contains the UI for login, signup, password reset, and MFA screens. Initially used  but was refactored to use controlled components for better web compatibility and debugging.
--   : The main navigation component for authenticated users. It implements the role-based bottom tab navigation, dynamically rendering tabs and their corresponding content (Customer, Partner, Owner Home screens) based on the authenticated user's role. Due to previous import/bundling issues, simplified versions of the home screens are currently inlined within this file.
--   , , : These files are intended to host the specific UI and logic for each role's home screen. Currently, simplified placeholders or inlined components reside within  to workaround import issues, meaning the full  and  integration for the customer screen is pending.
--   : This file has been created to house the customer-facing UI for selecting cleaning services and configuring job details. Its full implementation is ongoing.
--   : Centralizes API calls related to authentication, providing a clean interface for frontend components to interact with the backend auth endpoints.
+-   **/app/backend/server.py**:
+    -   **Importance**: The central FastAPI backend.
+    -   **Changes Made**: Expanded significantly to include PAGE-9 and PAGE-10 API endpoints. Further extended for PAGE-11-BOOKINGS (customer/partner lists, detail, invoice, cancel). Further extended for PAGE-12-DISCOVERY (search, partner profiles, favorites, owner analytics). Most recently, it was heavily modified for the platform pricing model, adding , ,  endpoints, and modifying existing , ,  endpoints to enforce platform pricing and remove partner control. Also includes new Pydantic models for pricing.
+-   **/app/frontend/src/contexts/AuthContext.tsx**:
+    -   **Importance**: Manages authentication state.
+    -   **Changes Made**: Modified to include debugging, network timeout, and enhanced initial token verification for Expo Go.
+-   **/app/frontend/src/navigation/AppShell.tsx**:
+    -   **Importance**: Defines tab-based navigation.
+    -   **Changes Made**: Updated to integrate new screens: , , , . Further updated to include , , . Most recently, updated to integrate , ,  by replacing Favorites and adding new Discover tabs for respective roles.
+-   **/app/frontend/src/screens/PartnerEarningsScreen.tsx**:
+    -   **Importance**: UI for Partner Earnings & Payouts.
+    -   **Changes Made**: Newly created.
+-   **/app/frontend/src/screens/CustomerSupportScreen.tsx**, **/app/frontend/src/screens/PartnerSupportScreen.tsx**, **/app/frontend/src/screens/OwnerSupportScreen.tsx**:
+    -   **Importance**: UI for Support & Disputes for each role.
+    -   **Changes Made**: Newly created.
+-   **/app/frontend/src/screens/CustomerBookingsScreen.tsx**, **/app/frontend/src/screens/PartnerJobsScreen.tsx**, **/app/frontend/src/screens/OwnerBookingsScreen.tsx**:
+    -   **Importance**: UI for PAGE-11-BOOKINGS.
+    -   **Changes Made**: Newly created to implement booking lists, detail sheets, and actions for each role.
+-   **/app/frontend/src/screens/CustomerDiscoveryScreen.tsx**, **/app/frontend/src/screens/PartnerDiscoveryScreen.tsx**, **/app/frontend/src/screens/OwnerDiscoveryScreen.tsx**:
+    -   **Importance**: UI for PAGE-12-DISCOVERY.
+    -   **Changes Made**: Newly created to implement search, partner profiles, favorites (customer), profile preview (partner), and analytics (owner).
+-   **/app/frontend/.env**:
+    -   **Importance**: Stores frontend environment variables.
+    -   **Changes Made**: Created and configured with .
+-   **/app/frontend/metro.config.js**:
+    -   **Importance**: Configures Metro bundler.
+    -   **Changes Made**: Optimized to reduce watched files.
+-   **/app/frontend/app/_layout.tsx**:
+    -   **Importance**: Root layout for Expo Router, wraps app with AuthProvider.
+    -   **Changes Made**: Newly created.
+-   **/app/frontend/app/index.tsx**:
+    -   **Importance**: Handles initial authentication routing for Expo Router.
+    -   **Changes Made**: Newly created to check auth state and redirect to  or .
+-   **/app/frontend/app/auth.tsx**:
+    -   **Importance**: Login/Signup interface for Expo Router.
+    -   **Changes Made**: Newly created.
+-   **/app/frontend/app/app.tsx**:
+    -   **Importance**: Renders AppShell when authenticated.
+    -   **Changes Made**: Newly created.
+-   **/app/web/index.html**:
+    -   **Importance**: Temporary web preview for debugging.
+    -   **Changes Made**: Newly created. Implemented basic auth forms and API testing. Debugged login form visibility and associated JavaScript logic.
 </code_architecture>
 
 <pending_tasks>
-- Complete implementation of Partner and Owner service selection screens (PAGE-3-SERVICE).
-- Refactor inlined home screen components (, , ) into their respective files and fully integrate  and .
-- Implement specific UI elements and logic for home screens (e.g., Partner Online/Offline toggle logic, Owner Analytics chart, Customer search functionality).
-- Implement frontend E2E tests based on the provided specification.
-- Address potential CORS issues for external API calls, if they re-emerge for the external URL.
-- Implement rate limiting on backend login/reset endpoints as per specification.
+-   Complete Phase 2 of the  change request: applying frontend page patches for PAGE-12-DISCOVERY, PAGE-13-SUBSCRIPTIONS, PAGE-18-SETTINGS, PAGE-5-CHECKOUT, and PAGE-9-EARNINGS.
+-   Run comprehensive frontend and end-to-end testing for the platform pricing changes.
 </pending_tasks>
 
 <current_work>
-The AI engineer has successfully implemented and validated the entire **PAGE-1-AUTH (v3.0)** and **PAGE-2-HOME (v3.0)** specifications.
+The AI engineer is currently implementing the CHG-PLATFORM-PRICING-001 change request, which is a major architectural shift to an Uber-style platform-set pricing model. This change centralizes all pricing control within SHINE, removing partners' ability to set prices.
 
-**Authentication System (PAGE-1-AUTH) - Fully Working:**
--   **Backend:** Comprehensive JWT authentication with bcrypt hashing, user registration (email/username, role selection), login, Owner MFA flow, and password reset via OTP. All backend endpoints have been rigorously tested and validated (100% success rate on comprehensive backend tests), handling various scenarios including duplicate emails, invalid credentials, and correct role assignment/status. Database indexes and  validation issues were identified and fixed.
--   **Frontend:** Features a clean, professional login/signup UI with role and auth mode tabs. Forms are functional, and API calls are successfully sent to the backend. Initial issues with  on web builds were resolved by switching to controlled components. Navigation conflicts between Expo Router and  were also resolved, leading to a stable authentication flow.
+The work is being executed in phases. **Phase 1: Backend Pricing Engine** has been successfully completed. This involved:
+-   Implementing new FastAPI endpoints:
+    -   : The core pricing engine calculating fares with surge, zones, and modifiers.
+    -   : An owner-only endpoint for accessing pricing configurations.
+    -   : Calculates partner payouts based on platform-set fares and a 75% take rate.
+-   Modifying existing FastAPI endpoints:
+    -   : Updated to accept an  and enforce platform pricing.
+    -   : Now returns platform-calculated  instead of partner prices.
+    -   : Includes  with platform pricing information.
+-   Implementing security and business logic: Old partner price fields are now ignored, surge pricing is dynamically applied, and a 75% take rate for partners is enforced.
+-   Updating mock discovery data and adding new Pydantic models in  to support the new pricing structure.
 
-**Home/Dashboard System (PAGE-2-HOME) - Fully Working:**
--   **Backend:** All API endpoints for customer (nearby partners, surge pricing), partner (dashboard status, verification, queue), and owner (dashboard tiles) are implemented and successfully return mock data as per specification.
--   **Frontend:** Role-based navigation is working correctly, displaying appropriate home screen content for Customer, Partner, and Owner roles after successful authentication. The UI includes placeholders for the map, search bar, status toggles, job queues, and dashboard tiles, adhering to the specified design.
-    *   **Note on implementation:** Due to a persistent bundling/import issue with screen components, simplified versions of , , and  are currently inlined directly within . This means full integration of external libraries like  in these screens is pending a refactor.
-
-**Current Task:**
-The AI engineer is currently working on implementing **PAGE-3-SERVICE**. The backend API endpoints for service selection (catalog, media presign, pricing quote, partner capabilities) have been successfully implemented and tested. The  for the customer role has been created, and the next immediate step is to create the Partner and Owner service screens.
-
-**Status:** The application has a robust authentication foundation and role-based home screens. The next logical phase, service selection, is underway, with backend APIs complete and frontend screen development initiated.
+All backend APIs for this phase have been thoroughly tested and confirmed to be working correctly with a 100% success rate. The engineer is now poised to begin **Phase 2: Frontend Page Patches**, which will involve updating five specific frontend pages to reflect the new platform pricing model.
 </current_work>
 
 <optional_next_step>
-Create the  and  for the PAGE-3-SERVICE feature.
+Implement Phase 2 of the : Frontend Page Patches.
 </optional_next_step>

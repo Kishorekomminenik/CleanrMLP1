@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 export default function TestApp() {
   const testBackendConnection = async () => {
     try {
-      const backendUrl = 'https://shine-app-debug.preview.emergentagent.com';
+      const backendUrl = 'https://service-hub-shine.preview.emergentagent.com';
       console.log('Testing connection to:', backendUrl);
       
       const response = await fetch(`${backendUrl}/api/auth/me`);
