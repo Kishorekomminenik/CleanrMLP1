@@ -603,7 +603,7 @@ if __name__ == "__main__":
     print(f"\n🎯 SUPPORT SYSTEM ANALYSIS:")
     print(f"{'='*80}")
     
-    success_rate = (results.passed / (results.passed + results.failed)) * 100
+    success_rate = (results.passed / max(1, results.passed + results.failed)) * 100
     
     if success_rate >= 90:
         print("🟢 EXCELLENT: Support & Disputes System is production-ready")
