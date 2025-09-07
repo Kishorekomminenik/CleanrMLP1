@@ -428,9 +428,9 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabPartnerSupport' }}
             />
             <Tab.Screen
-              name="Profile"
-              component={PartnerProfileScreen}
-              options={{ tabBarTestID: 'tabPartnerProfile' }}
+              name="Settings"
+              component={PartnerSettingsScreen}
+              options={{ tabBarTestID: 'tabPartnerSettings' }}
             />
           </>
         )}
