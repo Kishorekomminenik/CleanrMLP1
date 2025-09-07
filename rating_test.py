@@ -238,12 +238,12 @@ def test_rating_context(results, customer_token, booking_id):
             print(f"Rating context response: {json.dumps(resp_data, indent=2)}")
             
             # Check required fields
-            required_fields = ["booking", "partner", "customer", "tipPresets"]
+            required_fields = ["bookingId", "partner", "customer", "eligibleTipPresets"]
             missing_fields = [field for field in required_fields if field not in resp_data]
             
             if not missing_fields:
-                booking_data = resp_data["booking"]
-                tip_presets = resp_data["tipPresets"]
+                total = resp_data["total"]
+                tip_presets = resp_data["eligibleTipPresets"]
                 
                 # Validate booking data
                 if "total" in booking_data and "currency" in booking_data:
