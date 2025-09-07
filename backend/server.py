@@ -2302,6 +2302,319 @@ async def emergency_sos(
     # Mock SOS handling - in production, would alert support team
     return CaptureResponse(ok=True)
 
+# Rating & Tip Models
+class PartnerInfo(BaseModel):
+    id: str
+    name: str
+
+class CustomerInfo(BaseModel):
+    id: str
+    name: str
+
+class RatingContext(BaseModel):
+    bookingId: str
+    total: float
+    currency: str
+    partner: PartnerInfo
+    customer: CustomerInfo
+    eligibleTipPresets: List[float]
+    alreadyRated: dict
+
+class TipInfo(BaseModel):
+    amount: float
+    currency: str
+
+class CustomerRatingRequest(BaseModel):
+    bookingId: str
+    stars: int
+    compliments: List[str]
+    comment: Optional[str] = None
+    tip: TipInfo
+    idempotencyKey: str
+
+class TipCaptureInfo(BaseModel):
+    ok: bool
+    paymentIntentId: str
+
+class CustomerRatingResponse(BaseModel):
+    ok: bool
+    tipCapture: TipCaptureInfo
+
+class PartnerRatingRequest(BaseModel):
+    bookingId: str
+    stars: int
+    notes: List[str]
+    comment: Optional[str] = None
+    idempotencyKey: str
+
+class PartnerRatingResponse(BaseModel):
+    ok: bool
+
+class TipCaptureRequest(BaseModel):
+    bookingId: str
+    amount: float
+    currency: str
+
+class TipCaptureResponse(BaseModel):
+    ok: bool
+    paymentIntentId: str
+
+class RatingItem(BaseModel):
+    bookingId: str
+    partnerRating: float
+    customerRating: float
+    tip: float
+    flags: List[str]
+
+class OwnerRatingsResponse(BaseModel):
+    items: List[RatingItem]
+
+# In-memory rating storage (in production, use database)
+ratings_data = {}  # bookingId -> {customer_rating: {...}, partner_rating: {...}}
+
+# Rating & Tip API Endpoints
+@api_router.get("/ratings/context/{booking_id}", response_model=RatingContext)
+async def get_rating_context(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get rating context for a completed booking"""
+    
+    # Get booking data
+    booking = await db.bookings.find_one({"booking_id": booking_id})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    # Check if already rated
+    existing_ratings = ratings_data.get(booking_id, {})
+    already_rated = {
+        "customer": "customer_rating" in existing_ratings,
+        "partner": "partner_rating" in existing_ratings
+    }
+    
+    # Get total amount from booking
+    total = booking.get("totals", {}).get("total", 100.0)
+    currency = booking.get("totals", {}).get("currency", "usd")
+    
+    # Mock partner and customer info
+    partner_info = PartnerInfo(
+        id=booking.get("partnerId", "partner_123"),
+        name=booking.get("partnerName", "Alex M.")
+    )
+    
+    customer_info = CustomerInfo(
+        id=current_user.id,
+        name=current_user.email.split('@')[0].title()
+    )
+    
+    # Calculate tip presets (percentages of total)
+    tip_presets = [0, round(total * 0.15, 2), round(total * 0.18, 2), round(total * 0.20, 2), round(total * 0.25, 2)]
+    
+    return RatingContext(
+        bookingId=booking_id,
+        total=total,
+        currency=currency,
+        partner=partner_info,
+        customer=customer_info,
+        eligibleTipPresets=tip_presets,
+        alreadyRated=already_rated
+    )
+
+@api_router.post("/ratings/customer", response_model=CustomerRatingResponse)
+async def submit_customer_rating(
+    request: CustomerRatingRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Submit customer rating and optional tip"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Check for duplicate submission
+    if request.bookingId in ratings_data:
+        existing = ratings_data[request.bookingId]
+        if "customer_rating" in existing:
+            # Check idempotency
+            if existing["customer_rating"].get("idempotencyKey") == request.idempotencyKey:
+                # Return existing response
+                return CustomerRatingResponse(
+                    ok=True,
+                    tipCapture=TipCaptureInfo(ok=True, paymentIntentId=existing["customer_rating"].get("tipPaymentIntentId", ""))
+                )
+            else:
+                raise HTTPException(status_code=409, detail="Already rated")
+    
+    # Validate star rating
+    if not (1 <= request.stars <= 5):
+        raise HTTPException(status_code=400, detail="Stars must be between 1 and 5")
+    
+    # Process tip if provided
+    tip_payment_intent_id = ""
+    tip_capture_success = True
+    
+    if request.tip.amount > 0:
+        # Mock tip capture (in production, integrate with Stripe)
+        tip_payment_intent_id = f"pi_tip_{secrets.token_urlsafe(16)}"
+        
+        # Simulate payment failure for testing (5% failure rate)
+        if hash(request.idempotencyKey) % 20 == 0:
+            tip_capture_success = False
+            raise HTTPException(status_code=402, detail="Tip payment declined")
+    
+    # Store rating
+    if request.bookingId not in ratings_data:
+        ratings_data[request.bookingId] = {}
+    
+    ratings_data[request.bookingId]["customer_rating"] = {
+        "stars": request.stars,
+        "compliments": request.compliments,
+        "comment": request.comment,
+        "tip": request.tip.dict(),
+        "idempotencyKey": request.idempotencyKey,
+        "tipPaymentIntentId": tip_payment_intent_id,
+        "submittedAt": datetime.utcnow().isoformat(),
+        "userId": current_user.id
+    }
+    
+    return CustomerRatingResponse(
+        ok=True,
+        tipCapture=TipCaptureInfo(
+            ok=tip_capture_success,
+            paymentIntentId=tip_payment_intent_id
+        )
+    )
+
+@api_router.post("/ratings/partner", response_model=PartnerRatingResponse)
+async def submit_partner_rating(
+    request: PartnerRatingRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Submit partner rating for customer"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Check for duplicate submission
+    if request.bookingId in ratings_data:
+        existing = ratings_data[request.bookingId]
+        if "partner_rating" in existing:
+            # Check idempotency
+            if existing["partner_rating"].get("idempotencyKey") == request.idempotencyKey:
+                # Return existing response
+                return PartnerRatingResponse(ok=True)
+            else:
+                raise HTTPException(status_code=409, detail="Already rated")
+    
+    # Validate star rating
+    if not (1 <= request.stars <= 5):
+        raise HTTPException(status_code=400, detail="Stars must be between 1 and 5")
+    
+    # Store rating
+    if request.bookingId not in ratings_data:
+        ratings_data[request.bookingId] = {}
+    
+    ratings_data[request.bookingId]["partner_rating"] = {
+        "stars": request.stars,
+        "notes": request.notes,
+        "comment": request.comment,
+        "idempotencyKey": request.idempotencyKey,
+        "submittedAt": datetime.utcnow().isoformat(),
+        "userId": current_user.id
+    }
+    
+    return PartnerRatingResponse(ok=True)
+
+@api_router.post("/billing/tip", response_model=TipCaptureResponse)
+async def capture_tip(
+    request: TipCaptureRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Capture tip payment separately"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Mock tip capture
+    payment_intent_id = f"pi_tip_{secrets.token_urlsafe(16)}"
+    
+    # Simulate payment failure for testing
+    if request.amount > 50:  # Large tips more likely to fail
+        raise HTTPException(status_code=402, detail="Tip card declined")
+    
+    return TipCaptureResponse(
+        ok=True,
+        paymentIntentId=payment_intent_id
+    )
+
+@api_router.get("/owner/ratings", response_model=OwnerRatingsResponse)
+async def get_owner_ratings_dashboard(current_user: User = Depends(get_current_user)):
+    """Get owner ratings dashboard"""
+    
+    if current_user.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner access required")
+    
+    # Process ratings data for dashboard
+    items = []
+    
+    for booking_id, rating_data in ratings_data.items():
+        customer_rating = rating_data.get("customer_rating", {})
+        partner_rating = rating_data.get("partner_rating", {})
+        
+        # Calculate metrics
+        customer_stars = customer_rating.get("stars", 0)
+        partner_stars = partner_rating.get("stars", 0)
+        tip_amount = customer_rating.get("tip", {}).get("amount", 0)
+        
+        # Determine flags
+        flags = []
+        if customer_stars <= 2:
+            flags.append("low_customer_rating")
+        if partner_stars <= 2:
+            flags.append("low_partner_rating")
+        if tip_amount > 20:
+            flags.append("high_tip")
+        if customer_rating.get("comment") and len(customer_rating["comment"]) > 100:
+            flags.append("detailed_feedback")
+        
+        items.append(RatingItem(
+            bookingId=booking_id,
+            partnerRating=float(partner_stars),
+            customerRating=float(customer_stars),
+            tip=float(tip_amount),
+            flags=flags
+        ))
+    
+    # Sort by most recent (mock - in production use timestamps)
+    items = sorted(items, key=lambda x: x.bookingId, reverse=True)[:20]
+    
+    return OwnerRatingsResponse(items=items)
+
+# Helper function to get earnings summary for partner
+def get_partner_earnings_summary(booking_id: str, partner_id: str):
+    """Get partner earnings summary including tips"""
+    
+    # Get booking data
+    base_amount = 45.0  # Mock base payout
+    surge_multiplier = 1.0  # Mock surge
+    adjustments = 0.0  # Mock adjustments
+    
+    # Get tip from rating
+    tip_amount = 0.0
+    if booking_id in ratings_data:
+        customer_rating = ratings_data[booking_id].get("customer_rating", {})
+        tip_amount = customer_rating.get("tip", {}).get("amount", 0)
+    
+    total = base_amount * surge_multiplier + adjustments + tip_amount
+    
+    return {
+        "base": base_amount,
+        "surge": base_amount * (surge_multiplier - 1) if surge_multiplier > 1 else 0,
+        "adjustments": adjustments,
+        "tip": tip_amount,
+        "total": total,
+        "currency": "usd"
+    }
+
 # Original routes
 @api_router.get("/")
 async def root():
