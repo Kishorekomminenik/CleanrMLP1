@@ -1457,4 +1457,10 @@ async def create_indexes():
     await db.addresses.create_index([("user_id", 1), ("line1", 1), ("city", 1), ("postalCode", 1)])
     await db.addresses.create_index("created_at")
     
+    # Booking indexes
+    await db.bookings.create_index("user_id")
+    await db.bookings.create_index("booking_id", unique=True)
+    await db.bookings.create_index("status")
+    await db.bookings.create_index("created_at")
+    
     logger.info("Created database indexes")
