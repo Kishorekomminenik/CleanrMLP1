@@ -4193,3 +4193,6 @@ async def create_indexes():
     await db.bookings.create_index([("partner_id", 1), ("status", 1), ("created_at", -1)])  # Compound index for partner queries
     
     logger.info("Created database indexes")
+    
+    # Initialize mock booking data for testing
+    await initialize_mock_bookings()
