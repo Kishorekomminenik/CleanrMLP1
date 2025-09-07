@@ -9,7 +9,7 @@ import json
 import uuid
 from datetime import datetime
 
-BASE_URL = "https://home-dashboard-2.preview.emergentagent.com/api"
+BASE_URL = "https://page-metrics.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 def make_request(method, endpoint, data=None, headers=None, auth_token=None):

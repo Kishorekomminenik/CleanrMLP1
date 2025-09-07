@@ -12,7 +12,7 @@ import uuid
 import re
 
 # Configuration
-BASE_URL = "https://home-dashboard-2.preview.emergentagent.com/api"
+BASE_URL = "https://page-metrics.preview.emergentagent.com/api"
 HEADERS = {"Content-Type": "application/json"}
 
 class TestResults:
