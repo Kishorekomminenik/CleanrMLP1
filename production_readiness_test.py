@@ -612,7 +612,7 @@ def test_booking_platform_pricing(results, customer_token):
         }
     }
     
-    quote_response, _ = make_request("POST", "/pricing/quote", pricing_data)
+    quote_response, _ = make_request("POST", "/pricing/quote", pricing_data, auth_token=customer_token)
     estimate_id = None
     platform_total = None
     
