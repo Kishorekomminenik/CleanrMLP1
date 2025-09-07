@@ -284,6 +284,9 @@ export default function AppShell() {
         case 'Home':
           iconName = focused ? 'grid' : 'grid-outline';
           break;
+        case 'Discover':
+          iconName = focused ? 'search' : 'search-outline';
+          break;
         case 'Jobs':
           iconName = focused ? 'clipboard' : 'clipboard-outline';
           break;
