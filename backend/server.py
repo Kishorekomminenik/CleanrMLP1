@@ -2329,7 +2329,7 @@ class CustomerRatingRequest(BaseModel):
     stars: int
     compliments: List[str]
     comment: Optional[str] = None
-    tip: TipInfo
+    tip: Optional[TipInfo] = None
     idempotencyKey: str
 
 class TipCaptureInfo(BaseModel):
