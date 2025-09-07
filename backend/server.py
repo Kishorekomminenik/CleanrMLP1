@@ -1128,6 +1128,282 @@ async def get_eta_preview(eta_request: ETARequest):
         distanceKm=min(distance_km, 25.0)  # Cap at 25km for realism
     )
 
+# Payment & Billing Models
+class PaymentMethod(BaseModel):
+    id: str
+    brand: str
+    last4: str
+    exp: str
+    isDefault: bool
+
+class ListPaymentMethodsResponse(BaseModel):
+    methods: List[PaymentMethod]
+
+class SetupIntentResponse(BaseModel):
+    clientSecret: str
+
+class AttachPaymentMethodRequest(BaseModel):
+    paymentMethodId: str
+
+class AttachPaymentMethodResponse(BaseModel):
+    ok: bool
+
+class PromoApplyRequest(BaseModel):
+    quoteId: str
+    code: str
+    useCredits: bool = False
+
+class PriceBreakdownItem(BaseModel):
+    label: str
+    amount: float
+
+class PromoApplyResponse(BaseModel):
+    breakdown: List[PriceBreakdownItem]
+    total: float
+    promoApplied: bool
+    creditsApplied: float
+
+class PaymentIntentRequest(BaseModel):
+    amount: float
+    currency: str = "usd"
+    paymentMethodId: str
+    captureStrategy: str = "dual"
+
+class PaymentIntentResponse(BaseModel):
+    paymentIntentId: str
+    clientSecret: str
+    requiresAction: bool
+
+class ConfirmStripeActionRequest(BaseModel):
+    paymentIntentId: str
+
+class ConfirmStripeActionResponse(BaseModel):
+    ok: bool
+
+class BookingRequest(BaseModel):
+    quoteId: str
+    service: dict
+    address: dict
+    access: dict
+    totals: dict
+    payment: dict
+    applyCredits: bool = False
+    promoCode: Optional[str] = None
+
+class BookingResponse(BaseModel):
+    bookingId: str
+    status: str
+    etaWindow: Optional[str] = None
+    next: str
+
+class VoidPreauthRequest(BaseModel):
+    paymentIntentId: str
+
+class VoidPreauthResponse(BaseModel):
+    ok: bool
+
+# Billing & Payment API Endpoints
+@api_router.get("/billing/methods", response_model=ListPaymentMethodsResponse)
+async def list_payment_methods(current_user: User = Depends(get_current_user)):
+    """List saved payment methods for the current user"""
+    
+    # Mock payment methods data
+    mock_methods = [
+        PaymentMethod(
+            id="pm_1Abc123Def456",
+            brand="visa",
+            last4="4242",
+            exp="12/26",
+            isDefault=True
+        ),
+        PaymentMethod(
+            id="pm_2Ghi789Jkl012",
+            brand="mastercard", 
+            last4="1234",
+            exp="03/27",
+            isDefault=False
+        )
+    ]
+    
+    return ListPaymentMethodsResponse(methods=mock_methods)
+
+@api_router.post("/billing/setup-intent", response_model=SetupIntentResponse)
+async def create_setup_intent(current_user: User = Depends(get_current_user)):
+    """Create Stripe setup intent for adding new payment method"""
+    
+    # Mock setup intent
+    mock_client_secret = f"seti_{secrets.token_urlsafe(24)}_secret_{secrets.token_urlsafe(16)}"
+    
+    return SetupIntentResponse(clientSecret=mock_client_secret)
+
+@api_router.post("/billing/methods", response_model=AttachPaymentMethodResponse)
+async def attach_payment_method(
+    request: AttachPaymentMethodRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Attach a payment method to customer"""
+    
+    # Mock successful attachment
+    return AttachPaymentMethodResponse(ok=True)
+
+@api_router.post("/pricing/promo/apply", response_model=PromoApplyResponse)
+async def apply_promo_code(
+    request: PromoApplyRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Apply promo code and calculate pricing breakdown"""
+    
+    # Mock pricing calculation
+    base_price = 89.00
+    rooms_fee = 15.00
+    surge_multiplier = 1.0
+    
+    # Simulate promo code validation
+    valid_promos = ["SHINE20", "FIRST10", "SAVE15"]
+    promo_applied = False
+    discount = 0.0
+    
+    if request.code in valid_promos:
+        promo_applied = True
+        if request.code == "SHINE20":
+            discount = 20.0
+        elif request.code == "FIRST10":
+            discount = 10.0
+        elif request.code == "SAVE15":
+            discount = 15.0
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid promo code"
+        )
+    
+    # Calculate totals
+    subtotal = base_price + rooms_fee
+    surge_amount = subtotal * (surge_multiplier - 1) if surge_multiplier > 1 else 0
+    promo_discount = discount if promo_applied else 0
+    
+    # Mock credits
+    credits_available = 25.0
+    credits_applied = min(credits_available, subtotal) if request.useCredits else 0
+    
+    tax_rate = 0.08875  # Mock tax rate
+    taxable_amount = subtotal + surge_amount - promo_discount - credits_applied
+    tax = max(0, taxable_amount * tax_rate)
+    total = max(0, taxable_amount + tax)
+    
+    breakdown = [
+        PriceBreakdownItem(label="Base Service", amount=base_price),
+        PriceBreakdownItem(label="Rooms", amount=rooms_fee),
+    ]
+    
+    if surge_amount > 0:
+        breakdown.append(PriceBreakdownItem(label="Surge", amount=surge_amount))
+    
+    if promo_discount > 0:
+        breakdown.append(PriceBreakdownItem(label=f"Promo ({request.code})", amount=-promo_discount))
+    
+    if credits_applied > 0:
+        breakdown.append(PriceBreakdownItem(label="Credits", amount=-credits_applied))
+    
+    breakdown.extend([
+        PriceBreakdownItem(label="Tax", amount=tax),
+        PriceBreakdownItem(label="Total", amount=total)
+    ])
+    
+    return PromoApplyResponse(
+        breakdown=breakdown,
+        total=total,
+        promoApplied=promo_applied,
+        creditsApplied=credits_applied
+    )
+
+@api_router.post("/billing/preauth", response_model=PaymentIntentResponse)
+async def create_payment_intent_preauth(
+    request: PaymentIntentRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create payment intent for pre-authorization"""
+    
+    # Mock payment intent creation
+    mock_pi_id = f"pi_{secrets.token_urlsafe(24)}"
+    mock_client_secret = f"{mock_pi_id}_secret_{secrets.token_urlsafe(16)}"
+    
+    # Simulate different scenarios based on payment method
+    requires_action = False
+    if "pm_sca" in request.paymentMethodId:
+        requires_action = True
+    elif "pm_declined" in request.paymentMethodId:
+        raise HTTPException(
+            status_code=402,
+            detail="Your card was declined"
+        )
+    
+    return PaymentIntentResponse(
+        paymentIntentId=mock_pi_id,
+        clientSecret=mock_client_secret,
+        requiresAction=requires_action
+    )
+
+@api_router.post("/billing/confirm", response_model=ConfirmStripeActionResponse)
+async def confirm_stripe_action(request: ConfirmStripeActionRequest):
+    """Confirm Stripe action (SCA)"""
+    
+    # Mock successful confirmation
+    return ConfirmStripeActionResponse(ok=True)
+
+@api_router.post("/bookings", response_model=BookingResponse)
+async def create_booking(
+    booking_data: BookingRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a booking after successful payment pre-auth"""
+    
+    # Simulate booking creation
+    booking_id = f"bk_{secrets.token_urlsafe(16)}"
+    
+    # Mock different booking statuses
+    timing = booking_data.service.get("timing", {})
+    if timing.get("when") == "now":
+        status = "pending_dispatch"
+        eta_window = "30-45 min"
+        next_step = "dispatch"
+    else:
+        status = "scheduled"
+        eta_window = None
+        next_step = "tracking"
+    
+    # Store booking in database
+    booking_doc = {
+        "booking_id": booking_id,
+        "user_id": current_user.id,
+        "status": status,
+        "service": booking_data.service,
+        "address": booking_data.address,
+        "access": booking_data.access,
+        "totals": booking_data.totals,
+        "payment": booking_data.payment,
+        "promo_code": booking_data.promoCode,
+        "credits_applied": booking_data.applyCredits,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    
+    await db.bookings.insert_one(booking_doc)
+    
+    return BookingResponse(
+        bookingId=booking_id,
+        status=status,
+        etaWindow=eta_window,
+        next=next_step
+    )
+
+@api_router.post("/billing/void", response_model=VoidPreauthResponse)
+async def void_preauth(request: VoidPreauthRequest):
+    """Void a payment pre-authorization"""
+    
+    # Mock successful void
+    return VoidPreauthResponse(ok=True)
+
 # Original routes
 @api_router.get("/")
 async def root():
