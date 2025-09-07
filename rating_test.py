@@ -316,7 +316,7 @@ def test_customer_rating_validation(results, customer_token, booking_id):
     print("\n=== Testing Customer Rating Validation ===")
     
     invalid_rating_data = {
-        "bookingId": booking_id,
+        "bookingId": "validation_test_booking",  # Use different booking ID
         "stars": 6,  # Invalid - should be 1-5
         "compliments": ["On time"],
         "comment": "Test validation",
