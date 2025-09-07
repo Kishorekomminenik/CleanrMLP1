@@ -453,7 +453,7 @@ def test_owner_ratings_dashboard(results, owner_token):
                 if len(ratings) > 0:
                     # Check first rating structure
                     rating = ratings[0]
-                    required_fields = ["bookingId", "partnerRating", "customerRating", "tipAmount", "flags"]
+                    required_fields = ["bookingId", "partnerRating", "customerRating", "tip", "flags"]
                     
                     if all(field in rating for field in required_fields):
                         flags = rating["flags"]
