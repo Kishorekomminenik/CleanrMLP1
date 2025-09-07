@@ -83,11 +83,15 @@ def test_auth_me_no_header(results):
     """Test GET /api/auth/me with no Authorization header (should return 401/403)"""
     response = make_request("GET", "/auth/me")
     
-    if response and response.status_code in [401, 403]:
-        results.add_result("Auth Me - No Header", True, f"Properly rejected with status {response.status_code}")
-        return True
+    if response:
+        if response.status_code in [401, 403]:
+            results.add_result("Auth Me - No Header", True, f"Properly rejected with status {response.status_code}")
+            return True
+        else:
+            results.add_result("Auth Me - No Header", False, f"Expected 401/403, got {response.status_code}")
+            return False
     else:
-        results.add_result("Auth Me - No Header", False, f"Expected 401/403, got {response.status_code if response else 'No response'}")
+        results.add_result("Auth Me - No Header", False, "No response received from server")
         return False
 
 def test_auth_me_invalid_token(results):
