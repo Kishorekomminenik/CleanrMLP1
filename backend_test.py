@@ -3088,6 +3088,51 @@ def main():
         test_job_endpoints_require_auth(results)
         test_job_role_access_control(results, customer_token, partner_token, owner_token, test_booking_id)
     
+    print("\n⭐ TESTING RATING & TIP API ENDPOINTS (PAGE-8-RATE)...")
+    
+    # Test rating & tip endpoints with different user roles
+    if customer_token and partner_token and owner_token:
+        # Use a booking ID for rating testing
+        rating_booking_id = booking_id_now if booking_id_now else "bk_test_rating"
+        
+        # Test authentication requirements for rating endpoints
+        test_rating_endpoints_require_auth(results)
+        
+        # Test role-based access control for rating endpoints
+        test_rating_role_access_control(results, customer_token, partner_token, owner_token)
+        
+        # Test rating context retrieval
+        rating_context = test_rating_context_retrieval(results, customer_token, rating_booking_id)
+        test_rating_context_nonexistent_booking(results, customer_token)
+        
+        # Test customer rating submission and validation
+        customer_idempotency_key, tip_payment_intent = test_customer_rating_submission(results, customer_token, rating_booking_id)
+        test_customer_rating_validation(results, customer_token, f"bk_validation_{uuid.uuid4().hex[:8]}")
+        
+        # Test customer rating idempotency and already-rated detection
+        if customer_idempotency_key:
+            test_customer_rating_idempotency(results, customer_token, rating_booking_id, customer_idempotency_key)
+            test_customer_rating_already_rated(results, customer_token, rating_booking_id)
+        
+        # Test tip payment failure simulation
+        test_tip_payment_failure_simulation(results, customer_token, f"bk_tip_fail_{uuid.uuid4().hex[:8]}")
+        
+        # Test partner rating submission and validation
+        partner_idempotency_key = test_partner_rating_submission(results, partner_token, rating_booking_id)
+        test_partner_rating_validation(results, partner_token, f"bk_partner_validation_{uuid.uuid4().hex[:8]}")
+        
+        # Test partner rating idempotency
+        if partner_idempotency_key:
+            test_partner_rating_idempotency(results, partner_token, rating_booking_id, partner_idempotency_key)
+        
+        # Test separate tip capture functionality
+        test_separate_tip_capture(results, customer_token)
+        test_tip_capture_failure_large_amount(results, customer_token)
+        
+        # Test owner ratings dashboard
+        test_owner_ratings_dashboard(results, owner_token)
+        test_rating_flags_generation(results, owner_token)
+    
     # Print final results
     results.print_summary()
     
