@@ -11,7 +11,7 @@ import CustomerHomeScreen from '../screens/CustomerHomeScreen';
 import PartnerHomeScreen from '../screens/PartnerHomeScreen';
 import OwnerHomeScreen from '../screens/OwnerHomeScreen';
 import PartnerEarningsScreen from '../screens/PartnerEarningsScreen';
-function CustomerHomeComponent() {
+// Customer Screens - Simplified for demo
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.homeHeader}>
