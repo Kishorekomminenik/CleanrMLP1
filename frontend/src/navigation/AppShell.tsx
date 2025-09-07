@@ -144,14 +144,6 @@ function PartnerJobsScreen() {
   );
 }
 
-function PartnerEarningsScreen() {
-  return (
-    <SafeAreaView style={styles.screen}>
-      <Text style={styles.screenTitle}>Earnings</Text>
-      <Text style={styles.screenSubtitle}>Track your earnings and payments</Text>
-    </SafeAreaView>
-  );
-}
 
 function PartnerProfileScreen() {
   const { logout, switchRole } = useAuth();
