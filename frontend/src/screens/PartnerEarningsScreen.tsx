@@ -820,6 +820,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6C757D',
   },
+  payoutInfoContainer: {
+    marginHorizontal: 16,
+    marginBottom: 24,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  payoutInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  payoutInfoLabel: {
+    fontSize: 14,
+    color: '#1E40AF',
+    fontFamily: 'Inter',
+  },
+  payoutInfoValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E40AF',
+    fontFamily: 'Inter',
+  },
   filtersRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
