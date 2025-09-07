@@ -832,6 +832,20 @@ const styles = StyleSheet.create({
     color: '#3A8DFF',
     textAlign: 'center',
   },
+  disclaimerContainer: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  disclaimerText: {
+    fontSize: 12,
+    color: '#92400E',
+    textAlign: 'center',
+    fontFamily: 'Inter',
+  },
   buttonContainer: {
     flexDirection: 'row',
     padding: 16,
