@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SHINE App Backend Authentication System Tests
-Tests all authentication endpoints comprehensively
+SHINE Auth v3.0 Backend System Comprehensive Tests
+Tests all enhanced authentication endpoints and validation features
 """
 
 import requests
@@ -9,6 +9,7 @@ import json
 import time
 from datetime import datetime
 import uuid
+import re
 
 # Configuration
 BASE_URL = "https://shine-role-router.preview.emergentagent.com/api"
