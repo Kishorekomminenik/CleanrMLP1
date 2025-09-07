@@ -3917,6 +3917,12 @@ async def debug_bookings(current_user: User = Depends(get_current_user)):
     bookings = await db.bookings.find({"user_id": current_user.id}).to_list(100)
     return {"user_id": current_user.id, "bookings": [{"booking_id": b.get("booking_id"), "status": b.get("status"), "user_id": b.get("user_id")} for b in bookings]}
 
+@api_router.get("/debug/all-bookings")
+async def debug_all_bookings():
+    """Debug endpoint to see all bookings"""
+    bookings = await db.bookings.find({}).to_list(100)
+    return {"bookings": [{"booking_id": b.get("booking_id"), "status": b.get("status"), "user_id": b.get("user_id")} for b in bookings]}
+
 @api_router.get("/bookings/partner", response_model=BookingListResponse)
 async def list_partner_bookings(
     status: str = Query(..., description="Status filter: today|upcoming|completed"),
