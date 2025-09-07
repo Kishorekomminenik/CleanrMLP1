@@ -23,12 +23,34 @@ import random
 async def initialize_mock_bookings():
     """Initialize mock booking data for testing purposes"""
     
+    # Find or create test user
+    test_user = await db.users.find_one({"email": "user_001@test.com"})
+    if not test_user:
+        # Create test user if it doesn't exist
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        hashed_password = pwd_context.hash("TestPass123!")
+        
+        user_doc = {
+            "email": "user_001@test.com",
+            "password_hash": hashed_password,
+            "role": "customer",
+            "mfa_enabled": False,
+            "failed_attempts": 0,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        result = await db.users.insert_one(user_doc)
+        test_user_id = str(result.inserted_id)
+    else:
+        test_user_id = str(test_user["_id"])
+    
     # Sample customer bookings for different users
     mock_bookings = [
         # Upcoming booking
         {
             "booking_id": "bk_upcoming_001",
-            "user_id": "user_001",
+            "user_id": test_user_id,
             "partner_id": None,
             "status": "scheduled",
             "service": {
@@ -66,7 +88,7 @@ async def initialize_mock_bookings():
         # In-progress booking
         {
             "booking_id": "bk_inprogress_002",
-            "user_id": "user_001",
+            "user_id": test_user_id,
             "partner_id": "partner_001",
             "status": "in_progress",
             "service": {
@@ -103,7 +125,7 @@ async def initialize_mock_bookings():
         # Completed booking
         {
             "booking_id": "bk_completed_003",
-            "user_id": "user_001",
+            "user_id": test_user_id,
             "partner_id": "partner_001",
             "status": "completed",
             "service": {
