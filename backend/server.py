@@ -4585,7 +4585,7 @@ async def search_partners(
             badges=partner_data["badges"],
             serviceTypes=partner_data["serviceTypes"],
             distanceKm=partner_info["distance"],
-            priceHint=partner_info["price_hint"],
+            priceHint=f"From ${int(partner_info['from_price'])}",  # Still use priceHint for backward compatibility
             fav=partner_info["is_favorite"]
         ))
     
