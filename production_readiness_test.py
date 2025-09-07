@@ -224,7 +224,7 @@ def test_platform_pricing_engine(results, customer_token):
         }
     }
     
-    response, response_time = make_request("POST", "/pricing/quote", pricing_data_scheduled)
+    response, response_time = make_request("POST", "/pricing/quote", pricing_data_scheduled, auth_token=customer_token)
     if response and response.status_code == 200:
         try:
             resp_data = response.json()
