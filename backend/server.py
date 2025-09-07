@@ -2397,7 +2397,7 @@ async def get_rating_context(
     currency = booking.get("totals", {}).get("currency", "usd")
     
     # Mock partner and customer info
-    partner_info = PartnerInfo(
+    partner_info = RatingPartnerInfo(
         id=booking.get("partnerId", "partner_123"),
         name=booking.get("partnerName", "Alex M.")
     )
