@@ -1859,11 +1859,15 @@ async def get_job(
         if not booking:
             raise HTTPException(status_code=404, detail="Job not found")
         
+        # Get service type from booking data
+        service_data = booking.get("service", {})
+        service_type = service_data.get("serviceType") or service_data.get("type", "basic")
+        
         # Initialize job state
         job_states[booking_id] = {
             "bookingId": booking_id,
             "status": "enroute",
-            "serviceType": booking["service"]["serviceType"],
+            "serviceType": service_type,
             "address": {
                 "line1": booking["address"]["line1"],
                 "lat": booking["address"]["lat"],
@@ -1877,7 +1881,7 @@ async def get_job(
             "etaMinutes": 15,
             "routePolyline": "encoded_polyline_mock",
             "requiredPhotos": {
-                "before": 2 if booking["service"]["serviceType"] in ["deep", "bathroom"] else 1,
+                "before": 2 if service_type in ["deep", "bathroom"] else 1,
                 "after": 2
             },
             "createdAt": datetime.utcnow(),
