@@ -369,6 +369,18 @@
           agent: "main"
           comment: "Implemented read-only owner zones screen with heatmap placeholder, performance metrics, top zones list with booking/revenue data, insights, and analytics coming soon features."
 
+  - task: "Checkout Screen (PAGE-5-CHECKOUT)"
+    implemented: true
+    working: "NA"
+    file: "src/screens/CheckoutScreen.tsx, app/checkout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented comprehensive checkout screen with booking review, price breakdown, promo code application, credits toggle, payment method selection with add card modal, terms agreement, pre-authorization flow, SCA handling, booking creation, and complete error recovery. Includes processing overlay and confirmation flow."
+
 ## metadata:
   created_by: "main_agent"
   version: "1.0"
