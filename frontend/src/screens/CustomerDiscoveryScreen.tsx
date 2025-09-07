@@ -25,7 +25,8 @@ interface SearchResultItem {
   badges: string[];
   serviceTypes: string[];
   distanceKm: number;
-  priceHint: string;
+  fromPrice: number;
+  surge: boolean;
   fav: boolean;
 }
 
