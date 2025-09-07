@@ -3567,6 +3567,404 @@ async def get_training_guides(current_user: User = Depends(get_current_user)):
     guides = list(training_guides.values())
     return TrainingGuidesResponse(items=guides)
 
+# PAGE-11-BOOKINGS: Booking Management APIs
+
+# Booking List Models
+class BookingListItem(BaseModel):
+    bookingId: str
+    dateTime: Optional[str] = None  # For customer
+    time: Optional[str] = None      # For partner
+    serviceType: str
+    addressShort: str
+    status: str
+    price: Optional[float] = None        # For customer
+    payout: Optional[float] = None       # For partner
+    currency: str = "USD"
+    distanceKm: Optional[float] = None   # For partner
+    surge: Optional[bool] = False        # For customer
+    promoApplied: Optional[bool] = False # For customer
+    creditsUsed: Optional[bool] = False  # For customer
+
+class BookingListResponse(BaseModel):
+    items: List[BookingListItem]
+    nextPage: Optional[int] = None
+
+# Detailed Booking Models
+class BookingService(BaseModel):
+    serviceType: str
+    dwellingType: str
+    bedrooms: int
+    bathrooms: int
+    masters: int
+    addons: List[str] = []
+
+class BookingAddress(BaseModel):
+    line1: str
+    city: str
+    postalCode: str
+    lat: float
+    lng: float
+
+class BookingPartner(BaseModel):
+    id: str
+    name: str
+    rating: float
+    badges: List[str] = []
+
+class BookingCustomer(BaseModel):
+    id: str
+    firstNameInitial: str
+    rating: float
+
+class BookingTimelineEvent(BaseModel):
+    ts: str
+    event: str
+    label: str
+
+class BookingPhotos(BaseModel):
+    before: List[str] = []
+    after: List[str] = []
+
+class BookingReceiptBreakdown(BaseModel):
+    label: str
+    amount: float
+
+class BookingReceipt(BaseModel):
+    breakdown: List[BookingReceiptBreakdown]
+    tax: float
+    promo: float
+    credits: float
+    total: float
+    currency: str = "USD"
+
+class BookingPolicy(BaseModel):
+    cancellable: bool
+    windowMins: int
+    fee: float
+    refundCreditEligible: bool
+
+class BookingDetail(BaseModel):
+    bookingId: str
+    status: str
+    service: BookingService
+    address: BookingAddress
+    partner: Optional[BookingPartner] = None
+    customer: Optional[BookingCustomer] = None
+    timeline: List[BookingTimelineEvent]
+    photos: BookingPhotos
+    receipt: BookingReceipt
+    policy: BookingPolicy
+
+class InvoiceResponse(BaseModel):
+    url: str
+
+# Booking List Endpoints
+@api_router.get("/bookings/customer", response_model=BookingListResponse)
+async def list_customer_bookings(
+    status: str = Query(..., description="Status filter: upcoming|in_progress|past"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """List customer bookings with status filtering"""
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Calculate skip for pagination
+    skip = (page - 1) * size
+    
+    # Map status to database filters
+    status_filter = {}
+    if status == "upcoming":
+        status_filter = {"status": {"$in": ["scheduled", "pending_dispatch"]}}
+    elif status == "in_progress":
+        status_filter = {"status": {"$in": ["assigned", "enroute", "arrived", "in_progress"]}}
+    elif status == "past":
+        status_filter = {"status": {"$in": ["completed", "cancelled"]}}
+    
+    # Query database
+    query = {"user_id": current_user.id, **status_filter}
+    cursor = db.bookings.find(query).sort("created_at", -1).skip(skip).limit(size + 1)
+    bookings = await cursor.to_list(length=size + 1)
+    
+    # Check if there's a next page
+    has_next_page = len(bookings) > size
+    if has_next_page:
+        bookings = bookings[:-1]  # Remove extra item
+    next_page = page + 1 if has_next_page else None
+    
+    # Transform to response format
+    items = []
+    for booking in bookings:
+        service_type = booking.get("service", {}).get("type", "Unknown")
+        address = booking.get("address", {})
+        address_short = f"{address.get('line1', '')} {address.get('city', '')}".strip()
+        
+        # Get booking date/time
+        created_at = booking.get("created_at")
+        date_time = created_at.isoformat() + "Z" if created_at else None
+        
+        # Calculate price from totals
+        totals = booking.get("totals", {})
+        price = totals.get("total", 0.0)
+        
+        items.append(BookingListItem(
+            bookingId=booking["booking_id"],
+            dateTime=date_time,
+            serviceType=service_type,
+            addressShort=address_short,
+            status=booking["status"],
+            price=price,
+            currency="USD",
+            surge=totals.get("surge", False),
+            promoApplied=bool(booking.get("promo_code")),
+            creditsUsed=booking.get("credits_applied", False)
+        ))
+    
+    return BookingListResponse(items=items, nextPage=next_page)
+
+@api_router.get("/bookings/partner", response_model=BookingListResponse)
+async def list_partner_bookings(
+    status: str = Query(..., description="Status filter: today|upcoming|completed"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """List partner job bookings with status filtering"""
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    # Calculate skip for pagination
+    skip = (page - 1) * size
+    
+    # Map status to database filters and date ranges
+    status_filter = {}
+    today = datetime.utcnow().date()
+    
+    if status == "today":
+        status_filter = {
+            "status": {"$in": ["assigned", "enroute", "arrived", "in_progress"]},
+            "created_at": {
+                "$gte": datetime.combine(today, datetime.min.time()),
+                "$lt": datetime.combine(today + timedelta(days=1), datetime.min.time())
+            }
+        }
+    elif status == "upcoming":
+        status_filter = {
+            "status": {"$in": ["scheduled", "assigned"]},
+            "created_at": {"$gte": datetime.combine(today + timedelta(days=1), datetime.min.time())}
+        }
+    elif status == "completed":
+        status_filter = {"status": {"$in": ["completed", "cancelled"]}}
+    
+    # Query database (partner jobs are bookings assigned to this partner)
+    query = {"partner_id": current_user.id, **status_filter}
+    cursor = db.bookings.find(query).sort("created_at", -1).skip(skip).limit(size + 1)
+    bookings = await cursor.to_list(length=size + 1)
+    
+    # Check if there's a next page
+    has_next_page = len(bookings) > size
+    if has_next_page:
+        bookings = bookings[:-1]  # Remove extra item
+    next_page = page + 1 if has_next_page else None
+    
+    # Transform to response format
+    items = []
+    for booking in bookings:
+        service_type = booking.get("service", {}).get("type", "Unknown")
+        address = booking.get("address", {})
+        address_short = f"{address.get('line1', '')} {address.get('city', '')}".strip()
+        
+        # Get booking time
+        created_at = booking.get("created_at")
+        time = created_at.isoformat() + "Z" if created_at else None
+        
+        # Calculate partner payout (80% of total after fees)
+        totals = booking.get("totals", {})
+        total = totals.get("total", 0.0)
+        payout = round(total * 0.8, 2)  # 80% to partner
+        
+        # Mock distance (would be calculated based on partner location)
+        distance_km = round(random.uniform(1.0, 15.0), 1)
+        
+        items.append(BookingListItem(
+            bookingId=booking["booking_id"],
+            time=time,
+            serviceType=service_type,
+            addressShort=address_short,
+            status=booking["status"],
+            payout=payout,
+            currency="USD",
+            distanceKm=distance_km
+        ))
+    
+    return BookingListResponse(items=items, nextPage=next_page)
+
+@api_router.get("/bookings/{booking_id}", response_model=BookingDetail)
+async def get_booking_detail(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed booking information"""
+    
+    # Find booking in database
+    booking = await db.bookings.find_one({"booking_id": booking_id})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    # Check access permissions
+    can_access = False
+    if current_user.role == "customer" and booking.get("user_id") == current_user.id:
+        can_access = True
+    elif current_user.role == "partner" and booking.get("partner_id") == current_user.id:
+        can_access = True
+    elif current_user.role == "owner":
+        can_access = True
+    
+    if not can_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Build service details
+    service_data = booking.get("service", {})
+    service = BookingService(
+        serviceType=service_data.get("type", "Unknown"),
+        dwellingType=service_data.get("dwellingType", "House"),
+        bedrooms=service_data.get("bedrooms", 2),
+        bathrooms=service_data.get("bathrooms", 1),
+        masters=service_data.get("masters", 1),
+        addons=service_data.get("addons", [])
+    )
+    
+    # Build address details
+    address_data = booking.get("address", {})
+    address = BookingAddress(
+        line1=address_data.get("line1", ""),
+        city=address_data.get("city", ""),
+        postalCode=address_data.get("postalCode", ""),
+        lat=address_data.get("lat", 37.7749),
+        lng=address_data.get("lng", -122.4194)
+    )
+    
+    # Mock partner details (would come from partner collection)
+    partner = None
+    if booking.get("partner_id"):
+        partner = BookingPartner(
+            id=booking["partner_id"],
+            name="Sarah J.",
+            rating=4.8,
+            badges=["verified", "pro"]
+        )
+    
+    # Mock customer details (would come from user collection)
+    customer = None
+    if current_user.role != "customer":
+        customer = BookingCustomer(
+            id=booking["user_id"],
+            firstNameInitial="M",
+            rating=4.7
+        )
+    
+    # Build timeline
+    created_at = booking.get("created_at")
+    timeline = [
+        BookingTimelineEvent(
+            ts=created_at.isoformat() + "Z" if created_at else "",
+            event="created",
+            label="Booking created"
+        )
+    ]
+    
+    # Add more timeline events based on status
+    status = booking.get("status", "")
+    if status in ["assigned", "enroute", "arrived", "in_progress", "completed"]:
+        timeline.append(BookingTimelineEvent(
+            ts=(created_at + timedelta(minutes=5)).isoformat() + "Z" if created_at else "",
+            event="assigned",
+            label="Partner assigned"
+        ))
+    
+    # Mock photos
+    photos = BookingPhotos(before=[], after=[])
+    if status == "completed":
+        photos = BookingPhotos(
+            before=["https://example.com/before1.jpg"],
+            after=["https://example.com/after1.jpg"]
+        )
+    
+    # Build receipt
+    totals = booking.get("totals", {})
+    breakdown = [
+        BookingReceiptBreakdown(label="Base Service", amount=totals.get("base", 100.0)),
+        BookingReceiptBreakdown(label="Rooms", amount=totals.get("rooms", 20.0))
+    ]
+    
+    if totals.get("surge"):
+        breakdown.append(BookingReceiptBreakdown(label="Surge (1.2x)", amount=totals.get("surgeAmount", 24.0)))
+    
+    receipt = BookingReceipt(
+        breakdown=breakdown,
+        tax=totals.get("tax", 0.0),
+        promo=totals.get("promo", 0.0),
+        credits=totals.get("credits", 0.0),
+        total=totals.get("total", 144.0),
+        currency="USD"
+    )
+    
+    # Build cancellation policy
+    policy = BookingPolicy(
+        cancellable=status in ["scheduled", "pending_dispatch"],
+        windowMins=60,
+        fee=0.0 if status == "scheduled" else 10.0,
+        refundCreditEligible=True
+    )
+    
+    return BookingDetail(
+        bookingId=booking_id,
+        status=status,
+        service=service,
+        address=address,
+        partner=partner,
+        customer=customer,
+        timeline=timeline,
+        photos=photos,
+        receipt=receipt,
+        policy=policy
+    )
+
+@api_router.get("/bookings/{booking_id}/invoice", response_model=InvoiceResponse)
+async def get_booking_invoice(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get booking invoice PDF download URL"""
+    
+    # Find booking in database
+    booking = await db.bookings.find_one({"booking_id": booking_id})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
+    # Check access permissions (customer or owner only)
+    can_access = False
+    if current_user.role == "customer" and booking.get("user_id") == current_user.id:
+        can_access = True
+    elif current_user.role == "owner":
+        can_access = True
+    
+    if not can_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Check if booking is completed (required for invoice)
+    if booking.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Invoice only available for completed bookings")
+    
+    # Generate mock signed URL (15-minute TTL)
+    # In production, this would generate a real signed URL for PDF storage
+    timestamp = int(datetime.utcnow().timestamp())
+    signature = hashlib.md5(f"{booking_id}_{timestamp}".encode()).hexdigest()
+    signed_url = f"https://storage.shine.com/invoices/{booking_id}_{timestamp}_{signature}.pdf"
+    
+    return InvoiceResponse(url=signed_url)
+
 # Original routes
 @api_router.get("/")
 async def root():
