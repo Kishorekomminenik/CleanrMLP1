@@ -16,10 +16,13 @@ export default function AddressScreen() {
 
   const handleContinue = (data: any) => {
     // Navigate to checkout/payment screen (PAGE-5-CHECKOUT)
-    // For now, just log the data and go back
     console.log('Address data for checkout:', data);
-    // TODO: Navigate to checkout screen when implemented
-    router.back();
+    router.push({
+      pathname: '/checkout',
+      params: {
+        checkoutData: JSON.stringify(data)
+      }
+    });
   };
 
   // Parse service summary from params if available
