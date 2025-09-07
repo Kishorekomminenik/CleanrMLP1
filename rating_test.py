@@ -427,7 +427,7 @@ def test_large_tip_failure(results, customer_token):
         try:
             error_data = response.json()
             detail = error_data.get("detail", "").lower()
-            if "payment" in detail or "failed" in detail or "declined" in detail:
+            if "tip" in detail and "declined" in detail:
                 results.add_result("Large Tip Failure", True, "Large tip payment failure properly handled")
                 return
         except:
