@@ -7,7 +7,10 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Tab = createBottomTabNavigator();
 
-// Customer Screens - Simplified for demo
+import CustomerHomeScreen from '../screens/CustomerHomeScreen';
+import PartnerHomeScreen from '../screens/PartnerHomeScreen';
+import OwnerHomeScreen from '../screens/OwnerHomeScreen';
+import PartnerEarningsScreen from '../screens/PartnerEarningsScreen';
 function CustomerHomeComponent() {
   return (
     <SafeAreaView style={styles.screen}>
