@@ -273,11 +273,14 @@ export default function AppShell() {
         case 'Bookings':
           iconName = focused ? 'calendar' : 'calendar-outline';
           break;
+        case 'Subscriptions':
+          iconName = focused ? 'repeat' : 'repeat-outline';
+          break;
         case 'Support':
           iconName = focused ? 'help-circle' : 'help-circle-outline';
           break;
-        case 'Profile':
-          iconName = focused ? 'person' : 'person-outline';
+        case 'Settings':
+          iconName = focused ? 'settings' : 'settings-outline';
           break;
         default:
           iconName = 'home';
