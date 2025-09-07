@@ -206,9 +206,9 @@
 
 ## test_plan:
   current_focus:
-    - "Enhanced SHINE Auth v3.0 System"
+    []
   stuck_tasks:
-    - "Enhanced SHINE Auth v3.0 System"
+    []
   test_all: false
   test_priority: "high_first"
 
