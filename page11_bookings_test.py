@@ -182,8 +182,13 @@ def setup_owner_user(results):
     if response and response.status_code == 200:
         try:
             resp_data = response.json()
-            # Owner signup requires MFA, so we need to handle that
-            if resp_data.get("mfa_required"):
+            # Check if it's direct token or MFA required
+            if "token" in resp_data and "user" in resp_data:
+                # Direct token (MFA might be disabled for testing)
+                results.add_result("Test Owner Setup", True, f"Created test owner: {test_email}")
+                return resp_data["token"], test_email
+            elif resp_data.get("mfa_required"):
+                # MFA required
                 user_id = resp_data["user_id"]
                 mfa_code = resp_data.get("dev_mfa_code")
                 
@@ -201,8 +206,8 @@ def setup_owner_user(results):
                         if "token" in mfa_resp_data:
                             results.add_result("Test Owner Setup", True, f"Created test owner with MFA: {test_email}")
                             return mfa_resp_data["token"], test_email
-        except:
-            pass
+        except Exception as e:
+            results.add_result("Test Owner Setup", False, f"JSON parsing error: {e}")
     
     results.add_result("Test Owner Setup", False, f"Could not create test owner. Status: {response.status_code if response else 'No response'}")
     return None, test_email
