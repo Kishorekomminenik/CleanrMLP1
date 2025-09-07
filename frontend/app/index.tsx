@@ -1,30 +1,42 @@
-import { Text, View, StyleSheet, Image } from "react-native";
+import React, { useEffect, useState } from 'react';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import AuthProvider, { useAuth } from '../contexts/AuthContext';
+import AuthStack from '../navigation/AuthStack';
+import AppShell from '../navigation/AppShell';
 
-const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+function AppContent() {
+  const { user, loading } = useAuth();
 
-export default function Index() {
-  console.log(EXPO_PUBLIC_BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL");
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3A8DFF" />
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      <Image
-        source={require("../assets/images/app-image.png")}
-        style={styles.image}
-      />
-    </View>
+    <>
+      <StatusBar style="auto" />
+      {user ? <AppShell /> : <AuthStack />}
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  loadingContainer: {
     flex: 1,
-    backgroundColor: "#0c0c0c",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
