@@ -76,13 +76,7 @@ def make_request(method, endpoint, data=None, headers=None, auth_token=None):
         return response
     except requests.exceptions.Timeout as e:
         print(f"Request timeout: {method} {endpoint} - {e}")
-        # Create a mock response object for timeout
-        class MockResponse:
-            def __init__(self):
-                self.status_code = 408  # Request Timeout
-            def json(self):
-                return {"detail": "Request timeout"}
-        return MockResponse()
+        return None
     except requests.exceptions.RequestException as e:
         print(f"Request failed: {method} {endpoint} - {e}")
         return None
