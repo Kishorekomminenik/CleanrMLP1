@@ -7,10 +7,13 @@ import {
   Switch,
   Alert,
   StyleSheet,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
+import Button from '../components/Button';
+import { NavigationService, LogoutService } from '../services/navigationService';
 
 interface NotificationPreferences {
   bookingNotifications: boolean;
@@ -26,8 +29,9 @@ interface GeneralSettings {
 }
 
 const SettingsScreen: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout: authLogout } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [settings, setSettings] = useState<GeneralSettings>({
     notifications: {
       bookingNotifications: true,
@@ -41,7 +45,24 @@ const SettingsScreen: React.FC = () => {
 
   useEffect(() => {
     loadSettings();
+    
+    // Handle Android back button
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+    return () => backHandler.remove();
   }, []);
+
+  useEffect(() => {
+    // Update navigation service when changes occur
+    if (hasUnsavedChanges) {
+      NavigationService.markUnsaved('settings');
+    } else {
+      NavigationService.markSaved('settings');
+    }
+  }, [hasUnsavedChanges]);
+
+  const handleBackPress = async (): Promise<boolean> => {
+    return await NavigationService.handleBackPress('PAGE-18-SETTINGS');
+  };
 
   const loadSettings = async () => {
     if (!user?.token) return;
@@ -64,20 +85,58 @@ const SettingsScreen: React.FC = () => {
         [key]: value
       }
     }));
+    setHasUnsavedChanges(true);
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', style: 'destructive', onPress: () => {
-          // Handle logout
-          Alert.alert('Info', 'Logout functionality would be implemented here');
-        }}
-      ]
-    );
+  const saveSettings = async () => {
+    if (!user?.token) return;
+
+    try {
+      setLoading(true);
+      
+      // API call to save settings would go here
+      console.log('Saving settings:', settings);
+      
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setHasUnsavedChanges(false);
+      Alert.alert('Success', 'Settings saved successfully');
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+      Alert.alert('Error', 'Failed to save settings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    // Emit telemetry
+    console.log('[TELEMETRY] auth.logout.tap', { pageId: 'PAGE-18-SETTINGS', role: user?.role });
+    
+    const confirmed = await LogoutService.showLogoutConfirmation();
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+      
+      // Use LogoutService for proper logout flow
+      const success = await LogoutService.logout(user?.token || '', undefined);
+      
+      if (success) {
+        // Clear unsaved changes
+        setHasUnsavedChanges(false);
+        NavigationService.markSaved('settings');
+        
+        // Use auth context logout (will handle navigation reset)
+        await authLogout();
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
+      Alert.alert('Error', 'Failed to logout. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const SettingRow: React.FC<{
@@ -113,6 +172,23 @@ const SettingsScreen: React.FC = () => {
         )}
       </View>
     </TouchableOpacity>
+  );
+
+  const InfoRow: React.FC<{
+    icon: string;
+    title: string;
+    subtitle: string;
+    testID?: string;
+  }> = ({ icon, title, subtitle, testID }) => (
+    <View style={styles.infoRow} testID={testID}>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon as any} size={24} color="#3B82F6" />
+      </View>
+      <View style={styles.infoContent}>
+        <Text style={styles.infoTitle}>{title}</Text>
+        <Text style={styles.infoSubtitle}>{subtitle}</Text>
+      </View>
+    </View>
   );
 
   const getAccountSections = () => {
@@ -156,6 +232,40 @@ const SettingsScreen: React.FC = () => {
       );
     }
 
+    if (user?.role === 'partner') {
+      return (
+        <>
+          {/* Platform Pricing Info */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Pricing</Text>
+            <InfoRow
+              icon="information-circle"
+              title="Platform Pricing"
+              subtitle="Prices are set by SHINE. Your payouts are shown in Earnings."
+              testID="setProPricingInfo"
+            />
+          </View>
+
+          {/* Availability Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Availability</Text>
+            <SettingRow
+              title="Working Hours"
+              subtitle="Set your available hours"
+              onPress={() => Alert.alert('Info', 'Working hours settings would open here')}
+              showArrow
+            />
+            <SettingRow
+              title="Service Radius"
+              subtitle="Set your service area"
+              onPress={() => Alert.alert('Info', 'Service radius settings would open here')}
+              showArrow
+            />
+          </View>
+        </>
+      );
+    }
+
     if (user?.role === 'owner') {
       return (
         <>
@@ -178,23 +288,6 @@ const SettingsScreen: React.FC = () => {
               title="Partner Management"
               subtitle="Oversee partner operations"
               onPress={() => Alert.alert('Info', 'Partner management would open here')}
-              showArrow
-            />
-          </View>
-
-          {/* Analytics Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Analytics</Text>
-            <SettingRow
-              title="Revenue Reports"
-              subtitle="Download detailed revenue reports"
-              onPress={() => Alert.alert('Info', 'Revenue reports would open here')}
-              showArrow
-            />
-            <SettingRow
-              title="Performance Metrics"
-              subtitle="View platform performance data"
-              onPress={() => Alert.alert('Info', 'Performance metrics would open here')}
               showArrow
             />
           </View>
@@ -311,28 +404,32 @@ const SettingsScreen: React.FC = () => {
           />
         </View>
 
-        {/* Account Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <SettingRow
-            title="Export Data"
-            subtitle="Download your account data"
-            onPress={() => Alert.alert('Info', 'Data export would be handled here')}
-            showArrow
-          />
-          <SettingRow
-            title="Delete Account"
-            subtitle="Permanently delete your account"
-            onPress={() => Alert.alert('Warning', 'Account deletion would be handled here')}
-            showArrow
-          />
-        </View>
+        {/* Save Button (if changes) */}
+        {hasUnsavedChanges && (
+          <View style={styles.saveButtonContainer}>
+            <Button
+              variant="primary"
+              loading={loading}
+              disabled={loading}
+              onPress={saveSettings}
+              testID="btnSaveSettings"
+            >
+              Save Changes
+            </Button>
+          </View>
+        )}
 
         {/* Logout Button */}
         <View style={styles.logoutContainer}>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Text style={styles.logoutButtonText}>Logout</Text>
-          </TouchableOpacity>
+          <Button
+            variant="danger"
+            loading={loading}
+            disabled={loading}
+            onPress={handleLogout}
+            testID="btnLogout"
+          >
+            Log out
+          </Button>
         </View>
 
         {/* App Version */}
@@ -407,21 +504,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  infoRow: {
+    flexDirection: 'row',
+    backgroundColor: '#EFF6FF',
+    marginHorizontal: 20,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  infoIcon: {
+    marginRight: 12,
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E40AF',
+    marginBottom: 4,
+    fontFamily: 'Inter',
+  },
+  infoSubtitle: {
+    fontSize: 14,
+    color: '#1E40AF',
+    lineHeight: 18,
+    fontFamily: 'Inter',
+  },
+  saveButtonContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 16,
+  },
   logoutContainer: {
     paddingHorizontal: 20,
     marginBottom: 24,
-  },
-  logoutButton: {
-    backgroundColor: '#EF4444',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  logoutButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    fontFamily: 'Inter',
   },
   versionContainer: {
     paddingHorizontal: 20,
