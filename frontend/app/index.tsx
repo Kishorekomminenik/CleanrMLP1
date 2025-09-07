@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import AuthProvider, { useAuth } from '../contexts/AuthContext';
-import AuthStack from '../navigation/AuthStack';
-import AppShell from '../navigation/AppShell';
+import AuthProvider, { useAuth } from '../src/contexts/AuthContext';
+import AuthStack from '../src/navigation/AuthStack';
+import AppShell from '../src/navigation/AppShell';
 
 function AppContent() {
   const { user, loading } = useAuth();
