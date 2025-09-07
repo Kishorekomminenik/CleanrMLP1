@@ -121,27 +121,6 @@ function PartnerHomeComponent() {
   );
 }
 
-function PartnerJobsScreen() {
-  const { user } = useAuth();
-  const isPending = user?.partner_status === 'pending';
-
-  return (
-    <SafeAreaView style={styles.screen}>
-      <Text style={styles.screenTitle}>Jobs</Text>
-      {isPending ? (
-        <View style={styles.disabledContainer}>
-          <Text style={styles.disabledText}>
-            Complete verification to start accepting jobs
-          </Text>
-        </View>
-      ) : (
-        <Text style={styles.screenSubtitle}>Available jobs will appear here</Text>
-      )}
-    </SafeAreaView>
-  );
-}
-
-
 function PartnerProfileScreen() {
   const { logout, switchRole } = useAuth();
 
