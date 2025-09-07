@@ -197,15 +197,27 @@ const PartnerDiscoveryScreen: React.FC = () => {
             {/* Services Offered */}
             <View style={styles.profileSection}>
               <Text style={styles.sectionTitle}>Services You Offer</Text>
-              {partnerProfile.services.map((service, index) => (
-                <View key={index} style={styles.serviceItem}>
-                  <View style={styles.serviceInfo}>
-                    <Text style={styles.serviceName}>{service.serviceType}</Text>
-                    <Text style={styles.serviceDuration}>{service.duration} minutes</Text>
+              {partnerProfile.fareCards && partnerProfile.fareCards.length > 0 ? (
+                partnerProfile.fareCards.map((fareCard, index) => (
+                  <View key={index} style={styles.serviceItem}>
+                    <View style={styles.serviceInfo}>
+                      <Text style={styles.serviceName}>{fareCard.serviceType}</Text>
+                      <Text style={styles.serviceDuration}>{fareCard.duration} minutes</Text>
+                    </View>
+                    <Text style={styles.servicePrice}>From ${fareCard.fromPrice}</Text>
                   </View>
-                  <Text style={styles.servicePrice}>${service.price}</Text>
-                </View>
-              ))}
+                ))
+              ) : (
+                partnerProfile.services.map((service, index) => (
+                  <View key={index} style={styles.serviceItem}>
+                    <View style={styles.serviceInfo}>
+                      <Text style={styles.serviceName}>{service.serviceType}</Text>
+                      <Text style={styles.serviceDuration}>{service.duration} minutes</Text>
+                    </View>
+                    <Text style={styles.servicePrice}>Platform pricing</Text>
+                  </View>
+                ))
+              )}
             </View>
 
             {/* Recent Reviews */}
