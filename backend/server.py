@@ -711,122 +711,12 @@ async def get_services_catalog():
 
 
 
-@api_router.post("/pricing/quote")
-async def get_pricing_quote(request: dict):
-    """Calculate pricing quote for service"""
-    service_type = request.get("serviceType")
-    dwelling_type = request.get("dwellingType")
-    bedrooms = request.get("bedrooms", 0)
-    bathrooms = request.get("bathrooms", 1)
-    masters = request.get("masters", 0)
-    photo_ids = request.get("photoIds", [])
-    when = request.get("when", "now")
-    schedule_at = request.get("scheduleAt")
-    lat = request.get("lat")
-    lng = request.get("lng")
-
-    # Validation
-    if service_type not in ["basic", "deep", "bathroom"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid service type"
-        )
-    
-    if dwelling_type not in ["House", "Apartment", "Condo", "Office"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid dwelling type"
-        )
-    
-    # Validate photo requirements
-    if service_type in ["deep", "bathroom"] and len(photo_ids) < 2:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Deep Clean and Bathroom-only require at least 2 photos"
-        )
-    
-    # Base prices
-    base_prices = {
-        "basic": 80,
-        "deep": 150,
-        "bathroom": 45
-    }
-    
-    base_price = base_prices[service_type]
-    
-    # Calculate price based on rooms
-    room_multipliers = {
-        "basic": {"bedroom": 15, "bathroom": 10, "master": 20},
-        "deep": {"bedroom": 25, "bathroom": 20, "master": 35},
-        "bathroom": {"bedroom": 0, "bathroom": 15, "master": 0}
-    }
-    
-    multiplier = room_multipliers[service_type]
-    room_price = (bedrooms * multiplier["bedroom"] + 
-                  bathrooms * multiplier["bathroom"] + 
-                  masters * multiplier["master"])
-    
-    # Dwelling type adjustment
-    dwelling_multipliers = {
-        "House": 1.0,
-        "Apartment": 0.9,
-        "Condo": 1.1,
-        "Office": 1.3
-    }
-    
-    dwelling_adjustment = dwelling_multipliers.get(dwelling_type, 1.0)
-    
-    # Calculate base total
-    subtotal = (base_price + room_price) * dwelling_adjustment
-    
-    # Check for surge pricing
-    import random
-    surge_active = random.random() < 0.2  # 20% chance
-    surge_multiplier = round(random.uniform(1.2, 2.0), 1) if surge_active else 1.0
-    
-    # Apply surge
-    final_price = subtotal * surge_multiplier
-    
-    # Estimate duration (minutes)
-    base_durations = {
-        "basic": 90,
-        "deep": 180,
-        "bathroom": 60
-    }
-    
-    base_duration = base_durations[service_type]
-    room_duration = bedrooms * 15 + bathrooms * 20 + masters * 25
-    total_duration = base_duration + room_duration
-    
-    # Create breakdown
-    breakdown = [
-        {"label": f"{service_type.title()} Clean Base", "amount": base_price},
-    ]
-    
-    if room_price > 0:
-        breakdown.append({"label": "Room adjustments", "amount": room_price})
-    
-    if dwelling_adjustment != 1.0:
-        adjustment_amount = subtotal - (base_price + room_price)
-        breakdown.append({"label": f"{dwelling_type} adjustment", "amount": adjustment_amount})
-    
-    if surge_active:
-        surge_amount = final_price - subtotal
-        breakdown.append({"label": f"Surge x{surge_multiplier}", "amount": surge_amount})
-    
-    # Generate quote ID
-    quote_id = f"quote_{uuid.uuid4().hex[:8]}"
-    
-    return {
-        "quoteId": quote_id,
-        "price": round(final_price, 2),
-        "durationMinutes": total_duration,
-        "surge": {
-            "active": surge_active,
-            "multiplier": surge_multiplier
-        },
-        "breakdown": breakdown
-    }
+# OLD PRICING ENDPOINT - REPLACED BY PLATFORM PRICING ENGINE
+# @api_router.post("/pricing/quote")
+# async def get_pricing_quote_old(request: dict):
+#     """Calculate pricing quote for service - OLD VERSION"""
+#     # This endpoint has been replaced by the new Platform Pricing Engine
+#     # See line 4942 for the new implementation
 
 @api_router.post("/partner/capabilities")
 async def set_partner_capabilities(
