@@ -192,8 +192,8 @@ export default function AuthStack() {
                 <TextInput
                   style={styles.input}
                   placeholder="Email"
-                  value={loginForm.watch('email')}
-                  onChangeText={(text) => loginForm.setValue('email', text)}
+                  value={loginData.email}
+                  onChangeText={(text) => setLoginData(prev => ({ ...prev, email: text }))}
                   keyboardType="email-address"
                   autoCapitalize="none"
                 />
@@ -201,14 +201,14 @@ export default function AuthStack() {
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
-                  value={loginForm.watch('password')}
-                  onChangeText={(text) => loginForm.setValue('password', text)}
+                  value={loginData.password}
+                  onChangeText={(text) => setLoginData(prev => ({ ...prev, password: text }))}
                   secureTextEntry
                 />
 
                 <TouchableOpacity
                   style={[styles.button, loading && styles.buttonDisabled]}
-                  onPress={loginForm.handleSubmit(handleLogin)}
+                  onPress={handleLogin}
                   disabled={loading}
                 >
                   {loading ? (
@@ -223,8 +223,8 @@ export default function AuthStack() {
                 <TextInput
                   style={styles.input}
                   placeholder="Email"
-                  value={registerForm.watch('email')}
-                  onChangeText={(text) => registerForm.setValue('email', text)}
+                  value={registerData.email}
+                  onChangeText={(text) => setRegisterData(prev => ({ ...prev, email: text }))}
                   keyboardType="email-address"
                   autoCapitalize="none"
                 />
@@ -232,16 +232,16 @@ export default function AuthStack() {
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
-                  value={registerForm.watch('password')}
-                  onChangeText={(text) => registerForm.setValue('password', text)}
+                  value={registerData.password}
+                  onChangeText={(text) => setRegisterData(prev => ({ ...prev, password: text }))}
                   secureTextEntry
                 />
 
                 <TextInput
                   style={styles.input}
                   placeholder="Confirm Password"
-                  value={registerForm.watch('confirmPassword')}
-                  onChangeText={(text) => registerForm.setValue('confirmPassword', text)}
+                  value={registerData.confirmPassword}
+                  onChangeText={(text) => setRegisterData(prev => ({ ...prev, confirmPassword: text }))}
                   secureTextEntry
                 />
 
@@ -251,14 +251,14 @@ export default function AuthStack() {
                     <TouchableOpacity
                       style={[
                         styles.roleButton,
-                        registerForm.watch('role') === 'customer' && styles.roleButtonActive,
+                        registerData.role === 'customer' && styles.roleButtonActive,
                       ]}
-                      onPress={() => registerForm.setValue('role', 'customer')}
+                      onPress={() => setRegisterData(prev => ({ ...prev, role: 'customer' }))}
                     >
                       <Text
                         style={[
                           styles.roleButtonText,
-                          registerForm.watch('role') === 'customer' && styles.roleButtonTextActive,
+                          registerData.role === 'customer' && styles.roleButtonTextActive,
                         ]}
                       >
                         Customer
@@ -267,14 +267,14 @@ export default function AuthStack() {
                     <TouchableOpacity
                       style={[
                         styles.roleButton,
-                        registerForm.watch('role') === 'partner' && styles.roleButtonActive,
+                        registerData.role === 'partner' && styles.roleButtonActive,
                       ]}
-                      onPress={() => registerForm.setValue('role', 'partner')}
+                      onPress={() => setRegisterData(prev => ({ ...prev, role: 'partner' }))}
                     >
                       <Text
                         style={[
                           styles.roleButtonText,
-                          registerForm.watch('role') === 'partner' && styles.roleButtonTextActive,
+                          registerData.role === 'partner' && styles.roleButtonTextActive,
                         ]}
                       >
                         Partner
@@ -285,7 +285,7 @@ export default function AuthStack() {
 
                 <TouchableOpacity
                   style={[styles.button, loading && styles.buttonDisabled]}
-                  onPress={registerForm.handleSubmit(handleRegister)}
+                  onPress={handleRegister}
                   disabled={loading}
                 >
                   {loading ? (
