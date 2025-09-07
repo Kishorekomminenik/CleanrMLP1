@@ -1176,4 +1176,9 @@ async def create_indexes():
     # Create unique sparse index on username_lower (allows null values)
     await db.users.create_index("username_lower", unique=True, sparse=True)
     
+    # Address indexes
+    await db.addresses.create_index("user_id")
+    await db.addresses.create_index([("user_id", 1), ("line1", 1), ("city", 1), ("postalCode", 1)])
+    await db.addresses.create_index("created_at")
+    
     logger.info("Created database indexes")
