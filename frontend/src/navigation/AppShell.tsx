@@ -302,8 +302,8 @@ export default function AppShell() {
         case 'Support':
           iconName = focused ? 'help-circle' : 'help-circle-outline';
           break;
-        case 'Profile':
-          iconName = focused ? 'person' : 'person-outline';
+        case 'Settings':
+          iconName = focused ? 'settings' : 'settings-outline';
           break;
         default:
           iconName = 'grid';
