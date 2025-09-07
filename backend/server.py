@@ -4720,3 +4720,6 @@ async def get_discovery_analytics(current_user: User = Depends(get_current_user)
         topSearches=top_searches,
         topFavorites=top_favorites
     )
+
+# Include the router in the main app after all endpoints are defined
+app.include_router(api_router)
