@@ -60,56 +60,34 @@ export default function AuthProvider({ children }: AuthProviderProps) {
 
   const checkExistingToken = async () => {
     try {
-      console.log('Checking existing token...');
-      console.log('Backend URL:', BACKEND_URL);
+      console.log('AuthContext: Starting token check');
       
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 5000)
-      );
+      // For initial testing, skip token verification and go straight to auth screen
+      console.log('AuthContext: Skipping token check for demo');
+      setLoading(false);
+      return;
       
+      // TODO: Re-enable token verification later
       const token = await AsyncStorage.getItem(TOKEN_KEY);
-      console.log('Retrieved token:', token ? 'Token exists' : 'No token found');
-      
-      if (token) {
-        console.log('Verifying token with backend...');
-        
-        const fetchPromise = fetch(`${BACKEND_URL}/api/auth/me`, {
+      if (token && BACKEND_URL) {
+        const response = await fetch(`${BACKEND_URL}/api/auth/me`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          timeout: 5000,
         });
 
-        try {
-          const response = await Promise.race([fetchPromise, timeoutPromise]);
-          console.log('Token verification response status:', response.status);
-
-          if (response.ok) {
-            const userData = await response.json();
-            console.log('User data retrieved:', userData.email);
-            setUser(userData);
-          } else {
-            // Token is invalid, remove it
-            console.log('Token invalid, removing...');
-            await AsyncStorage.removeItem(TOKEN_KEY);
-          }
-        } catch (networkError) {
-          console.log('Network error during token verification:', networkError.message);
-          // Don't remove token on network error, user can try login later
+        if (response.ok) {
+          const userData = await response.json();
+          setUser(userData);
+        } else {
+          await AsyncStorage.removeItem(TOKEN_KEY);
         }
-      } else {
-        console.log('No existing token found');
       }
     } catch (error) {
-      console.error('Error checking existing token:', error);
-      // Only remove token if it's not a network error
-      if (error.message !== 'Timeout') {
-        await AsyncStorage.removeItem(TOKEN_KEY);
-      }
+      console.error('AuthContext: Error during token check:', error);
     } finally {
-      console.log('Setting loading to false');
+      console.log('AuthContext: Token check complete, setting loading to false');
       setLoading(false);
     }
   };
