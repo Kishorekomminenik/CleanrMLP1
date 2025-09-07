@@ -397,6 +397,11 @@ export default function AppShell() {
               options={{ tabBarTestID: 'tabPartnerHome' }}
             />
             <Tab.Screen
+              name="Discover"
+              component={PartnerDiscoveryScreen}
+              options={{ tabBarTestID: 'tabPartnerDiscover' }}
+            />
+            <Tab.Screen
               name="Jobs"
               component={PartnerJobsScreen}
               options={{ tabBarTestID: 'tabPartnerJobs' }}
