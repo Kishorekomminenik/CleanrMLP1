@@ -167,6 +167,66 @@
           agent: "testing"
           comment: "ETA Preview API working correctly. Calculates realistic ETAs for 'now' timing (e.g., '15–25 min'), properly handles 'scheduled' timing with appropriate labeling, returns proper distance calculations in kilometers, handles different coordinates correctly."
 
+  - task: "Payment Methods API (PAGE-5-CHECKOUT)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented complete payment methods management with GET /api/billing/methods (list saved cards), POST /api/billing/setup-intent (create Stripe setup intent), POST /api/billing/methods (attach payment method), proper authentication and mock Stripe integration."
+        - working: true
+          agent: "testing"
+          comment: "Payment Methods API working perfectly. All endpoints return proper card structures (Visa/Mastercard with id, brand, last4, exp, isDefault), setup intents create valid client secrets, payment method attachment works correctly."
+
+  - task: "Promo & Pricing API (PAGE-5-CHECKOUT)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented promo code application and pricing calculations with POST /api/pricing/promo/apply supporting valid codes (SHINE20, FIRST10, SAVE15), credits application, and detailed price breakdown with base, rooms, discounts, tax, and total."
+        - working: true
+          agent: "testing"
+          comment: "Promo & Pricing API working correctly. Valid promo codes (SHINE20, FIRST10, SAVE15) apply discounts properly, invalid codes return 400 with proper error messages, credits work with $25 cap, price breakdown includes all components correctly."
+
+  - task: "Payment Pre-Auth API (PAGE-5-CHECKOUT)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented payment pre-authorization with POST /api/billing/preauth supporting success, decline (402), and SCA scenarios, POST /api/billing/confirm for SCA handling, dual capture strategy, and proper error handling."
+        - working: true
+          agent: "testing"
+          comment: "Payment Pre-Auth API working correctly. Success scenario creates proper payment intent IDs and client secrets, decline scenario returns 402 with card declined message, SCA scenario returns requiresAction: true, confirmation works for SCA flow."
+
+  - task: "Booking Creation API (PAGE-5-CHECKOUT)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Implemented booking creation with POST /api/bookings storing complete booking data (service, address, access, totals, payment), handling now vs scheduled timing, generating proper booking IDs, and POST /api/billing/void for pre-auth cleanup on failures."
+        - working: true
+          agent: "testing"
+          comment: "Booking Creation API working perfectly. 'now' timing creates bookings with pending_dispatch status and ETA windows, 'scheduled' timing creates bookings with scheduled status, proper booking ID format (bk_*), stores complete data, void functionality works for cleanup."
+
   - task: "JWT Authentication System"
     implemented: true
     working: true
