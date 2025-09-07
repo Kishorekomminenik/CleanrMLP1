@@ -2302,14 +2302,7 @@ async def emergency_sos(
     # Mock SOS handling - in production, would alert support team
     return CaptureResponse(ok=True)
 
-# Rating & Tip Models
-class PartnerInfo(BaseModel):
-    id: str
-    name: str
-
-class CustomerInfo(BaseModel):
-    id: str
-    name: str
+# Rating & Tip Models (reusing existing PartnerInfo and CustomerInfo from job models)
 
 class RatingContext(BaseModel):
     bookingId: str
