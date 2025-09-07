@@ -501,38 +501,50 @@
         
         // Handle authentication
         async function handleAuth(type) {
+            console.log('handleAuth called with type:', type);
+            
             const btnId = type === 'signup' ? 'signup-btn-text' : 'login-btn-text';
             const resultDiv = document.getElementById('auth-result');
             const button = document.getElementById(btnId);
+            
+            console.log('Button found:', button);
+            console.log('Result div found:', resultDiv);
             
             // Get form data
             let email, password;
             if (type === 'signup') {
                 email = document.getElementById('signup-email').value;
                 password = document.getElementById('signup-password').value;
+                console.log('Signup - Email:', email, 'Password length:', password.length);
             } else {
                 email = document.getElementById('login-identifier').value;
                 password = document.getElementById('login-password').value;
+                console.log('Login - Email:', email, 'Password length:', password.length);
             }
             
             // Validation
             if (!email || !password) {
+                console.log('Validation failed: missing email or password');
                 showResult('error', '❌ Please fill in all fields');
                 return;
             }
             
             if (type === 'signup') {
                 if (password.length < 8) {
+                    console.log('Validation failed: password too short');
                     showResult('error', '❌ Password must be at least 8 characters');
                     return;
                 }
                 
                 const tosAccepted = document.getElementById('accept-tos').checked;
                 if (!tosAccepted) {
+                    console.log('Validation failed: ToS not accepted');
                     showResult('error', '❌ Please accept the Terms of Service');
                     return;
                 }
             }
+            
+            console.log('Validation passed, proceeding with', type);
             
             // Update button state
             button.innerHTML = '<div class="loading"></div>Processing...';
@@ -543,9 +555,12 @@
                         email, 
                         password, 
                         role: currentRole,
-                        accept_tos: true  // Add required field
+                        accept_tos: true
                       }
                     : { identifier: email, password };
+                
+                console.log('Making API call to:', `${BACKEND_URL}/api/auth/${type}`);
+                console.log('Payload:', payload);
                 
                 const response = await fetch(`${BACKEND_URL}/api/auth/${type}`, {
                     method: 'POST',
@@ -555,10 +570,14 @@
                     body: JSON.stringify(payload),
                 });
                 
+                console.log('Response status:', response.status);
                 const data = await response.json();
+                console.log('Response data:', data);
                 
                 if (response.ok) {
                     currentAuthToken = data.token;
+                    console.log('Authentication successful, token saved');
+                    
                     showResult('success', `✅ ${type === 'signup' ? 'Account Created' : 'Login'} Successful!
                     
 Email: ${data.user.email}
@@ -577,6 +596,7 @@ Token: ${data.token ? 'Generated ✓' : 'None'}
                         document.getElementById('login-password').value = '';
                     }
                 } else {
+                    console.log('Authentication failed:', response.status, data);
                     showResult('error', `❌ ${type === 'signup' ? 'Signup' : 'Login'} Failed:
                     
 ${data.detail || data.message || 'Unknown error'}
@@ -585,6 +605,7 @@ Status: ${response.status}`);
                 }
                 
             } catch (error) {
+                console.error('Network error:', error);
                 showResult('error', `❌ Network Error:
                 
 ${error.message}
@@ -594,6 +615,7 @@ Please check your internet connection and try again.`);
             
             // Reset button
             button.innerHTML = type === 'signup' ? 'Create Account' : 'Sign In';
+            console.log('handleAuth completed');
         }
         
         // Test API endpoints
