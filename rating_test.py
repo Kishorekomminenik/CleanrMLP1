@@ -326,15 +326,7 @@ def test_customer_rating_validation(results, customer_token, booking_id):
     response = make_request("POST", "/ratings/customer", invalid_rating_data, auth_token=customer_token)
     
     if response and response.status_code == 400:
-        try:
-            error_data = response.json()
-            detail = error_data.get("detail", "").lower()
-            if "star" in detail and ("1" in detail and "5" in detail):
-                results.add_result("Customer Rating Validation", True, "Invalid star rating properly rejected")
-                return
-        except:
-            pass
-        results.add_result("Customer Rating Validation", True, "Invalid star rating properly rejected (400 status)")
+        results.add_result("Customer Rating Validation", True, "Invalid star rating properly rejected with 400 status")
     else:
         results.add_result("Customer Rating Validation", False, f"Invalid star rating not handled correctly. Status: {response.status_code if response else 'No response'}")
 
