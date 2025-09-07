@@ -2266,7 +2266,7 @@ async def get_chat_messages(
     return ChatResponse(messages=[
         ChatMessage(
             id=msg["id"],
-            from_=msg["from"],
+            **{"from": msg["from"]},
             text=msg["text"],
             timestamp=msg["timestamp"]
         ) for msg in messages
