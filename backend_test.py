@@ -976,6 +976,498 @@ def test_eta_preview_scheduled(results):
     else:
         results.add_result("ETA Preview (Scheduled)", False, f"Scheduled ETA preview failed. Status: {response.status_code if response else 'No response'}")
 
+# ===== CHECKOUT & PAYMENT API TESTS =====
+
+def test_list_payment_methods(results, token):
+    """Test listing saved payment methods for authenticated user"""
+    response = make_request("GET", "/billing/methods", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "methods" in resp_data and isinstance(resp_data["methods"], list):
+                methods = resp_data["methods"]
+                if len(methods) > 0:
+                    # Check first method structure
+                    method = methods[0]
+                    required_fields = ["id", "brand", "last4", "exp", "isDefault"]
+                    
+                    if all(field in method for field in required_fields):
+                        results.add_result("List Payment Methods", True, f"Payment methods retrieved: {len(methods)} methods")
+                        return methods
+                    else:
+                        results.add_result("List Payment Methods", False, f"Payment method missing required fields: {method}")
+                else:
+                    results.add_result("List Payment Methods", True, "Empty payment methods list returned")
+                    return []
+            else:
+                results.add_result("List Payment Methods", False, f"Invalid response structure: {resp_data}")
+        except Exception as e:
+            results.add_result("List Payment Methods", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("List Payment Methods", False, f"List payment methods failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_create_setup_intent(results, token):
+    """Test creating Stripe setup intent for adding payment methods"""
+    response = make_request("POST", "/billing/setup-intent", auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if "clientSecret" in resp_data and resp_data["clientSecret"]:
+                client_secret = resp_data["clientSecret"]
+                if "seti_" in client_secret and "_secret_" in client_secret:
+                    results.add_result("Create Setup Intent", True, f"Setup intent created with client secret")
+                    return client_secret
+                else:
+                    results.add_result("Create Setup Intent", False, f"Invalid client secret format: {client_secret}")
+            else:
+                results.add_result("Create Setup Intent", False, f"Missing clientSecret in response: {resp_data}")
+        except Exception as e:
+            results.add_result("Create Setup Intent", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Create Setup Intent", False, f"Create setup intent failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_attach_payment_method(results, token):
+    """Test attaching payment method to customer"""
+    data = {
+        "paymentMethodId": "pm_test_card_visa"
+    }
+    
+    response = make_request("POST", "/billing/methods", data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Attach Payment Method", True, "Payment method attached successfully")
+                return True
+            else:
+                results.add_result("Attach Payment Method", False, f"Attachment failed: {resp_data}")
+        except Exception as e:
+            results.add_result("Attach Payment Method", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Attach Payment Method", False, f"Attach payment method failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_apply_valid_promo_codes(results, token):
+    """Test applying valid promo codes"""
+    valid_promos = ["SHINE20", "FIRST10", "SAVE15"]
+    
+    for promo_code in valid_promos:
+        data = {
+            "quoteId": "quote_test123",
+            "code": promo_code,
+            "useCredits": False
+        }
+        
+        response = make_request("POST", "/pricing/promo/apply", data, auth_token=token)
+        
+        if response and response.status_code == 200:
+            try:
+                resp_data = response.json()
+                
+                required_fields = ["breakdown", "total", "promoApplied", "creditsApplied"]
+                if all(field in resp_data for field in required_fields):
+                    if resp_data["promoApplied"] is True:
+                        breakdown = resp_data["breakdown"]
+                        total = resp_data["total"]
+                        
+                        # Check if promo discount is in breakdown
+                        promo_found = any(promo_code in item.get("label", "") for item in breakdown)
+                        
+                        if promo_found and isinstance(total, (int, float)):
+                            results.add_result(f"Apply Promo Code ({promo_code})", True, f"Promo applied successfully, total: ${total}")
+                            continue
+                        else:
+                            results.add_result(f"Apply Promo Code ({promo_code})", False, f"Promo not found in breakdown or invalid total")
+                            return
+                    else:
+                        results.add_result(f"Apply Promo Code ({promo_code})", False, f"Promo not applied: {resp_data}")
+                        return
+                else:
+                    results.add_result(f"Apply Promo Code ({promo_code})", False, f"Missing required fields: {resp_data}")
+                    return
+            except Exception as e:
+                results.add_result(f"Apply Promo Code ({promo_code})", False, f"JSON parsing error: {e}")
+                return
+        else:
+            results.add_result(f"Apply Promo Code ({promo_code})", False, f"Promo application failed. Status: {response.status_code if response else 'No response'}")
+            return
+    
+    results.add_result("Apply Valid Promo Codes", True, f"All {len(valid_promos)} valid promo codes applied successfully")
+
+def test_apply_invalid_promo_code(results, token):
+    """Test applying invalid promo code"""
+    data = {
+        "quoteId": "quote_test123",
+        "code": "INVALID_CODE",
+        "useCredits": False
+    }
+    
+    response = make_request("POST", "/pricing/promo/apply", data, auth_token=token)
+    
+    if response and response.status_code == 400:
+        try:
+            error_data = response.json()
+            detail = error_data.get("detail", "").lower()
+            if "invalid" in detail and "promo" in detail:
+                results.add_result("Apply Invalid Promo Code", True, "Invalid promo code properly rejected")
+                return
+        except:
+            # Even if JSON parsing fails, 400 status is correct
+            results.add_result("Apply Invalid Promo Code", True, "Invalid promo code properly rejected (400 status)")
+            return
+    
+    results.add_result("Apply Invalid Promo Code", False, f"Invalid promo code not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_apply_promo_with_credits(results, token):
+    """Test applying promo code with credits"""
+    data = {
+        "quoteId": "quote_test123",
+        "code": "SHINE20",
+        "useCredits": True
+    }
+    
+    response = make_request("POST", "/pricing/promo/apply", data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if (resp_data.get("promoApplied") is True and 
+                resp_data.get("creditsApplied", 0) > 0):
+                
+                breakdown = resp_data["breakdown"]
+                credits_found = any("credits" in item.get("label", "").lower() for item in breakdown)
+                
+                if credits_found:
+                    results.add_result("Apply Promo with Credits", True, f"Promo and credits applied: ${resp_data['creditsApplied']} credits")
+                    return
+                else:
+                    results.add_result("Apply Promo with Credits", False, "Credits not found in breakdown")
+            else:
+                results.add_result("Apply Promo with Credits", False, f"Promo or credits not applied: {resp_data}")
+        except Exception as e:
+            results.add_result("Apply Promo with Credits", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Apply Promo with Credits", False, f"Promo with credits failed. Status: {response.status_code if response else 'No response'}")
+
+def test_payment_preauth_success(results, token):
+    """Test successful payment pre-authorization"""
+    data = {
+        "amount": 89.50,
+        "currency": "usd",
+        "paymentMethodId": "pm_card_visa",
+        "captureStrategy": "dual"
+    }
+    
+    response = make_request("POST", "/billing/preauth", data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            required_fields = ["paymentIntentId", "clientSecret", "requiresAction"]
+            if all(field in resp_data for field in required_fields):
+                pi_id = resp_data["paymentIntentId"]
+                client_secret = resp_data["clientSecret"]
+                requires_action = resp_data["requiresAction"]
+                
+                if ("pi_" in pi_id and "_secret_" in client_secret and 
+                    isinstance(requires_action, bool)):
+                    
+                    results.add_result("Payment Preauth Success", True, f"Payment intent created: {pi_id}, requires_action: {requires_action}")
+                    return pi_id, client_secret
+                else:
+                    results.add_result("Payment Preauth Success", False, f"Invalid payment intent data: {resp_data}")
+            else:
+                results.add_result("Payment Preauth Success", False, f"Missing required fields: {resp_data}")
+        except Exception as e:
+            results.add_result("Payment Preauth Success", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Payment Preauth Success", False, f"Payment preauth failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None, None
+
+def test_payment_preauth_declined(results, token):
+    """Test declined payment pre-authorization"""
+    data = {
+        "amount": 89.50,
+        "currency": "usd",
+        "paymentMethodId": "pm_declined",
+        "captureStrategy": "dual"
+    }
+    
+    response = make_request("POST", "/billing/preauth", data, auth_token=token)
+    
+    if response and response.status_code == 402:
+        try:
+            error_data = response.json()
+            detail = error_data.get("detail", "").lower()
+            if "declined" in detail or "card" in detail:
+                results.add_result("Payment Preauth Declined", True, "Declined payment properly handled with 402")
+                return
+        except:
+            # Even if JSON parsing fails, 402 status is correct
+            results.add_result("Payment Preauth Declined", True, "Declined payment properly handled (402 status)")
+            return
+    
+    results.add_result("Payment Preauth Declined", False, f"Declined payment not handled correctly. Status: {response.status_code if response else 'No response'}")
+
+def test_payment_preauth_sca_required(results, token):
+    """Test payment pre-authorization requiring SCA"""
+    data = {
+        "amount": 89.50,
+        "currency": "usd",
+        "paymentMethodId": "pm_sca_required",
+        "captureStrategy": "dual"
+    }
+    
+    response = make_request("POST", "/billing/preauth", data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if (resp_data.get("requiresAction") is True and 
+                "paymentIntentId" in resp_data and 
+                "clientSecret" in resp_data):
+                
+                results.add_result("Payment Preauth SCA Required", True, f"SCA required payment intent created: {resp_data['paymentIntentId']}")
+                return resp_data["paymentIntentId"]
+            else:
+                results.add_result("Payment Preauth SCA Required", False, f"SCA not required or invalid response: {resp_data}")
+        except Exception as e:
+            results.add_result("Payment Preauth SCA Required", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Payment Preauth SCA Required", False, f"SCA payment preauth failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_confirm_stripe_action(results, payment_intent_id):
+    """Test confirming Stripe action (SCA)"""
+    if not payment_intent_id:
+        results.add_result("Confirm Stripe Action", False, "No payment intent ID provided")
+        return
+    
+    data = {
+        "paymentIntentId": payment_intent_id
+    }
+    
+    response = make_request("POST", "/billing/confirm", data)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Confirm Stripe Action", True, f"Stripe action confirmed for: {payment_intent_id}")
+                return True
+            else:
+                results.add_result("Confirm Stripe Action", False, f"Confirmation failed: {resp_data}")
+        except Exception as e:
+            results.add_result("Confirm Stripe Action", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Confirm Stripe Action", False, f"Confirm action failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_create_booking_now(results, token):
+    """Test creating booking with 'now' timing"""
+    booking_data = {
+        "quoteId": "quote_test123",
+        "service": {
+            "type": "basic",
+            "timing": {
+                "when": "now"
+            },
+            "details": {
+                "bedrooms": 2,
+                "bathrooms": 1
+            }
+        },
+        "address": {
+            "line1": "123 Main Street",
+            "city": "San Francisco",
+            "state": "CA",
+            "postalCode": "94102",
+            "lat": 37.7749,
+            "lng": -122.4194
+        },
+        "access": {
+            "entrance": "front_door",
+            "notes": "Ring doorbell twice"
+        },
+        "totals": {
+            "subtotal": 89.00,
+            "tax": 7.89,
+            "total": 96.89
+        },
+        "payment": {
+            "paymentIntentId": "pi_test123",
+            "paymentMethodId": "pm_card_visa"
+        },
+        "applyCredits": False,
+        "promoCode": None
+    }
+    
+    response = make_request("POST", "/bookings", booking_data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            required_fields = ["bookingId", "status", "next"]
+            if all(field in resp_data for field in required_fields):
+                booking_id = resp_data["bookingId"]
+                status = resp_data["status"]
+                next_step = resp_data["next"]
+                eta_window = resp_data.get("etaWindow")
+                
+                if ("bk_" in booking_id and status in ["pending_dispatch", "scheduled"] and 
+                    next_step in ["dispatch", "tracking"]):
+                    
+                    results.add_result("Create Booking (Now)", True, f"Booking created: {booking_id}, status: {status}, ETA: {eta_window}")
+                    return booking_id
+                else:
+                    results.add_result("Create Booking (Now)", False, f"Invalid booking data: {resp_data}")
+            else:
+                results.add_result("Create Booking (Now)", False, f"Missing required fields: {resp_data}")
+        except Exception as e:
+            results.add_result("Create Booking (Now)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Create Booking (Now)", False, f"Create booking failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_create_booking_scheduled(results, token):
+    """Test creating booking with 'schedule' timing"""
+    booking_data = {
+        "quoteId": "quote_test456",
+        "service": {
+            "type": "deep",
+            "timing": {
+                "when": "schedule",
+                "scheduleAt": "2024-01-15T14:30:00Z"
+            },
+            "details": {
+                "bedrooms": 3,
+                "bathrooms": 2
+            }
+        },
+        "address": {
+            "line1": "456 Oak Avenue",
+            "city": "New York",
+            "state": "NY",
+            "postalCode": "10001",
+            "lat": 40.7128,
+            "lng": -74.0060
+        },
+        "access": {
+            "entrance": "side_door",
+            "notes": "Key under mat"
+        },
+        "totals": {
+            "subtotal": 150.00,
+            "tax": 13.31,
+            "total": 163.31
+        },
+        "payment": {
+            "paymentIntentId": "pi_test456",
+            "paymentMethodId": "pm_card_mastercard"
+        },
+        "applyCredits": True,
+        "promoCode": "SHINE20"
+    }
+    
+    response = make_request("POST", "/bookings", booking_data, auth_token=token)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            required_fields = ["bookingId", "status", "next"]
+            if all(field in resp_data for field in required_fields):
+                booking_id = resp_data["bookingId"]
+                status = resp_data["status"]
+                next_step = resp_data["next"]
+                
+                if ("bk_" in booking_id and status == "scheduled" and next_step == "tracking"):
+                    results.add_result("Create Booking (Scheduled)", True, f"Scheduled booking created: {booking_id}, status: {status}")
+                    return booking_id
+                else:
+                    results.add_result("Create Booking (Scheduled)", False, f"Invalid scheduled booking data: {resp_data}")
+            else:
+                results.add_result("Create Booking (Scheduled)", False, f"Missing required fields: {resp_data}")
+        except Exception as e:
+            results.add_result("Create Booking (Scheduled)", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Create Booking (Scheduled)", False, f"Create scheduled booking failed. Status: {response.status_code if response else 'No response'}")
+    
+    return None
+
+def test_void_preauth(results, payment_intent_id):
+    """Test voiding payment pre-authorization"""
+    if not payment_intent_id:
+        results.add_result("Void Preauth", False, "No payment intent ID provided")
+        return
+    
+    data = {
+        "paymentIntentId": payment_intent_id
+    }
+    
+    response = make_request("POST", "/billing/void", data)
+    
+    if response and response.status_code == 200:
+        try:
+            resp_data = response.json()
+            
+            if resp_data.get("ok") is True:
+                results.add_result("Void Preauth", True, f"Payment preauth voided: {payment_intent_id}")
+                return True
+            else:
+                results.add_result("Void Preauth", False, f"Void failed: {resp_data}")
+        except Exception as e:
+            results.add_result("Void Preauth", False, f"JSON parsing error: {e}")
+    else:
+        results.add_result("Void Preauth", False, f"Void preauth failed. Status: {response.status_code if response else 'No response'}")
+    
+    return False
+
+def test_checkout_endpoints_require_auth(results):
+    """Test that checkout endpoints require authentication"""
+    endpoints_to_test = [
+        ("GET", "/billing/methods"),
+        ("POST", "/billing/setup-intent"),
+        ("POST", "/billing/methods", {"paymentMethodId": "pm_test"}),
+        ("POST", "/pricing/promo/apply", {"quoteId": "test", "code": "TEST"}),
+        ("POST", "/billing/preauth", {"amount": 100, "paymentMethodId": "pm_test"}),
+        ("POST", "/bookings", {"quoteId": "test", "service": {}, "address": {}, "totals": {}, "payment": {}})
+    ]
+    
+    auth_required_count = 0
+    
+    for method, endpoint, *data in endpoints_to_test:
+        request_data = data[0] if data else None
+        response = make_request(method, endpoint, request_data)
+        
+        if response and response.status_code in [401, 403]:
+            auth_required_count += 1
+        else:
+            results.add_result(f"Checkout Auth Required ({method} {endpoint})", False, f"Auth not enforced. Status: {response.status_code if response else 'No response'}")
+            return
+    
+    results.add_result("Checkout Endpoints Auth Required", True, f"All {auth_required_count} checkout endpoints properly require authentication")
+
 def main():
     """Run all SHINE Auth v3.0 tests"""
     print("🚀 Starting SHINE Auth v3.0 Backend Comprehensive Tests")
