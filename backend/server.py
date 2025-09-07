@@ -1746,6 +1746,580 @@ def create_dispatch_offer(booking_id: str, service_data: dict):
     
     return offer_data
 
+# Job & Tracking Models
+class JobAddress(BaseModel):
+    line1: str
+    lat: float
+    lng: float
+
+class JobPartner(BaseModel):
+    id: str
+    name: str
+    rating: float
+
+class JobResponse(BaseModel):
+    bookingId: str
+    status: str
+    serviceType: str
+    address: JobAddress
+    partner: JobPartner
+    etaMinutes: int
+    routePolyline: str
+    requiredPhotos: dict
+
+class LocationUpdateRequest(BaseModel):
+    lat: float
+    lng: float
+    heading: float
+    speed: float
+
+class ArrivedRequest(BaseModel):
+    timestamp: str
+
+class StartVerificationRequest(BaseModel):
+    method: str  # face|biometric
+
+class StartVerificationResponse(BaseModel):
+    sessionId: str
+    expiresAt: str
+
+class CompleteVerificationRequest(BaseModel):
+    sessionId: str
+    result: str  # success|fail
+    evidenceId: str
+
+class CompleteVerificationResponse(BaseModel):
+    verified: bool
+
+class PresignRequest(BaseModel):
+    contentType: str  # image/jpeg|image/png
+
+class PresignResponse(BaseModel):
+    uploadUrl: str
+    fileId: str
+
+class AddPhotosRequest(BaseModel):
+    type: str  # before|after
+    fileIds: List[str]
+
+class AddPhotosResponse(BaseModel):
+    ok: bool
+    counts: dict
+
+class PauseJobRequest(BaseModel):
+    reason: str
+
+class JobStatusResponse(BaseModel):
+    ok: bool
+    status: str
+
+class StartJobRequest(BaseModel):
+    verified: bool
+
+class CompleteJobRequest(BaseModel):
+    notes: Optional[str] = None
+
+class ApproveCompletionResponse(BaseModel):
+    ok: bool
+    status: str
+
+class RaiseIssueRequest(BaseModel):
+    reason: str
+    photoIds: List[str]
+
+class RaiseIssueResponse(BaseModel):
+    ok: bool
+    ticketId: str
+
+class MaskedCallRequest(BaseModel):
+    bookingId: str
+    to: str  # customer|partner
+
+class MaskedCallResponse(BaseModel):
+    callId: str
+    proxyNumber: str
+
+class ChatMessage(BaseModel):
+    id: str
+    from_: str = Field(alias="from")
+    text: str
+    timestamp: str
+
+class ChatResponse(BaseModel):
+    messages: List[ChatMessage]
+
+class CaptureRequest(BaseModel):
+    paymentIntentId: str
+    amount: float
+
+class CaptureResponse(BaseModel):
+    ok: bool
+
+class SOSRequest(BaseModel):
+    bookingId: str
+    lat: float
+    lng: float
+    role: str  # customer|partner
+
+# In-memory job state (in production, use Redis/database)
+job_states = {}  # bookingId -> job_data
+job_photos = {}  # bookingId -> {before: [], after: []}
+job_chat = {}  # bookingId -> [messages]
+
+# Job & Tracking API Endpoints
+@api_router.get("/jobs/{booking_id}", response_model=JobResponse)
+async def get_job(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get job details and current status"""
+    
+    # Initialize job if not exists (from booking)
+    if booking_id not in job_states:
+        # Get booking data
+        booking = await db.bookings.find_one({"booking_id": booking_id})
+        if not booking:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Initialize job state
+        job_states[booking_id] = {
+            "bookingId": booking_id,
+            "status": "enroute",
+            "serviceType": booking["service"]["serviceType"],
+            "address": {
+                "line1": booking["address"]["line1"],
+                "lat": booking["address"]["lat"],
+                "lng": booking["address"]["lng"]
+            },
+            "partner": {
+                "id": booking.get("partnerId", "partner_123"),
+                "name": booking.get("partnerName", "Alex M."),
+                "rating": 4.8
+            },
+            "etaMinutes": 15,
+            "routePolyline": "encoded_polyline_mock",
+            "requiredPhotos": {
+                "before": 2 if booking["service"]["serviceType"] in ["deep", "bathroom"] else 1,
+                "after": 2
+            },
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
+        }
+        
+        # Initialize photo tracking
+        job_photos[booking_id] = {"before": [], "after": []}
+        job_chat[booking_id] = []
+    
+    job_data = job_states[booking_id]
+    
+    return JobResponse(
+        bookingId=job_data["bookingId"],
+        status=job_data["status"],
+        serviceType=job_data["serviceType"],
+        address=JobAddress(**job_data["address"]),
+        partner=JobPartner(**job_data["partner"]),
+        etaMinutes=job_data["etaMinutes"],
+        routePolyline=job_data["routePolyline"],
+        requiredPhotos=job_data["requiredPhotos"]
+    )
+
+@api_router.post("/jobs/{booking_id}/location", response_model=JobStatusResponse)
+async def update_location(
+    booking_id: str,
+    request: LocationUpdateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Update partner location (for real-time tracking)"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    job_data["partnerLocation"] = {
+        "lat": request.lat,
+        "lng": request.lng,
+        "heading": request.heading,
+        "speed": request.speed,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Update ETA based on distance (mock calculation)
+    job_data["etaMinutes"] = max(1, job_data["etaMinutes"] - 1)
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status=job_data["status"])
+
+@api_router.post("/jobs/{booking_id}/arrived", response_model=JobStatusResponse)
+async def mark_arrived(
+    booking_id: str,
+    request: ArrivedRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Mark partner as arrived at job location"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    job_data["status"] = "arrived"
+    job_data["arrivedAt"] = request.timestamp
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status="arrived")
+
+@api_router.post("/jobs/{booking_id}/verify/start", response_model=StartVerificationResponse)
+async def start_verification(
+    booking_id: str,
+    request: StartVerificationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Start partner verification (face/biometric)"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Mock verification session
+    session_id = f"vs_{secrets.token_urlsafe(16)}"
+    expires_at = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+    
+    job_data = job_states[booking_id]
+    job_data["verificationSession"] = {
+        "sessionId": session_id,
+        "method": request.method,
+        "expiresAt": expires_at,
+        "status": "pending"
+    }
+    
+    return StartVerificationResponse(
+        sessionId=session_id,
+        expiresAt=expires_at
+    )
+
+@api_router.post("/jobs/{booking_id}/verify/complete", response_model=CompleteVerificationResponse)
+async def complete_verification(
+    booking_id: str,
+    request: CompleteVerificationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Complete partner verification"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    verification = job_data.get("verificationSession", {})
+    
+    if verification.get("sessionId") != request.sessionId:
+        raise HTTPException(status_code=400, detail="Invalid session")
+    
+    # Mock verification result (90% success rate)
+    verified = request.result == "success" and hash(request.evidenceId) % 10 != 0
+    
+    verification["status"] = "success" if verified else "failed"
+    verification["result"] = request.result
+    verification["evidenceId"] = request.evidenceId
+    verification["completedAt"] = datetime.utcnow().isoformat()
+    
+    if verified:
+        job_data["status"] = "verifying_start"
+        job_data["verified"] = True
+    
+    return CompleteVerificationResponse(verified=verified)
+
+@api_router.post("/media/presign", response_model=PresignResponse)
+async def get_presigned_url(
+    request: PresignRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Get presigned URL for photo upload"""
+    
+    # Mock presigned URL (in production, use S3/GCS)
+    file_id = f"img_{secrets.token_urlsafe(16)}"
+    upload_url = f"https://mock-storage.example.com/upload/{file_id}?signature=mock"
+    
+    return PresignResponse(
+        uploadUrl=upload_url,
+        fileId=file_id
+    )
+
+@api_router.post("/jobs/{booking_id}/photos", response_model=AddPhotosResponse)
+async def add_photos(
+    booking_id: str,
+    request: AddPhotosRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Add before/after photos to job"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_photos:
+        job_photos[booking_id] = {"before": [], "after": []}
+    
+    photos = job_photos[booking_id]
+    
+    if request.type == "before":
+        photos["before"].extend(request.fileIds)
+    elif request.type == "after":
+        photos["after"].extend(request.fileIds)
+    
+    # Update job status based on photo requirements
+    job_data = job_states.get(booking_id, {})
+    required_before = job_data.get("requiredPhotos", {}).get("before", 1)
+    
+    if request.type == "before" and len(photos["before"]) >= required_before:
+        job_data["canStart"] = job_data.get("verified", False)
+    
+    return AddPhotosResponse(
+        ok=True,
+        counts={
+            "before": len(photos["before"]),
+            "after": len(photos["after"])
+        }
+    )
+
+@api_router.post("/jobs/{booking_id}/start", response_model=JobStatusResponse)
+async def start_job(
+    booking_id: str,
+    request: StartJobRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Start the job (after verification and photos)"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    photos = job_photos.get(booking_id, {})
+    
+    # Validate requirements
+    if not request.verified:
+        raise HTTPException(status_code=400, detail="Verification required")
+    
+    required_before = job_data.get("requiredPhotos", {}).get("before", 1)
+    if len(photos.get("before", [])) < required_before:
+        raise HTTPException(status_code=400, detail=f"Minimum {required_before} before photos required")
+    
+    job_data["status"] = "in_progress"
+    job_data["startedAt"] = datetime.utcnow().isoformat()
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status="in_progress")
+
+@api_router.post("/jobs/{booking_id}/pause", response_model=JobStatusResponse)
+async def pause_job(
+    booking_id: str,
+    request: PauseJobRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Pause the job with reason"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    job_data["status"] = "paused"
+    job_data["pausedAt"] = datetime.utcnow().isoformat()
+    job_data["pauseReason"] = request.reason
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status="paused")
+
+@api_router.post("/jobs/{booking_id}/resume", response_model=JobStatusResponse)
+async def resume_job(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Resume paused job"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    job_data["status"] = "in_progress"
+    job_data["resumedAt"] = datetime.utcnow().isoformat()
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status="in_progress")
+
+@api_router.post("/jobs/{booking_id}/complete", response_model=JobStatusResponse)
+async def complete_job(
+    booking_id: str,
+    request: CompleteJobRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Complete the job (partner side)"""
+    
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Partner access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    photos = job_photos.get(booking_id, {})
+    
+    # Validate after photos
+    required_after = job_data.get("requiredPhotos", {}).get("after", 2)
+    if len(photos.get("after", [])) < required_after:
+        raise HTTPException(status_code=400, detail=f"Minimum {required_after} after photos required")
+    
+    job_data["status"] = "awaiting_customer_review"
+    job_data["completedAt"] = datetime.utcnow().isoformat()
+    job_data["partnerNotes"] = request.notes
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return JobStatusResponse(ok=True, status="awaiting_customer_review")
+
+@api_router.post("/jobs/{booking_id}/approve", response_model=ApproveCompletionResponse)
+async def approve_completion(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Customer approves job completion"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    if booking_id not in job_states:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = job_states[booking_id]
+    job_data["status"] = "completed"
+    job_data["approvedAt"] = datetime.utcnow().isoformat()
+    job_data["updatedAt"] = datetime.utcnow()
+    
+    return ApproveCompletionResponse(ok=True, status="completed")
+
+@api_router.post("/jobs/{booking_id}/issue", response_model=RaiseIssueResponse)
+async def raise_issue(
+    booking_id: str,
+    request: RaiseIssueRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Customer raises an issue with job completion"""
+    
+    if current_user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access required")
+    
+    # Create support ticket
+    ticket_id = f"sup_{secrets.token_urlsafe(16)}"
+    
+    # Store issue data
+    job_data = job_states.get(booking_id, {})
+    job_data["issue"] = {
+        "ticketId": ticket_id,
+        "reason": request.reason,
+        "photoIds": request.photoIds,
+        "reportedAt": datetime.utcnow().isoformat()
+    }
+    job_data["status"] = "disputed"
+    
+    return RaiseIssueResponse(ok=True, ticketId=ticket_id)
+
+# Communication APIs (Mock implementations)
+@api_router.post("/comm/call", response_model=MaskedCallResponse)
+async def initiate_masked_call(
+    request: MaskedCallRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Initiate masked call between customer and partner"""
+    
+    call_id = f"call_{secrets.token_urlsafe(16)}"
+    proxy_number = "+1-555-0123"  # Mock proxy number
+    
+    return MaskedCallResponse(
+        callId=call_id,
+        proxyNumber=proxy_number
+    )
+
+@api_router.get("/comm/chat/{booking_id}", response_model=ChatResponse)
+async def get_chat_messages(
+    booking_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get chat messages for a job"""
+    
+    messages = job_chat.get(booking_id, [])
+    
+    return ChatResponse(messages=[
+        ChatMessage(
+            id=msg["id"],
+            from_=msg["from"],
+            text=msg["text"],
+            timestamp=msg["timestamp"]
+        ) for msg in messages
+    ])
+
+@api_router.post("/comm/chat/{booking_id}")
+async def send_chat_message(
+    booking_id: str,
+    message_data: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Send chat message"""
+    
+    if booking_id not in job_chat:
+        job_chat[booking_id] = []
+    
+    message = {
+        "id": f"msg_{secrets.token_urlsafe(8)}",
+        "from": current_user.role,
+        "text": message_data.get("text", ""),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    job_chat[booking_id].append(message)
+    
+    return {"ok": True, "messageId": message["id"]}
+
+# Payment Capture APIs
+@api_router.post("/billing/capture/start", response_model=CaptureResponse)
+async def capture_at_start(request: CaptureRequest):
+    """Capture payment at job start"""
+    
+    # Mock payment capture
+    return CaptureResponse(ok=True)
+
+@api_router.post("/billing/capture/finish", response_model=CaptureResponse)
+async def capture_at_finish(request: CaptureRequest):
+    """Capture final payment at job completion"""
+    
+    # Mock payment capture
+    return CaptureResponse(ok=True)
+
+# SOS API
+@api_router.post("/support/sos", response_model=CaptureResponse)
+async def emergency_sos(
+    request: SOSRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Emergency SOS support request"""
+    
+    # Mock SOS handling - in production, would alert support team
+    return CaptureResponse(ok=True)
+
 # Original routes
 @api_router.get("/")
 async def root():
