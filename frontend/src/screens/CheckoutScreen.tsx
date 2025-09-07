@@ -72,6 +72,9 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
+  const [quoteLoading, setQuoteLoading] = useState(true);
+  const [quote, setQuote] = useState<PricingQuote | null>(null);
+  const [estimateUpdated, setEstimateUpdated] = useState(false);
   const [showAddCardModal, setShowAddCardModal] = useState(false);
   
   // Payment methods state
