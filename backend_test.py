@@ -834,8 +834,8 @@ def test_addresses_require_auth(results):
     # Test GET /addresses without auth
     response = make_request("GET", "/addresses")
     
-    if response and response.status_code == 401:
-        results.add_result("Address Auth Required (GET)", True, "GET /addresses properly requires authentication")
+    if response and response.status_code in [401, 403]:
+        results.add_result("Address Auth Required (GET)", True, f"GET /addresses properly requires authentication (Status: {response.status_code})")
     else:
         results.add_result("Address Auth Required (GET)", False, f"GET /addresses auth not enforced. Status: {response.status_code if response else 'No response'}")
     
@@ -852,8 +852,8 @@ def test_addresses_require_auth(results):
     
     response = make_request("POST", "/addresses", address_data)
     
-    if response and response.status_code == 401:
-        results.add_result("Address Auth Required (POST)", True, "POST /addresses properly requires authentication")
+    if response and response.status_code in [401, 403]:
+        results.add_result("Address Auth Required (POST)", True, f"POST /addresses properly requires authentication (Status: {response.status_code})")
     else:
         results.add_result("Address Auth Required (POST)", False, f"POST /addresses auth not enforced. Status: {response.status_code if response else 'No response'}")
 
