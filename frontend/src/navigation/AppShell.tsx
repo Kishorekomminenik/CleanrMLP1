@@ -10,15 +10,8 @@ import OwnerHomeScreen from '../screens/OwnerHomeScreen';
 
 const Tab = createBottomTabNavigator();
 
-// Customer Screens
-function CustomerHomeScreen() {
-  return (
-    <SafeAreaView style={styles.screen}>
-      <Text style={styles.screenTitle}>Customer Home</Text>
-      <Text style={styles.screenSubtitle}>Find services near you</Text>
-    </SafeAreaView>
-  );
-}
+// Customer Screens - using actual home screen
+const CustomerHomeComponent = CustomerHomeScreen;
 
 function CustomerBookingsScreen() {
   return (
@@ -58,35 +51,8 @@ function CustomerProfileScreen() {
   );
 }
 
-// Partner Screens
-function PartnerHomeScreen() {
-  const { user } = useAuth();
-  const isPending = user?.partner_status === 'pending';
-  
-  return (
-    <SafeAreaView style={styles.screen}>
-      {isPending && (
-        <View style={styles.pendingBanner} testID="partnerPendingBanner">
-          <Text style={styles.pendingBannerText}>
-            Your account is pending verification. Some features are disabled.
-          </Text>
-        </View>
-      )}
-      <Text style={styles.screenTitle}>Partner Dashboard</Text>
-      <View style={styles.toggleCard}>
-        <Text style={styles.toggleLabel}>Status</Text>
-        <TouchableOpacity
-          style={[styles.toggleButton, isPending && styles.toggleButtonDisabled]}
-          disabled={isPending}
-        >
-          <Text style={[styles.toggleButtonText, isPending && styles.toggleButtonTextDisabled]}>
-            {isPending ? 'Verification Required' : 'Go Online'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
+// Partner Screens - using actual home screen
+const PartnerHomeComponent = PartnerHomeScreen;
 
 function PartnerJobsScreen() {
   const { user } = useAuth();
@@ -163,24 +129,8 @@ function PartnerProfileScreen() {
   );
 }
 
-// Owner Screens
-function OwnerHomeScreen() {
-  return (
-    <SafeAreaView style={styles.screen}>
-      <Text style={styles.screenTitle}>Owner Dashboard</Text>
-      <View style={styles.ownerTiles}>
-        <View style={styles.ownerTile}>
-          <Text style={styles.ownerTileNumber}>125</Text>
-          <Text style={styles.ownerTileLabel}>Active Partners</Text>
-        </View>
-        <View style={styles.ownerTile}>
-          <Text style={styles.ownerTileNumber}>1,234</Text>
-          <Text style={styles.ownerTileLabel}>Total Jobs</Text>
-        </View>
-      </View>
-    </SafeAreaView>
-  );
-}
+// Owner Screens - using actual home screen
+const OwnerHomeComponent = OwnerHomeScreen;
 
 function OwnerReportsScreen() {
   return (
