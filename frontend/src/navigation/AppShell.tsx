@@ -335,6 +335,9 @@ export default function AppShell() {
         case 'Analytics':
           iconName = focused ? 'analytics' : 'analytics-outline';
           break;
+        case 'Support':
+          iconName = focused ? 'help-circle' : 'help-circle-outline';
+          break;
         case 'Settings':
           iconName = focused ? 'settings' : 'settings-outline';
           break;
