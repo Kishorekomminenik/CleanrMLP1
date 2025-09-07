@@ -7,8 +7,33 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Tab = createBottomTabNavigator();
 
-// Customer Screens - using actual home screen
-const CustomerHomeComponent = CustomerHomeScreen;
+// Customer Screens - Simplified for demo
+function CustomerHomeComponent() {
+  return (
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.homeHeader}>
+        <Text style={styles.homeTitle}>Find Services Near You</Text>
+        <View style={styles.searchBar} testID="homeSearchBar">
+          <Ionicons name="search" size={20} color="#6C757D" />
+          <Text style={styles.searchPlaceholder}>Find services near me</Text>
+        </View>
+      </View>
+      
+      <View style={styles.mapPlaceholder} testID="homeMapView">
+        <Ionicons name="map" size={48} color="#6C757D" />
+        <Text style={styles.mapPlaceholderTitle}>Map View</Text>
+        <Text style={styles.mapPlaceholderText}>
+          Interactive map with nearby partners will appear here
+        </Text>
+      </View>
+
+      <TouchableOpacity style={styles.bookNowFab} testID="homeBookNowBtn">
+        <Ionicons name="add" size={24} color="#FFFFFF" />
+        <Text style={styles.bookNowText}>Book Now</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+}
 
 function CustomerBookingsScreen() {
   return (
