@@ -924,11 +924,12 @@ const styles = StyleSheet.create({
   },
   surgeChip: {
     backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#F59E0B',
+    borderRadius: 16,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: 8,
   },
   surgeChipText: {
     color: '#92400E',
