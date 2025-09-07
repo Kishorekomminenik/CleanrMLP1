@@ -520,29 +520,7 @@ async def get_services_catalog():
     
     return {"services": services}
 
-@api_router.post("/media/presign")
-async def create_presigned_upload(request: dict):
-    """Create presigned URL for photo upload"""
-    content_type = request.get("contentType", "image/jpeg")
-    
-    # Validate content type
-    if content_type not in ["image/jpeg", "image/png"]:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported media type"
-        )
-    
-    # Generate unique file ID
-    file_id = f"photo_{uuid.uuid4().hex[:12]}"
-    
-    # In production, this would generate a real presigned URL to S3/GCS
-    # For demo, return a mock URL
-    upload_url = f"https://mockupload.example.com/upload/{file_id}"
-    
-    return {
-        "uploadUrl": upload_url,
-        "fileId": file_id
-    }
+
 
 @api_router.post("/pricing/quote")
 async def get_pricing_quote(request: dict):
