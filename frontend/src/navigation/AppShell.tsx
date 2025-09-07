@@ -294,6 +294,9 @@ export default function AppShell() {
         case 'Favorites':
           iconName = focused ? 'heart' : 'heart-outline';
           break;
+        case 'Support':
+          iconName = focused ? 'help-circle' : 'help-circle-outline';
+          break;
         case 'Profile':
           iconName = focused ? 'person' : 'person-outline';
           break;
@@ -310,6 +313,9 @@ export default function AppShell() {
           break;
         case 'Earnings':
           iconName = focused ? 'wallet' : 'wallet-outline';
+          break;
+        case 'Support':
+          iconName = focused ? 'help-circle' : 'help-circle-outline';
           break;
         case 'Profile':
           iconName = focused ? 'person' : 'person-outline';
