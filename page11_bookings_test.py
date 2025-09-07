@@ -707,11 +707,14 @@ def test_bookings_require_authentication(results):
         
         if response and response.status_code in [401, 403]:
             auth_required_count += 1
+            results.add_result(f"Booking Auth Required ({method} {endpoint})", True, f"Auth properly enforced (Status: {response.status_code})")
         else:
             results.add_result(f"Booking Auth Required ({method} {endpoint})", False, f"Auth not enforced. Status: {response.status_code if response else 'No response'}")
-            return
     
-    results.add_result("Booking Endpoints Auth Required", True, f"All {auth_required_count} booking endpoints properly require authentication")
+    if auth_required_count == len(endpoints_to_test):
+        results.add_result("Booking Endpoints Auth Required", True, f"All {auth_required_count} booking endpoints properly require authentication")
+    else:
+        results.add_result("Booking Endpoints Auth Required", False, f"Only {auth_required_count}/{len(endpoints_to_test)} endpoints require authentication")
 
 def test_customer_partner_role_separation(results, customer_token, partner_token):
     """Test that customers can't access partner endpoints and vice versa"""
