@@ -401,6 +401,17 @@ def test_payouts_list(results, partner_token):
 
 def test_instant_payout_success(results, partner_token):
     """Test POST /api/partner/payouts/instant - success scenario"""
+    # First check bank status
+    bank_response = make_request("GET", "/partner/bank/status", auth_token=partner_token)
+    bank_verified = False
+    
+    if bank_response and bank_response.status_code == 200:
+        try:
+            bank_data = bank_response.json()
+            bank_verified = bank_data.get("verified", False)
+        except:
+            pass
+    
     payout_data = {
         "amount": 50.0,
         "currency": "usd",
@@ -409,6 +420,21 @@ def test_instant_payout_success(results, partner_token):
     
     response = make_request("POST", "/partner/payouts/instant", payout_data, auth_token=partner_token)
     
+    if not bank_verified:
+        # Expect 409 for unverified bank
+        if response and response.status_code == 409:
+            try:
+                data = response.json()
+                if "detail" in data and "not verified" in data["detail"]:
+                    results.add_result("Instant Payout Success", True, 
+                                     "Correctly rejected payout for unverified bank account")
+                    return True
+            except:
+                pass
+        results.add_result("Instant Payout Success", False, f"Should reject unverified bank. Status: {response.status_code if response else 'No response'}")
+        return False
+    
+    # Bank is verified, expect success
     if response and response.status_code == 200:
         try:
             data = response.json()
