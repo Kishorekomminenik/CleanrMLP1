@@ -1206,6 +1206,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'Inter',
   },
+  disclaimerContainer: {
+    backgroundColor: '#FEF3C7',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  disclaimerText: {
+    color: '#92400E',
+    fontSize: 14,
+    fontFamily: 'Inter',
+    textAlign: 'center',
+  },
 });
 
 export default CustomerDiscoveryScreen;
