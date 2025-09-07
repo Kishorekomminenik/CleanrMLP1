@@ -199,8 +199,48 @@ function PartnerProfileScreen() {
   );
 }
 
-// Owner Screens - using actual home screen
-const OwnerHomeComponent = OwnerHomeScreen;
+// Owner Screens - Simplified for demo
+function OwnerHomeComponent() {
+  return (
+    <SafeAreaView style={styles.screen}>
+      <Text style={styles.homeTitle}>Owner Dashboard</Text>
+      
+      <View style={styles.ownerTiles} testID="ownerTilesGrid">
+        <View style={styles.ownerTile}>
+          <Ionicons name="briefcase" size={24} color="#3A8DFF" />
+          <Text style={styles.ownerTileNumber}>42</Text>
+          <Text style={styles.ownerTileLabel}>Active Jobs</Text>
+        </View>
+        <View style={styles.ownerTile}>
+          <Ionicons name="people" size={24} color="#10B981" />
+          <Text style={styles.ownerTileNumber}>18</Text>
+          <Text style={styles.ownerTileLabel}>Partners Online</Text>
+        </View>
+        <View style={styles.ownerTile}>
+          <Ionicons name="help-circle" size={24} color="#F59E0B" />
+          <Text style={styles.ownerTileNumber}>5</Text>
+          <Text style={styles.ownerTileLabel}>Support Tickets</Text>
+        </View>
+        <View style={styles.ownerTile}>
+          <Ionicons name="trending-up" size={24} color="#8B5CF6" />
+          <Text style={styles.ownerTileNumber}>$2,450</Text>
+          <Text style={styles.ownerTileLabel}>GMV Today</Text>
+        </View>
+      </View>
+
+      <View style={styles.chartSection}>
+        <Text style={styles.sectionTitle}>Bookings (7d)</Text>
+        <View style={styles.chartStub} testID="ownerBookingsChart">
+          <Ionicons name="bar-chart" size={48} color="#6C757D" />
+          <Text style={styles.chartStubTitle}>Chart Coming Soon</Text>
+          <Text style={styles.chartStubText}>
+            Detailed booking analytics will be available here
+          </Text>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
 
 function OwnerReportsScreen() {
   return (
