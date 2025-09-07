@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useAuth } from '../src/context/AuthContext';
+import { useAuth } from '../src/contexts/AuthContext';
 import CheckoutScreen from '../src/screens/CheckoutScreen';
 
 export default function CheckoutRoute() {
