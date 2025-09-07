@@ -465,6 +465,15 @@ const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
           </View>
         </View>
 
+        {/* Reprice Notice */}
+        {estimateUpdated && (
+          <View style={styles.repriceNotice} testID="chkRepriceNotice">
+            <Text style={styles.repriceNoticeText}>
+              Price changed due to updated surge. Please confirm new total.
+            </Text>
+          </View>
+        )}
+
         {/* Price Breakdown */}
         <View style={styles.card} testID="chkBreakdown">
           <Text testID="chkFareBlock" style={styles.cardTitle}>Fare breakdown (SHINE pricing)</Text>
