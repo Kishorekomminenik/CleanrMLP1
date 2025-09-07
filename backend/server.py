@@ -4239,10 +4239,15 @@ class SearchResponse(BaseModel):
     items: List[SearchResultItem]
     nextPage: Optional[int] = None
 
+class PartnerFareCard(BaseModel):
+    serviceType: str
+    fromPrice: float
+    duration: int  # minutes
+
 class PartnerService(BaseModel):
     serviceType: str
-    price: float
-    duration: int  # minutes
+    price: float  # Kept for backward compatibility but will show platform prices
+    duration: int
 
 class PartnerReview(BaseModel):
     customerName: str
@@ -4256,7 +4261,8 @@ class PartnerProfile(BaseModel):
     badges: List[str]
     description: str
     photos: List[str]
-    services: List[PartnerService]
+    services: List[PartnerService]  # Backward compatibility
+    fareCards: List[PartnerFareCard]  # New platform pricing
     recentReviews: List[PartnerReview]
     status: str
 
