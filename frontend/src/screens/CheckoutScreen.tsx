@@ -933,6 +933,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: 'Inter',
   },
+  repriceNotice: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  repriceNoticeText: {
+    fontSize: 14,
+    color: '#92400E',
+    textAlign: 'center',
+    fontWeight: '600',
+    fontFamily: 'Inter',
+  },
   buttonContainer: {
     flexDirection: 'row',
     padding: 16,
