@@ -643,8 +643,15 @@ def test_tax_form_invalid(results, partner_token):
     response = make_request("GET", f"/partner/tax/forms/INVALID/{current_year}", auth_token=partner_token)
     
     if response and response.status_code == 404:
-        results.add_result("Tax Form Invalid", True, "Correctly rejected invalid form type")
-        return True
+        try:
+            data = response.json()
+            if "detail" in data and "not found" in data["detail"].lower():
+                results.add_result("Tax Form Invalid", True, "Correctly rejected invalid form type")
+                return True
+        except:
+            # Even if JSON parsing fails, 404 status is correct
+            results.add_result("Tax Form Invalid", True, "Correctly rejected invalid form type (404 status)")
+            return True
     
     results.add_result("Tax Form Invalid", False, f"Should reject invalid form. Status: {response.status_code if response else 'No response'}")
     return False
