@@ -16,7 +16,12 @@ import { useAuth } from '../contexts/AuthContext';
 // Types
 interface PartnerService {
   serviceType: string;
-  price: number;
+  duration: number;
+}
+
+interface FareCard {
+  serviceType: string;
+  fromPrice: number;
   duration: number;
 }
 
