@@ -23,10 +23,12 @@ import random
 async def initialize_mock_bookings():
     """Initialize mock booking data for testing purposes"""
     
-    # Find or create test user
+    # Find existing test user or use any user with the test email
     test_user = await db.users.find_one({"email": "user_001@test.com"})
-    if not test_user:
-        # Create test user if it doesn't exist
+    if test_user:
+        test_user_id = str(test_user["_id"])
+    else:
+        # If no test user exists, create one
         from passlib.context import CryptContext
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         hashed_password = pwd_context.hash("TestPass123!")
@@ -42,8 +44,6 @@ async def initialize_mock_bookings():
         }
         result = await db.users.insert_one(user_doc)
         test_user_id = str(result.inserted_id)
-    else:
-        test_user_id = str(test_user["_id"])
     
     # Sample customer bookings for different users
     mock_bookings = [
@@ -198,13 +198,14 @@ async def initialize_mock_bookings():
         }
     ]
     
-    # Insert mock bookings if they don't exist
-    for booking in mock_bookings:
-        existing = await db.bookings.find_one({"booking_id": booking["booking_id"]})
-        if not existing:
-            await db.bookings.insert_one(booking)
+    # Delete existing mock bookings first to avoid duplicates
+    await db.bookings.delete_many({"booking_id": {"$in": ["bk_upcoming_001", "bk_inprogress_002", "bk_completed_003", "bk_partner_today_004"]}})
     
-    print("Mock booking data initialized")
+    # Insert mock bookings
+    for booking in mock_bookings:
+        await db.bookings.insert_one(booking)
+    
+    print(f"Mock booking data initialized for user {test_user_id}")
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
