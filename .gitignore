@@ -89,3 +89,20 @@ android-sdk/ -e
 # Environment files
 *.env
 *.env.*
+-e # SHINE ignores
+.env
+.env.*
+node_modules/
+dist/
+build/
+*.keystore
+*.jks
+certs/
+web-build/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+*.log
+frontend/preview_server.log
+server.log
