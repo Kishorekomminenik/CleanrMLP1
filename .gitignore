@@ -83,3 +83,7 @@ chainlit.md
 *.tgz
 *.zip
 *.deb
+-e 
+# Environment files
+*.env
+*.env.*
