@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "QA Evidence Recorder",
+  "version": "1.0.0",
+  "description": "Record tab video, screenshots, and network logs for QA evidence.",
+  "action": {
+    "default_title": "QA Evidence Recorder",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "tabCapture",
+    "debugger",
+    "downloads",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

@@ -1,0 +1,65 @@
+.container {
+  font-family: Arial, sans-serif;
+  min-width: 280px;
+  padding: 12px;
+  color: #1f2937;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.status {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.counters {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.buttons {
+  display: grid;
+  gap: 6px;
+}
+
+button {
+  padding: 8px 10px;
+  border: 1px solid #cbd5f5;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+button.primary {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #1d4ed8;
+}
+
+button.danger {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.message {
+  margin-top: 10px;
+  font-size: 12px;
+  min-height: 16px;
+  color: #334155;
+}
+
+.message.error {
+  color: #b91c1c;
+}

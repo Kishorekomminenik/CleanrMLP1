@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QA Evidence Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>QA Evidence Recorder</h1>
+
+      <div class="status">
+        Status: <span id="statusText">Idle</span>
+      </div>
+
+      <div class="counters">
+        <div>Screenshots: <span id="screenshotCount">0</span></div>
+        <div>Network Events: <span id="networkCount">0</span></div>
+        <div>Markers: <span id="markerCount">0</span></div>
+      </div>
+
+      <div class="buttons">
+        <button id="startBtn" class="primary">Start Session</button>
+        <button id="pauseBtn">Pause</button>
+        <button id="resumeBtn">Resume</button>
+        <button id="stopBtn" class="danger">Stop &amp; Export</button>
+        <button id="screenshotBtn">Capture Screenshot</button>
+        <button id="markerBtn">Add Marker</button>
+      </div>
+
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
