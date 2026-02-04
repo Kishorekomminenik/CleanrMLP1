@@ -1,12 +1,15 @@
 import { decodeBase64ToText, limitTextBody, MAX_BODY_BYTES } from "./utils.js";
 
+const MAX_REQUESTS = 2000;
+
 // Captures network activity via the Chrome DevTools Protocol.
 export class NetworkLogger {
-  constructor() {
+  constructor(store, options = {}) {
+    this.store = store;
     this.attachedTabId = null;
-    this.requests = new Map();
-    this.logs = [];
     this.listening = false;
+    this.maxRequests = options.maxRequests || MAX_REQUESTS;
+    this.limitNotified = false;
     this.onEvent = this.onEvent.bind(this);
     this.onDetach = this.onDetach.bind(this);
   }
@@ -15,11 +18,7 @@ export class NetworkLogger {
     if (this.attachedTabId === tabId) {
       return;
     }
-    await this.detach();
-    this.attachedTabId = tabId;
-    this.requests.clear();
-    this.logs = [];
-
+    await this.detach("re-attach");
     await new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, "1.3", () => {
         if (chrome.runtime.lastError) {
@@ -29,6 +28,10 @@ export class NetworkLogger {
         resolve();
       });
     });
+
+    this.attachedTabId = tabId;
+    this.store.clearRequests();
+    this.limitNotified = false;
 
     if (!this.listening) {
       chrome.debugger.onEvent.addListener(this.onEvent);
@@ -42,42 +45,29 @@ export class NetworkLogger {
     });
   }
 
-  async detach() {
+  async detach(reason = "detached") {
     if (this.attachedTabId == null) {
       return;
     }
     const tabId = this.attachedTabId;
     this.attachedTabId = null;
-    this.flushPending("detached");
+    this.flushPending(reason);
     await new Promise((resolve) => {
       chrome.debugger.detach({ tabId }, () => resolve());
     });
   }
 
-  getLogs() {
-    return [...this.logs];
-  }
-
-  getLogCount() {
-    return this.logs.length;
-  }
-
   getPendingCount() {
-    return this.requests.size;
-  }
-
-  clear() {
-    this.requests.clear();
-    this.logs = [];
+    return this.store.getRequestMap().size;
   }
 
   flushPending(reason) {
-    for (const record of this.requests.values()) {
-      record.finishedTimestamp = record.finishedTimestamp ?? null;
-      record.error = record.error || reason;
-      this.logs.push(record);
+    for (const record of this.store.getRequestMap().values()) {
+      record.finishedTime = record.finishedTime ?? null;
+      record.bodyError = record.bodyError || reason;
+      this.store.addNetworkLog(record);
     }
-    this.requests.clear();
+    this.store.clearRequests();
   }
 
   onDetach(source, reason) {
@@ -92,6 +82,12 @@ export class NetworkLogger {
     if (source.tabId !== this.attachedTabId) {
       return;
     }
+    if (this.store.store.sessionState !== "recording") {
+      return;
+    }
+    if (!["network", "all"].includes(this.store.store.mode)) {
+      return;
+    }
     switch (method) {
       case "Network.requestWillBeSent":
         this.handleRequestWillBeSent(params);
@@ -104,52 +100,92 @@ export class NetworkLogger {
           console.warn("Failed to capture response body", error);
         });
         break;
+      case "Network.loadingFailed":
+        this.handleLoadingFailed(params);
+        break;
       default:
         break;
     }
   }
 
   handleRequestWillBeSent(params) {
+    const totalKnown =
+      this.store.store.networkLogs.length + this.store.getRequestMap().size;
+    if (totalKnown >= this.maxRequests) {
+      if (!this.limitNotified) {
+        this.store.setNetworkLimitReached();
+        this.store.setMessage(
+          "warning",
+          "Network request limit reached (2000). New requests are ignored."
+        );
+        this.limitNotified = true;
+      }
+      return;
+    }
+
     const { requestId, request, timestamp, wallTime } = params;
     const record = {
       requestId,
       url: request.url,
       method: request.method,
       requestHeaders: request.headers || {},
-      requestBody: null,
-      requestBodyTruncated: false,
-      requestTimestamp: timestamp,
+      requestPostData: request.postData || null,
+      status: null,
+      statusText: null,
+      responseHeaders: {},
+      responseBody: null,
+      bodyTruncated: false,
+      bodySkipped: false,
+      bodyError: null,
+      startTime: timestamp,
+      responseTime: null,
+      finishedTime: null,
+      startOffsetMs: this.store.getElapsedMsForTimestamp(timestamp),
+      responseOffsetMs: null,
+      finishedOffsetMs: null,
       wallTime,
-      documentURL: params.documentURL || null
+      wallTimeIso: wallTime ? new Date(wallTime * 1000).toISOString() : null,
+      documentURL: params.documentURL || null,
+      initiator: params.initiator || null,
+      resourceType: params.type || null
     };
 
-    if (request.postData) {
-      const limited = limitTextBody(request.postData);
-      record.requestBody = limited.text;
-      record.requestBodyTruncated = limited.truncated;
-    }
-
-    this.requests.set(requestId, record);
+    this.store.setRequest(requestId, record);
   }
 
   handleResponseReceived(params) {
-    const record = this.ensureRecord(params.requestId);
+    const record = this.store.getRequest(params.requestId);
+    if (!record) {
+      return;
+    }
     const response = params.response || {};
     record.status = response.status;
     record.statusText = response.statusText;
     record.responseHeaders = response.headers || {};
-    record.responseTimestamp = params.timestamp;
+    record.responseTime = params.timestamp;
+    record.responseOffsetMs = this.store.getElapsedMsForTimestamp(
+      params.timestamp
+    );
     record.responseMimeType = response.mimeType;
     record.responseProtocol = response.protocol;
     record.fromDiskCache = response.fromDiskCache;
     record.fromServiceWorker = response.fromServiceWorker;
     record.responseTiming = response.timing || null;
+    record.encodedDataLength = response.encodedDataLength;
+    record.remoteIPAddress = response.remoteIPAddress;
+    record.remotePort = response.remotePort;
   }
 
   async handleLoadingFinished(params) {
-    const record = this.ensureRecord(params.requestId);
+    const record = this.store.getRequest(params.requestId);
+    if (!record) {
+      return;
+    }
+    record.finishedTime = params.timestamp;
+    record.finishedOffsetMs = this.store.getElapsedMsForTimestamp(
+      params.timestamp
+    );
     record.encodedDataLength = params.encodedDataLength;
-    record.finishedTimestamp = params.timestamp;
 
     try {
       const bodyResult = await this.sendCommand("Network.getResponseBody", {
@@ -157,19 +193,42 @@ export class NetworkLogger {
       });
       this.applyResponseBody(record, bodyResult);
     } catch (error) {
-      record.responseBodyError = error.message;
+      record.bodyError = error.message;
     }
 
     if (
-      record.requestTimestamp != null &&
-      record.finishedTimestamp != null
+      Number.isFinite(record.startOffsetMs) &&
+      Number.isFinite(record.finishedOffsetMs)
     ) {
-      record.durationMs =
-        (record.finishedTimestamp - record.requestTimestamp) * 1000;
+      record.durationMs = record.finishedOffsetMs - record.startOffsetMs;
     }
 
-    this.logs.push(record);
-    this.requests.delete(params.requestId);
+    this.store.addNetworkLog(record);
+    this.store.deleteRequest(params.requestId);
+  }
+
+  handleLoadingFailed(params) {
+    const record = this.store.getRequest(params.requestId);
+    if (!record) {
+      return;
+    }
+    record.finishedTime = params.timestamp;
+    record.finishedOffsetMs = this.store.getElapsedMsForTimestamp(
+      params.timestamp
+    );
+    record.errorText = params.errorText;
+    record.canceled = params.canceled;
+    record.blockedReason = params.blockedReason || null;
+    record.type = params.type || null;
+    record.bodyError = record.bodyError || "loadingFailed";
+    if (
+      Number.isFinite(record.startOffsetMs) &&
+      Number.isFinite(record.finishedOffsetMs)
+    ) {
+      record.durationMs = record.finishedOffsetMs - record.startOffsetMs;
+    }
+    this.store.addNetworkLog(record);
+    this.store.deleteRequest(params.requestId);
   }
 
   applyResponseBody(record, bodyResult) {
@@ -178,34 +237,28 @@ export class NetworkLogger {
     }
     const { body, base64Encoded } = bodyResult;
     record.responseBody = null;
-    record.responseBodyTruncated = false;
-    record.responseBodyEncoding = base64Encoded ? "base64" : "utf8";
-    record.responseBodySkipped = false;
+    record.bodyTruncated = false;
+    record.bodySkipped = false;
+    record.bodyError = record.bodyError || null;
 
     if (base64Encoded) {
-      // Skip binary bodies when decoding fails.
       const decoded = decodeBase64ToText(body);
       if (!decoded.ok) {
-        record.responseBodySkipped = true;
+        record.bodySkipped = true;
+        record.bodyError = record.bodyError || "Binary response body skipped";
         return;
       }
       const limited = limitTextBody(decoded.text);
       record.responseBody = limited.text;
-      record.responseBodyTruncated = limited.truncated;
-      record.responseBodyEncoding = "utf8";
+      record.bodyTruncated = limited.truncated;
+      record.responseBodySizeBytes = limited.sizeBytes;
       return;
     }
 
     const limited = limitTextBody(body);
     record.responseBody = limited.text;
-    record.responseBodyTruncated = limited.truncated;
-  }
-
-  ensureRecord(requestId) {
-    if (!this.requests.has(requestId)) {
-      this.requests.set(requestId, { requestId });
-    }
-    return this.requests.get(requestId);
+    record.bodyTruncated = limited.truncated;
+    record.responseBodySizeBytes = limited.sizeBytes;
   }
 
   sendCommand(method, params) {

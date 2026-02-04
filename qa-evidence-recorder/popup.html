@@ -10,13 +10,27 @@
     <div class="container">
       <h1>QA Evidence Recorder</h1>
 
-      <div class="status">
-        Status: <span id="statusText">Idle</span>
+      <div class="mode">
+        <label for="modeSelect">Mode</label>
+        <select id="modeSelect">
+          <option value="screenshot">Screenshot Only</option>
+          <option value="video">Video Only</option>
+          <option value="network">Network Only</option>
+          <option value="all" selected>
+            All-in-One (Video + Network + Screenshots)
+          </option>
+        </select>
+      </div>
+
+      <div class="status-panel">
+        <div>Session State: <span id="sessionState">Idle</span></div>
+        <div>Locked Tab: <span id="lockedTab">Not set</span></div>
       </div>
 
       <div class="counters">
+        <div>Duration: <span id="durationLabel">00:00</span></div>
+        <div>Network events: <span id="networkCount">0</span></div>
         <div>Screenshots: <span id="screenshotCount">0</span></div>
-        <div>Network Events: <span id="networkCount">0</span></div>
         <div>Markers: <span id="markerCount">0</span></div>
       </div>
 
@@ -27,6 +41,18 @@
         <button id="stopBtn" class="danger">Stop &amp; Export</button>
         <button id="screenshotBtn">Capture Screenshot</button>
         <button id="markerBtn">Add Marker</button>
+      </div>
+
+      <div id="markerInput" class="marker-input hidden">
+        <input
+          id="markerText"
+          type="text"
+          placeholder="Marker note (optional)"
+        />
+        <div class="marker-actions">
+          <button id="markerSaveBtn" class="primary">Save Marker</button>
+          <button id="markerCancelBtn">Cancel</button>
+        </div>
       </div>
 
       <div id="message" class="message" role="status" aria-live="polite"></div>

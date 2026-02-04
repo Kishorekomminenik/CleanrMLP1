@@ -15,18 +15,17 @@ function pickSupportedMimeType() {
 }
 
 export class TabRecorder {
-  constructor() {
+  constructor(store) {
+    this.store = store;
     this.mediaRecorder = null;
     this.stream = null;
-    this.chunks = [];
     this.state = "idle";
   }
 
-  async start(_tabId) {
+  async start() {
     if (this.state !== "idle") {
       throw new Error("Recorder is already running.");
     }
-    this.chunks = [];
     const stream = await new Promise((resolve, reject) => {
       chrome.tabCapture.capture({ audio: true, video: true }, (captured) => {
         if (chrome.runtime.lastError || !captured) {
@@ -46,7 +45,7 @@ export class TabRecorder {
     // Collect chunks in memory for export.
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
-        this.chunks.push(event.data);
+        this.store.addVideoChunk(event.data);
       }
     };
     recorder.onerror = (event) => {
@@ -55,7 +54,7 @@ export class TabRecorder {
     recorder.start(1000);
     this.mediaRecorder = recorder;
     this.state = "recording";
-    return tabId;
+    this.store.setVideoMimeType(recorder.mimeType || "video/webm");
   }
 
   pause() {
@@ -87,8 +86,9 @@ export class TabRecorder {
     return new Promise((resolve) => {
       const finalize = () => {
         const mimeType = recorder?.mimeType || "video/webm";
-        const blob = new Blob(this.chunks, { type: mimeType });
-        this.chunks = [];
+        const chunks = this.store.consumeVideoChunks();
+        const blob = new Blob(chunks, { type: mimeType });
+        this.store.setVideoBlob(blob, mimeType);
         if (stream) {
           for (const track of stream.getTracks()) {
             track.stop();
@@ -108,7 +108,6 @@ export class TabRecorder {
   }
 
   clear() {
-    this.chunks = [];
     this.mediaRecorder = null;
     this.stream = null;
     this.state = "idle";

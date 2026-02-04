@@ -10,9 +10,29 @@ h1 {
   margin: 0 0 8px;
 }
 
-.status {
+.mode {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.mode label {
+  font-weight: 600;
+}
+
+.mode select {
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #cbd5f5;
+}
+
+.status-panel {
   font-weight: 600;
   margin-bottom: 8px;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
 }
 
 .counters {
@@ -53,6 +73,29 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.marker-input {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.marker-input input {
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #cbd5f5;
+  font-size: 12px;
+}
+
+.marker-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.hidden {
+  display: none;
+}
+
 .message {
   margin-top: 10px;
   font-size: 12px;
@@ -62,4 +105,8 @@ button:disabled {
 
 .message.error {
   color: #b91c1c;
+}
+
+.message.warning {
+  color: #b45309;
 }

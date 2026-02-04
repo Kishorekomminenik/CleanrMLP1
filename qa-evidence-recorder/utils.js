@@ -44,6 +44,57 @@ export function padNumber(value, length = 3) {
   return String(value).padStart(length, "0");
 }
 
+export function formatDurationMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "00:00";
+  }
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
+    2,
+    "0"
+  )}`;
+}
+
+export function formatTimestampForFilename(value = new Date()) {
+  const date = typeof value === "string" ? new Date(value) : value;
+  const pad = (num) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(
+    date.getDate()
+  )}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+export function isRestrictedUrl(url) {
+  if (!url || typeof url !== "string") {
+    return true;
+  }
+  const blockedPrefixes = [
+    "chrome://",
+    "chrome-extension://",
+    "chrome-devtools://",
+    "edge://",
+    "about:",
+    "view-source:"
+  ];
+  if (blockedPrefixes.some((prefix) => url.startsWith(prefix))) {
+    return true;
+  }
+  try {
+    const parsed = new URL(url);
+    if (
+      (parsed.hostname === "chrome.google.com" &&
+        parsed.pathname.startsWith("/webstore")) ||
+      parsed.hostname === "chromewebstore.google.com"
+    ) {
+      return true;
+    }
+  } catch (error) {
+    return true;
+  }
+  return false;
+}
+
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   return new Promise((resolve, reject) => {
