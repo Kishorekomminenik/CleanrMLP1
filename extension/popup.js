@@ -367,10 +367,11 @@ async function handleDownload() {
     entries: [],
   };
   zip.file("network_logs.json", JSON.stringify(networkLogs, null, 2));
-  zip.file(
-    "console_logs.json",
-    JSON.stringify(response.data.consoleLogs || [], null, 2)
-  );
+  const consoleLogs = response.data.consoleLogs || {
+    version: "1.0",
+    entries: [],
+  };
+  zip.file("console_logs.json", JSON.stringify(consoleLogs, null, 2));
 
   zip.file("session.json", JSON.stringify(response.data.session, null, 2));
 

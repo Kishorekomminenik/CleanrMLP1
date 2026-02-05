@@ -14,18 +14,28 @@ function getPageScriptContent() {
     rejectionHandler: null
   };
 
-  function safeStringify(value) {
-    if (value instanceof Error) {
-      return value.name + ": " + value.message + "\\n" + (value.stack || "");
-    }
-    if (typeof value === "string") {
+  const MAX_ARG_CHARS = 2000;
+  const TRUNC_SUFFIX = "...[truncated]";
+
+  function truncateString(value) {
+    if (value.length <= MAX_ARG_CHARS) {
       return value;
     }
+    return value.slice(0, MAX_ARG_CHARS) + TRUNC_SUFFIX;
+  }
+
+  function safeStringify(value) {
+    if (value instanceof Error) {
+      return value.name + ": " + value.message;
+    }
+    if (typeof value === "string") {
+      return truncateString(value);
+    }
     if (typeof value === "number" || typeof value === "boolean") {
-      return String(value);
+      return truncateString(String(value));
     }
     if (value === null || value === undefined) {
-      return String(value);
+      return truncateString(String(value));
     }
     try {
       const cache = [];
@@ -38,10 +48,19 @@ function getPageScriptContent() {
         }
         return val;
       });
-      return result;
+      return truncateString(result);
     } catch (error) {
-      return String(value);
+      return truncateString(String(value));
     }
+  }
+
+  function extractStack(args) {
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] instanceof Error && args[i].stack) {
+        return String(args[i].stack);
+      }
+    }
+    return null;
   }
 
   function formatArgs(args) {
@@ -70,63 +89,121 @@ function getPageScriptContent() {
     state.active = true;
     state.originalConsole = {
       log: console.log,
+      info: console.info,
       warn: console.warn,
-      error: console.error
+      error: console.error,
+      debug: console.debug
     };
 
     console.log = function () {
+      const args = formatArgs(arguments);
       postLog({
         level: "log",
-        message: formatArgs(arguments),
+        message: args.join(" "),
+        args: args,
         timestamp: new Date().toISOString(),
-        url: window.location.href
+        source: "console",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: extractStack(arguments)
       });
       state.originalConsole.log.apply(console, arguments);
     };
 
+    console.info = function () {
+      const args = formatArgs(arguments);
+      postLog({
+        level: "info",
+        message: args.join(" "),
+        args: args,
+        timestamp: new Date().toISOString(),
+        source: "console",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: extractStack(arguments)
+      });
+      state.originalConsole.info.apply(console, arguments);
+    };
+
     console.warn = function () {
+      const args = formatArgs(arguments);
       postLog({
         level: "warn",
-        message: formatArgs(arguments),
+        message: args.join(" "),
+        args: args,
         timestamp: new Date().toISOString(),
-        url: window.location.href
+        source: "console",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: extractStack(arguments)
       });
       state.originalConsole.warn.apply(console, arguments);
     };
 
     console.error = function () {
+      const args = formatArgs(arguments);
       postLog({
         level: "error",
-        message: formatArgs(arguments),
+        message: args.join(" "),
+        args: args,
         timestamp: new Date().toISOString(),
-        url: window.location.href
+        source: "console",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: extractStack(arguments)
       });
       state.originalConsole.error.apply(console, arguments);
+    };
+
+    console.debug = function () {
+      const args = formatArgs(arguments);
+      postLog({
+        level: "debug",
+        message: args.join(" "),
+        args: args,
+        timestamp: new Date().toISOString(),
+        source: "console",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: extractStack(arguments)
+      });
+      state.originalConsole.debug.apply(console, arguments);
     };
 
     state.errorHandler = function (event) {
       postLog({
         level: "error",
-        kind: "window.onerror",
-        message: [
-          safeStringify(event.message),
-          "source: " + safeStringify(event.filename),
-          "line: " + safeStringify(event.lineno),
-          "column: " + safeStringify(event.colno)
-        ],
+        message: safeStringify(event.message),
+        args: [safeStringify(event.message)],
         timestamp: new Date().toISOString(),
-        url: window.location.href
+        source: "window.onerror",
+        url: event.filename || window.location.href,
+        line: typeof event.lineno === "number" ? event.lineno : null,
+        column: typeof event.colno === "number" ? event.colno : null,
+        stack: event.error && event.error.stack ? String(event.error.stack) : null
       });
     };
     window.addEventListener("error", state.errorHandler);
 
     state.rejectionHandler = function (event) {
+      const reasonString = safeStringify(event.reason);
+      const reasonStack =
+        event.reason && event.reason.stack ? String(event.reason.stack) : null;
       postLog({
         level: "error",
-        kind: "unhandledrejection",
-        message: [safeStringify(event.reason)],
+        message: reasonString,
+        args: [reasonString],
         timestamp: new Date().toISOString(),
-        url: window.location.href
+        source: "unhandledrejection",
+        url: window.location.href,
+        line: null,
+        column: null,
+        stack: reasonStack
       });
     };
     window.addEventListener("unhandledrejection", state.rejectionHandler);
@@ -139,8 +216,10 @@ function getPageScriptContent() {
     state.active = false;
     if (state.originalConsole) {
       console.log = state.originalConsole.log;
+      console.info = state.originalConsole.info;
       console.warn = state.originalConsole.warn;
       console.error = state.originalConsole.error;
+      console.debug = state.originalConsole.debug;
     }
     if (state.errorHandler) {
       window.removeEventListener("error", state.errorHandler);

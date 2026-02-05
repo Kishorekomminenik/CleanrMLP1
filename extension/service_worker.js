@@ -67,13 +67,9 @@ function updateSessionCounts() {
   }
   session.counts.network_requests = Object.keys(state.network.requests).length;
   session.counts.console_entries = state.console.logs.length;
-  const consoleErrors = state.console.logs.filter(
+  session.counts.errors = state.console.logs.filter(
     (entry) => entry.level === "error"
   ).length;
-  const diagnosticErrors = session.diagnostics.filter(
-    (entry) => entry.level === "error"
-  ).length;
-  session.counts.errors = consoleErrors + diagnosticErrors;
 }
 
 function addDiagnostic(level, message, context) {
@@ -729,7 +725,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               version: "1.0",
               entries: buildNetworkExportEntries(),
             },
-            consoleLogs: state.console.logs,
+            consoleLogs: {
+              version: "1.0",
+              entries: state.console.logs,
+            },
             session,
           },
         };
