@@ -522,6 +522,11 @@ async function startNetworkCapture() {
         "Network capture needs Debugger permission. Enable it when prompted and try again.",
         "error"
       );
+    } else {
+      setStatusMessage(
+        "Unable to attach the debugger to this tab. Try a regular website tab and retry.",
+        "error"
+      );
     }
     throw error;
   }
