@@ -83,6 +83,16 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mimeType });
 }
 
+function formatZipTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
 function setMode(mode) {
   currentMode = mode;
   modeControls.forEach((block) => {
@@ -403,7 +413,7 @@ async function handleDownload() {
   zip.file("environment.json", JSON.stringify(environment, null, 2));
 
   const zipBlob = await zip.generateAsync({ type: "blob" });
-  const filename = `evidence_${Date.now()}.zip`;
+  const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
   const url = URL.createObjectURL(zipBlob);
 
   const link = document.createElement("a");

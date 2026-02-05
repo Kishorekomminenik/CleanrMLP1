@@ -1,4 +1,9 @@
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
+const MAX_BODY_BYTES = 2000000;
+const MAX_NETWORK_ENTRIES = 5000;
+const MAX_CONSOLE_ENTRIES = 5000;
+const MAX_CONSOLE_ENTRY_BYTES = 50000;
+const TRUNCATION_SUFFIX = "...[truncated]";
 
 const state = {
   screenshot: {
@@ -16,6 +21,7 @@ const state = {
     active: false,
     tabId: null,
     requests: {},
+    order: [],
     startedAt: null,
     stoppedAt: null,
   },
@@ -39,6 +45,57 @@ let statusMessage = null;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function truncateToBytes(value, maxBytes) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(value);
+  if (encoded.length <= maxBytes) {
+    return value;
+  }
+  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).length;
+  const sliceLength = Math.max(0, maxBytes - suffixBytes);
+  let truncated = "";
+  if (sliceLength > 0) {
+    truncated = new TextDecoder().decode(encoded.slice(0, sliceLength));
+  }
+  return `${truncated}${TRUNCATION_SUFFIX}`;
+}
+
+function isRestrictedUrl(url) {
+  if (!url) {
+    return true;
+  }
+  if (
+    url.startsWith("chrome://") ||
+    url.startsWith("edge://") ||
+    url.startsWith("chrome-extension://")
+  ) {
+    return true;
+  }
+  if (url.startsWith("https://chrome.google.com/webstore")) {
+    return true;
+  }
+  if (url.startsWith("https://microsoftedge.microsoft.com/addons")) {
+    return true;
+  }
+  return false;
+}
+
+function ensureTabIsCapturable(tab) {
+  if (!tab || !tab.id) {
+    throw new Error("No active tab available.");
+  }
+  if (isRestrictedUrl(tab.url)) {
+    setStatusMessage(
+      "Capture is not supported on browser or store pages. Open a regular website tab and try again.",
+      "error"
+    );
+    throw new Error("Capture not supported on this page.");
+  }
 }
 
 function setStatusMessage(message, level = "info") {
@@ -273,7 +330,7 @@ async function ensureOffscreenDocument() {
   const hasDocument = await chrome.offscreen.hasDocument();
   if (!hasDocument) {
     await chrome.offscreen.createDocument({
-      url: "offscreen.html",
+      url: "background/offscreen.html",
       reasons: ["USER_MEDIA"],
       justification: "Record active tab video for QA evidence.",
     });
@@ -282,9 +339,7 @@ async function ensureOffscreenDocument() {
 
 async function captureScreenshot() {
   const tab = await getActiveTab();
-  if (!tab || !tab.id) {
-    throw new Error("No active tab to capture.");
-  }
+  ensureTabIsCapturable(tab);
   ensureSessionForMode("screenshot", tab);
   setSessionState("capturing");
   try {
@@ -305,9 +360,7 @@ async function captureScreenshot() {
 
 async function startRecording() {
   const tab = await getActiveTab();
-  if (!tab || !tab.id) {
-    throw new Error("No active tab to record.");
-  }
+  ensureTabIsCapturable(tab);
 
   ensureSessionForMode("recording", tab);
   setSessionState("capturing");
@@ -385,9 +438,7 @@ async function startNetworkCapture() {
   }
 
   const tab = await getActiveTab();
-  if (!tab || !tab.id) {
-    throw new Error("No active tab to attach debugger.");
-  }
+  ensureTabIsCapturable(tab);
 
   ensureSessionForMode("network_console", tab);
   setSessionState("capturing");
@@ -395,15 +446,23 @@ async function startNetworkCapture() {
     await attachDebugger(tab.id);
     await sendDebuggerCommand(tab.id, "Network.enable");
   } catch (error) {
+    const message = error.message || String(error);
     addDiagnostic("error", "Debugger attach failed.", {
-      error: error.message || String(error),
+      error: message,
     });
+    if (message.toLowerCase().includes("permission")) {
+      setStatusMessage(
+        "Network capture needs Debugger permission. Enable it when prompted and try again.",
+        "error"
+      );
+    }
     throw error;
   }
 
   state.network.active = true;
   state.network.tabId = tab.id;
   state.network.requests = {};
+  state.network.order = [];
   state.network.startedAt = nowIso();
   state.network.stoppedAt = null;
 
@@ -456,6 +515,13 @@ function updateRequestEntry(requestId, updates) {
       responseBody: null,
       responseBodyBase64: false,
     };
+    state.network.order.push(requestId);
+    if (state.network.order.length > MAX_NETWORK_ENTRIES) {
+      const oldest = state.network.order.shift();
+      if (oldest) {
+        delete state.network.requests[oldest];
+      }
+    }
   }
   Object.assign(state.network.requests[requestId], updates);
   if (isNew) {
@@ -540,6 +606,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         });
       })
       .catch(() => {
+        addDiagnostic("warning", "Response body fetch failed.", {
+          requestId: params.requestId,
+        });
         updateRequestEntry(params.requestId, {
           responseBody: null,
           responseBodyBase64: false,
@@ -601,6 +670,7 @@ async function resetSession() {
   state.network.active = false;
   state.network.tabId = null;
   state.network.requests = {};
+  state.network.order = [];
   state.network.startedAt = null;
   state.network.stoppedAt = null;
 
@@ -614,18 +684,80 @@ async function resetSession() {
   clearStatusMessage();
 }
 
+function getByteLength(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+function sanitizeConsoleEntry(entry) {
+  const sanitized = {
+    ...entry,
+    message: typeof entry.message === "string" ? entry.message : "",
+    args: Array.isArray(entry.args)
+      ? entry.args.map((arg) =>
+          typeof arg === "string" ? arg : String(arg)
+        )
+      : [],
+  };
+
+  let size = getByteLength(JSON.stringify(sanitized));
+  if (size <= MAX_CONSOLE_ENTRY_BYTES) {
+    return sanitized;
+  }
+
+  sanitized.message = truncateToBytes(
+    sanitized.message,
+    MAX_CONSOLE_ENTRY_BYTES
+  );
+  size = getByteLength(JSON.stringify(sanitized));
+  if (size <= MAX_CONSOLE_ENTRY_BYTES) {
+    return sanitized;
+  }
+
+  const base = { ...sanitized, args: [] };
+  let baseSize = getByteLength(JSON.stringify(base));
+  if (baseSize >= MAX_CONSOLE_ENTRY_BYTES) {
+    sanitized.args = [];
+    sanitized.message = truncateToBytes(
+      sanitized.message,
+      MAX_CONSOLE_ENTRY_BYTES
+    );
+    return sanitized;
+  }
+
+  const trimmedArgs = [];
+  for (let i = 0; i < sanitized.args.length; i += 1) {
+    const remaining = MAX_CONSOLE_ENTRY_BYTES - baseSize;
+    if (remaining <= 0) {
+      break;
+    }
+    const argValue = truncateToBytes(sanitized.args[i], remaining);
+    trimmedArgs.push(argValue);
+    const nextSize = getByteLength(
+      JSON.stringify({ ...base, args: trimmedArgs })
+    );
+    if (nextSize > MAX_CONSOLE_ENTRY_BYTES) {
+      trimmedArgs.pop();
+      break;
+    }
+    baseSize = nextSize;
+  }
+  sanitized.args = trimmedArgs;
+  return sanitized;
+}
+
 function decodeResponseBody(entry) {
   if (!entry.responseBody) {
     return null;
   }
-  if (!entry.responseBodyBase64) {
-    return entry.responseBody;
+  let body = entry.responseBody;
+  if (entry.responseBodyBase64) {
+    try {
+      body = atob(entry.responseBody);
+    } catch (error) {
+      body = entry.responseBody;
+    }
   }
-  try {
-    return atob(entry.responseBody);
-  } catch (error) {
-    return entry.responseBody;
-  }
+  return truncateToBytes(body, MAX_BODY_BYTES);
 }
 
 function buildNetworkExportEntries() {
@@ -667,9 +799,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const lock = checkStartMode("screenshot");
           if (!lock.allowed) {
             if (lock.reason === "already_running") {
-              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+              return {
+                ok: true,
+                message: lock.message,
+                state: getStatusSnapshot(),
+              };
             }
-            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+            return {
+              ok: false,
+              error: lock.message,
+              state: getStatusSnapshot(),
+            };
           }
         }
         await captureScreenshot();
@@ -679,9 +819,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const lock = checkStartMode("recording");
           if (!lock.allowed) {
             if (lock.reason === "already_running") {
-              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+              return {
+                ok: true,
+                message: lock.message,
+                state: getStatusSnapshot(),
+              };
             }
-            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+            return {
+              ok: false,
+              error: lock.message,
+              state: getStatusSnapshot(),
+            };
           }
         }
         await startRecording();
@@ -700,9 +848,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const lock = checkStartMode("network_console");
           if (!lock.allowed) {
             if (lock.reason === "already_running") {
-              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+              return {
+                ok: true,
+                message: lock.message,
+                state: getStatusSnapshot(),
+              };
             }
-            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+            return {
+              ok: false,
+              error: lock.message,
+              state: getStatusSnapshot(),
+            };
           }
         }
         await startNetworkCapture();
@@ -738,10 +894,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sender.tab &&
           sender.tab.id === state.console.tabId
         ) {
-          state.console.logs.push({
+          const sanitized = sanitizeConsoleEntry({
             ...message.payload,
             tabId: sender.tab.id,
           });
+          state.console.logs.push(sanitized);
+          if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
+            state.console.logs.shift();
+          }
           updateSessionCounts();
         }
         return { ok: true };

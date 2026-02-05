@@ -5,7 +5,12 @@
   "description": "Capture screenshots, tab recordings, and network/console logs for QA evidence bundles.",
   "action": {
     "default_title": "QA Evidence Recorder",
-    "default_popup": "popup.html"
+    "default_popup": "popup/popup.html"
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
   },
   "permissions": [
     "activeTab",
@@ -16,7 +21,7 @@
     "offscreen"
   ],
   "background": {
-    "service_worker": "service_worker.js"
+    "service_worker": "background/service_worker.js"
   },
   "content_scripts": [
     {
@@ -24,7 +29,7 @@
         "<all_urls>"
       ],
       "js": [
-        "content_script.js"
+        "content/content_script.js"
       ],
       "run_at": "document_start"
     }
