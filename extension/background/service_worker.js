@@ -236,6 +236,7 @@ function getArtifactsSnapshot() {
 
 function getStatusSnapshot() {
   updateSessionCounts();
+  const artifacts = getArtifactsSnapshot();
   return {
     screenshotCapturedAt: state.screenshot.capturedAt,
     recordingStatus: state.recording.status,
@@ -244,7 +245,8 @@ function getStatusSnapshot() {
     networkCount: Object.keys(state.network.requests).length,
     consoleCount: state.console.logs.length,
     session,
-    artifacts: getArtifactsSnapshot(),
+    artifacts,
+    hasArtifacts: artifacts.hasAnyArtifacts,
     statusMessage,
   };
 }
@@ -789,6 +791,44 @@ function buildNetworkExportEntries() {
   }));
 }
 
+function normalizeDiagnosticLevel(level) {
+  if (level === "warning") {
+    return "warn";
+  }
+  if (level === "info" || level === "warn" || level === "error") {
+    return level;
+  }
+  return "info";
+}
+
+function buildSessionExport() {
+  if (!session) {
+    return null;
+  }
+  return {
+    session_id: session.session_id,
+    created_at: session.created_at,
+    ended_at: session.ended_at || null,
+    mode: session.mode,
+    state: session.state,
+    active_tab: {
+      tab_id: session.active_tab.tab_id,
+      url: session.active_tab.url,
+      title: session.active_tab.title,
+    },
+    counts: {
+      network_requests: session.counts.network_requests,
+      console_entries: session.counts.console_entries,
+      errors: session.counts.errors,
+    },
+    diagnostics: session.diagnostics.map((entry) => ({
+      timestamp: entry.timestamp,
+      level: normalizeDiagnosticLevel(entry.level),
+      message: entry.message,
+    })),
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handle = async () => {
     switch (message.type) {
@@ -885,7 +925,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               version: "1.0",
               entries: state.console.logs,
             },
-            session,
+            session: buildSessionExport(),
           },
         };
       case "CONSOLE_LOG": {
