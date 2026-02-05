@@ -1,3 +1,9 @@
+try {
+  importScripts(chrome.runtime.getURL("utils/redact.js"));
+} catch (error) {
+  // Redaction helper is optional; export will fall back to raw values.
+}
+
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
@@ -823,11 +829,14 @@ function decodeResponseBody(entry) {
 
 function buildNetworkExportEntries() {
   return Object.values(state.network.requests).map((entry) => ({
-    request_id: entry.id || "",
+    request_id: entry.id || null,
     timestamp: entry.timestampIso || nowIso(),
-    url: entry.url || "",
-    method: entry.method || "",
-    request_headers: entry.requestHeaders || {},
+    url: entry.url || null,
+    method: entry.method || null,
+    request_headers:
+      entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
+        ? entry.requestHeaders
+        : null,
     request_post_data:
       typeof entry.requestBody === "string" ? entry.requestBody : null,
     response_status:
@@ -972,6 +981,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         updateSessionCounts();
         {
           const environment = await buildEnvironment(message);
+          const redactionResult = await chrome.storage.local.get({
+            redactionEnabled: true,
+          });
+          const redactionEnabled = redactionResult.redactionEnabled !== false;
+          const networkEntries = buildNetworkExportEntries();
+          const redactedNetworkEntries =
+            redactionEnabled && globalThis.RedactUtils
+              ? networkEntries.map((entry) =>
+                  globalThis.RedactUtils.redactNetworkEntry(entry)
+                )
+              : networkEntries;
           return {
             ok: true,
             data: {
@@ -980,7 +1000,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               recordingMimeType: state.recording.mimeType,
               networkLogs: {
                 version: "1.0",
-                entries: buildNetworkExportEntries(),
+                entries: redactedNetworkEntries,
               },
               consoleLogs: {
                 version: "1.0",

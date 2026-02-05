@@ -94,7 +94,14 @@
     };
   }
 
-  window.RedactUtils = {
+  const root =
+    typeof window !== "undefined"
+      ? window
+      : typeof self !== "undefined"
+        ? self
+        : globalThis;
+
+  root.RedactUtils = {
     redactHeaders,
     redactJsonString,
     redactNetworkEntry,
