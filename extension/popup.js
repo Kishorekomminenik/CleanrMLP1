@@ -362,10 +362,11 @@ async function handleDownload() {
     );
   }
 
-  zip.file(
-    "network_logs.json",
-    JSON.stringify(response.data.networkLogs || [], null, 2)
-  );
+  const networkLogs = response.data.networkLogs || {
+    version: "1.0",
+    entries: [],
+  };
+  zip.file("network_logs.json", JSON.stringify(networkLogs, null, 2));
   zip.file(
     "console_logs.json",
     JSON.stringify(response.data.consoleLogs || [], null, 2)

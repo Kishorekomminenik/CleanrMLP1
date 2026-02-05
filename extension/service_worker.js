@@ -454,8 +454,11 @@ function updateRequestEntry(requestId, updates) {
   if (isNew) {
     state.network.requests[requestId] = {
       id: requestId,
+      timestampIso: null,
       requestHeaders: {},
       responseHeaders: {},
+      responseBody: null,
+      responseBodyBase64: false,
     };
   }
   Object.assign(state.network.requests[requestId], updates);
@@ -476,6 +479,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       requestHeaders: normalizeHeaders(params.request.headers),
       requestBody: params.request.postData,
       requestTime: params.timestamp,
+      timestampIso: nowIso(),
       initiator: params.initiator,
     });
   }
@@ -499,6 +503,14 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       timing: params.response.timing,
       protocol: params.response.protocol,
       remoteIPAddress: params.response.remoteIPAddress,
+      fromDiskCache:
+        typeof params.response.fromDiskCache === "boolean"
+          ? params.response.fromDiskCache
+          : null,
+      fromServiceWorker:
+        typeof params.response.fromServiceWorker === "boolean"
+          ? params.response.fromServiceWorker
+          : null,
     });
   }
 
@@ -606,6 +618,49 @@ async function resetSession() {
   clearStatusMessage();
 }
 
+function decodeResponseBody(entry) {
+  if (!entry.responseBody) {
+    return null;
+  }
+  if (!entry.responseBodyBase64) {
+    return entry.responseBody;
+  }
+  try {
+    return atob(entry.responseBody);
+  } catch (error) {
+    return entry.responseBody;
+  }
+}
+
+function buildNetworkExportEntries() {
+  return Object.values(state.network.requests).map((entry) => ({
+    request_id: entry.id || "",
+    timestamp: entry.timestampIso || nowIso(),
+    url: entry.url || "",
+    method: entry.method || "",
+    request_headers: entry.requestHeaders || {},
+    request_post_data:
+      typeof entry.requestBody === "string" ? entry.requestBody : null,
+    response_status:
+      typeof entry.status === "number" ? entry.status : null,
+    response_status_text: entry.statusText || null,
+    response_headers:
+      entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0
+        ? entry.responseHeaders
+        : null,
+    response_mime_type: entry.mimeType || null,
+    response_body: decodeResponseBody(entry),
+    timing: entry.timing || null,
+    from_disk_cache:
+      typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
+    from_service_worker:
+      typeof entry.fromServiceWorker === "boolean"
+        ? entry.fromServiceWorker
+        : null,
+    error_text: entry.errorText || null,
+  }));
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handle = async () => {
     switch (message.type) {
@@ -670,7 +725,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             screenshotDataUrl: state.screenshot.dataUrl,
             recordingDataUrl: state.recording.dataUrl,
             recordingMimeType: state.recording.mimeType,
-            networkLogs: Object.values(state.network.requests),
+            networkLogs: {
+              version: "1.0",
+              entries: buildNetworkExportEntries(),
+            },
             consoleLogs: state.console.logs,
             session,
           },
