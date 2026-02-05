@@ -1,4 +1,5 @@
 const statusElements = {
+  message: document.getElementById("status_message"),
   mode: document.getElementById("status_mode"),
   state: document.getElementById("status_state"),
   timer: document.getElementById("status_timer"),
@@ -145,12 +146,13 @@ function applySessionLock(state) {
 
 function applyStatusMessage(state) {
   if (!state.statusMessage || !state.statusMessage.message) {
+    statusElements.message.textContent = "-";
     return;
   }
   const level = state.statusMessage.level;
   const type =
     level === "error" ? "error" : level === "success" ? "success" : "default";
-  setStatus(statusElements.download, state.statusMessage.message, type);
+  setStatus(statusElements.message, state.statusMessage.message, type);
 }
 
 async function showErrorFromResponse(response) {
@@ -165,11 +167,11 @@ async function showErrorFromResponse(response) {
         : level === "success"
           ? "success"
           : "default";
-    setStatus(statusElements.download, statusMessage.message, type);
+    setStatus(statusElements.message, statusMessage.message, type);
     return;
   }
   if (response && response.error) {
-    setStatus(statusElements.download, response.error, "error");
+    setStatus(statusElements.message, response.error, "error");
   }
 }
 
@@ -225,6 +227,8 @@ function updateStatusUI(state) {
 
   if (state.artifacts) {
     buttons.download.disabled = !state.artifacts.hasAnyArtifacts;
+  } else if (typeof state.hasArtifacts === "boolean") {
+    buttons.download.disabled = !state.hasArtifacts;
   }
 }
 
@@ -501,3 +505,4 @@ modeRadios.forEach((radio) => {
 setMode(currentMode);
 loadRedactionSetting();
 refreshStatus();
+setInterval(refreshStatus, 1000);
