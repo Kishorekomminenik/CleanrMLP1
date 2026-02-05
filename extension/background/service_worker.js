@@ -812,6 +812,20 @@ function sanitizeConsoleEntry(entry) {
   return sanitized;
 }
 
+function buildConsoleExportEntries() {
+  return state.console.logs.map((entry) => ({
+    timestamp: entry.timestamp || nowIso(),
+    level: entry.level || "log",
+    message: typeof entry.message === "string" ? entry.message : "",
+    args: Array.isArray(entry.args) ? entry.args : [],
+    source: entry.source || "console",
+    url: entry.url || null,
+    line: typeof entry.line === "number" ? entry.line : null,
+    column: typeof entry.column === "number" ? entry.column : null,
+    stack: entry.stack || null,
+  }));
+}
+
 function decodeResponseBody(entry) {
   if (!entry.responseBody) {
     return null;
@@ -986,12 +1000,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           const redactionEnabled = redactionResult.redactionEnabled !== false;
           const networkEntries = buildNetworkExportEntries();
+          const consoleEntries = buildConsoleExportEntries();
           const redactedNetworkEntries =
             redactionEnabled && globalThis.RedactUtils
               ? networkEntries.map((entry) =>
                   globalThis.RedactUtils.redactNetworkEntry(entry)
                 )
               : networkEntries;
+          const redactedConsoleEntries =
+            redactionEnabled && globalThis.RedactUtils
+              ? consoleEntries.map((entry) =>
+                  globalThis.RedactUtils.redactConsoleEntry(entry)
+                )
+              : consoleEntries;
           return {
             ok: true,
             data: {
@@ -1004,7 +1025,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               },
               consoleLogs: {
                 version: "1.0",
-                entries: state.console.logs,
+                entries: redactedConsoleEntries,
               },
               session: buildSessionExport(),
               environment,

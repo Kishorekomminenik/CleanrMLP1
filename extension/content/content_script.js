@@ -24,10 +24,47 @@ function getPageScriptContent() {
     return value.slice(0, MAX_ARG_CHARS) + TRUNC_SUFFIX;
   }
 
-  function safeStringify(value) {
-    if (value instanceof Error) {
-      return value.name + ": " + value.message;
+  function toSerializable(value, depth, seen) {
+    if (value === null || value === undefined) {
+      return value;
     }
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: value.message,
+        stack: value.stack || null
+      };
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "function") {
+      return "[Function]";
+    }
+    if (typeof value !== "object") {
+      return String(value);
+    }
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    if (depth <= 0) {
+      return "[MaxDepth]";
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      const arr = value.map((item) => toSerializable(item, depth - 1, seen));
+      seen.delete(value);
+      return arr;
+    }
+    const result = {};
+    Object.keys(value).forEach((key) => {
+      result[key] = toSerializable(value[key], depth - 1, seen);
+    });
+    seen.delete(value);
+    return result;
+  }
+
+  function safeStringify(value) {
     if (typeof value === "string") {
       return truncateString(value);
     }
@@ -38,16 +75,8 @@ function getPageScriptContent() {
       return truncateString(String(value));
     }
     try {
-      const cache = [];
-      const result = JSON.stringify(value, function (key, val) {
-        if (typeof val === "object" && val !== null) {
-          if (cache.indexOf(val) !== -1) {
-            return "[Circular]";
-          }
-          cache.push(val);
-        }
-        return val;
-      });
+      const serializable = toSerializable(value, 4, new WeakSet());
+      const result = JSON.stringify(serializable);
       return truncateString(result);
     } catch (error) {
       return truncateString(String(value));
