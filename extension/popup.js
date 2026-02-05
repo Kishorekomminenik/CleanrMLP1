@@ -227,6 +227,10 @@ async function handleDownload() {
     setStatus(statusElements.download, response.error, "error");
     return;
   }
+  if (!response.data.session) {
+    setStatus(statusElements.download, "No session to export yet.", "error");
+    return;
+  }
 
   const zip = new JSZip();
   if (response.data.screenshotDataUrl) {
@@ -250,6 +254,8 @@ async function handleDownload() {
     "console_logs.json",
     JSON.stringify(response.data.consoleLogs || [], null, 2)
   );
+
+  zip.file("session.json", JSON.stringify(response.data.session, null, 2));
 
   const environment = await buildEnvironment();
   zip.file("environment.json", JSON.stringify(environment, null, 2));
