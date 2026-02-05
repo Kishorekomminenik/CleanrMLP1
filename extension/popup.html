@@ -11,37 +11,94 @@
       <header>
         <h1>QA Evidence Recorder</h1>
         <p class="subtitle">Capture evidence for bug reports.</p>
+        <p class="warning">
+          Active-tab only. Capture starts only when you click Start.
+        </p>
       </header>
 
       <section class="card">
-        <h2>Screenshot</h2>
-        <button id="captureScreenshot" class="primary">Capture Screenshot</button>
-        <p id="screenshotStatus" class="status">Not captured.</p>
+        <h2>Mode Selector</h2>
+        <div class="radio-group">
+          <label>
+            <input
+              type="radio"
+              name="captureMode"
+              id="mode_screenshot"
+              value="screenshot"
+              checked
+            />
+            Screenshot
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="captureMode"
+              id="mode_recording"
+              value="recording"
+            />
+            Recording
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="captureMode"
+              id="mode_network"
+              value="network_console"
+            />
+            Network + Console
+          </label>
+        </div>
       </section>
 
       <section class="card">
-        <h2>Recording</h2>
-        <div class="button-row">
-          <button id="recordStart" class="primary">Start</button>
-          <button id="recordPause" disabled>Pause</button>
-          <button id="recordResume" disabled>Resume</button>
-          <button id="recordStop" disabled>Stop</button>
+        <h2>Controls</h2>
+        <div class="mode-controls" data-mode="screenshot">
+          <button id="btn_take_screenshot" class="primary">Capture</button>
         </div>
-        <p id="recordStatus" class="status">Idle.</p>
+        <div class="mode-controls" data-mode="recording">
+          <div class="button-row">
+            <button id="btn_start_recording" class="primary">Start</button>
+            <button id="btn_pause_recording" disabled>Pause</button>
+            <button id="btn_resume_recording" disabled>Resume</button>
+            <button id="btn_stop_recording" disabled>Stop</button>
+          </div>
+        </div>
+        <div class="mode-controls" data-mode="network_console">
+          <div class="button-row">
+            <button id="btn_start_capture" class="primary">Start</button>
+            <button id="btn_stop_capture" disabled>Stop</button>
+          </div>
+        </div>
       </section>
 
       <section class="card">
-        <h2>Network + Console</h2>
-        <div class="button-row">
-          <button id="networkStart" class="primary">Start Capture</button>
-          <button id="networkStop" disabled>Stop Capture</button>
+        <h2>Session Status</h2>
+        <div class="status-row">
+          <span class="label">Mode</span>
+          <span id="status_mode">-</span>
         </div>
-        <p id="networkStatus" class="status">Not capturing.</p>
+        <div class="status-row">
+          <span class="label">State</span>
+          <span id="status_state">idle</span>
+        </div>
+        <div class="status-row">
+          <span class="label">Elapsed</span>
+          <span id="status_timer">00:00</span>
+        </div>
+        <div class="status-row">
+          <span class="label">Counts</span>
+          <span id="status_counts">0 requests, 0 logs, 0 errors</span>
+        </div>
       </section>
 
       <section class="card">
         <h2>Export</h2>
-        <button id="downloadEvidence" class="primary">Download Evidence</button>
+        <div class="button-row">
+          <button id="btn_download_zip" class="primary">
+            Download Evidence ZIP
+          </button>
+          <button id="btn_reset_session">Reset Session</button>
+        </div>
         <p id="downloadStatus" class="status">Ready.</p>
       </section>
     </div>

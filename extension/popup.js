@@ -1,20 +1,28 @@
 const statusElements = {
-  screenshot: document.getElementById("screenshotStatus"),
-  recording: document.getElementById("recordStatus"),
-  network: document.getElementById("networkStatus"),
+  mode: document.getElementById("status_mode"),
+  state: document.getElementById("status_state"),
+  timer: document.getElementById("status_timer"),
+  counts: document.getElementById("status_counts"),
   download: document.getElementById("downloadStatus"),
 };
 
 const buttons = {
-  screenshot: document.getElementById("captureScreenshot"),
-  recordStart: document.getElementById("recordStart"),
-  recordPause: document.getElementById("recordPause"),
-  recordResume: document.getElementById("recordResume"),
-  recordStop: document.getElementById("recordStop"),
-  networkStart: document.getElementById("networkStart"),
-  networkStop: document.getElementById("networkStop"),
-  download: document.getElementById("downloadEvidence"),
+  screenshot: document.getElementById("btn_take_screenshot"),
+  recordStart: document.getElementById("btn_start_recording"),
+  recordPause: document.getElementById("btn_pause_recording"),
+  recordResume: document.getElementById("btn_resume_recording"),
+  recordStop: document.getElementById("btn_stop_recording"),
+  networkStart: document.getElementById("btn_start_capture"),
+  networkStop: document.getElementById("btn_stop_capture"),
+  download: document.getElementById("btn_download_zip"),
+  reset: document.getElementById("btn_reset_session"),
 };
+
+const modeRadios = Array.from(
+  document.querySelectorAll('input[name="captureMode"]')
+);
+const modeControls = Array.from(document.querySelectorAll(".mode-controls"));
+let currentMode = "screenshot";
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -63,6 +71,14 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type: mimeType });
 }
 
+function setMode(mode) {
+  currentMode = mode;
+  modeControls.forEach((block) => {
+    const isActive = block.dataset.mode === mode;
+    block.classList.toggle("active", isActive);
+  });
+}
+
 function setRecordingButtons(state) {
   const status = state.recordingStatus;
   buttons.recordStart.disabled = status === "recording" || status === "paused";
@@ -94,6 +110,11 @@ function applySessionLock(state) {
   if (mode !== "network_console") {
     buttons.networkStart.disabled = true;
   }
+  modeRadios.forEach((radio) => {
+    if (radio.value !== mode) {
+      radio.disabled = true;
+    }
+  });
 }
 
 function applyStatusMessage(state) {
@@ -106,36 +127,59 @@ function applyStatusMessage(state) {
   setStatus(statusElements.download, state.statusMessage.message, type);
 }
 
+function formatElapsed(startIso, endIso) {
+  if (!startIso) {
+    return "00:00";
+  }
+  const start = new Date(startIso).getTime();
+  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function updateStatusUI(state) {
-  if (state.screenshotCapturedAt) {
-    setStatus(
-      statusElements.screenshot,
-      `Captured at ${state.screenshotCapturedAt}.`,
-      "success"
+  buttons.screenshot.disabled = false;
+  modeRadios.forEach((radio) => {
+    radio.disabled = false;
+  });
+
+  if (state.session && state.session.mode) {
+    const matchingRadio = modeRadios.find(
+      (radio) => radio.value === state.session.mode
     );
-  } else {
-    setStatus(statusElements.screenshot, "Not captured.");
+    if (matchingRadio) {
+      matchingRadio.checked = true;
+      setMode(state.session.mode);
+    }
   }
 
-  const recordingText = state.recordingStatus
-    ? `Status: ${state.recordingStatus}.`
-    : "Idle.";
-  setStatus(statusElements.recording, recordingText);
+  const sessionMode = state.session ? state.session.mode : null;
+  const sessionState = state.session ? state.session.state : "idle";
+  const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
+  statusElements.mode.textContent = modeLabel;
+  statusElements.state.textContent = sessionState || "idle";
 
-  if (state.networkActive) {
-    setStatus(
-      statusElements.network,
-      `Capturing (${state.networkCount} requests, ${state.consoleCount} logs).`,
-      "success"
-    );
-  } else {
-    setStatus(statusElements.network, "Not capturing.");
-  }
+  statusElements.timer.textContent = formatElapsed(
+    state.session ? state.session.created_at : null,
+    state.session ? state.session.ended_at : null
+  );
+
+  const counts = state.session ? state.session.counts : null;
+  const requestCount = counts ? counts.network_requests : 0;
+  const logCount = counts ? counts.console_entries : 0;
+  const errorCount = counts ? counts.errors : 0;
+  statusElements.counts.textContent = `${requestCount} requests, ${logCount} logs, ${errorCount} errors`;
 
   setRecordingButtons(state);
   setNetworkButtons(state);
   applySessionLock(state);
   applyStatusMessage(state);
+
+  if (state.artifacts) {
+    buttons.download.disabled = !state.artifacts.hasAnyArtifacts;
+  }
 }
 
 async function refreshStatus() {
@@ -251,6 +295,13 @@ async function handleDownload() {
     setStatus(statusElements.download, statusResponse.error, "error");
     return;
   }
+  if (
+    statusResponse.state.artifacts &&
+    !statusResponse.state.artifacts.hasAnyArtifacts
+  ) {
+    setStatus(statusElements.download, "No artifacts to export.", "error");
+    return;
+  }
 
   if (
     statusResponse.state.recordingStatus === "recording" ||
@@ -318,6 +369,16 @@ async function handleDownload() {
   setStatus(statusElements.download, "Download ready.", "success");
 }
 
+async function handleResetSession() {
+  const response = await sendMessage({ type: "RESET_SESSION" });
+  if (!response.ok) {
+    setStatus(statusElements.download, response.error, "error");
+    return;
+  }
+  setStatus(statusElements.download, "Session reset.", "success");
+  await refreshStatus();
+}
+
 buttons.screenshot.addEventListener("click", handleScreenshot);
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
@@ -326,5 +387,14 @@ buttons.recordStop.addEventListener("click", handleRecordingStop);
 buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
 buttons.download.addEventListener("click", handleDownload);
+buttons.reset.addEventListener("click", handleResetSession);
 
+modeRadios.forEach((radio) => {
+  radio.addEventListener("change", (event) => {
+    const selectedMode = event.target.value;
+    setMode(selectedMode);
+  });
+});
+
+setMode(currentMode);
 refreshStatus();
