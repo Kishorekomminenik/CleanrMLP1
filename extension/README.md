@@ -45,5 +45,6 @@ Redaction is ON by default. Toggle **Redaction ON/OFF** to mask:
 - **storage**: persist redaction toggle.
 
 ## Notes
-- Capture is **active-tab only** and **user-triggered**.
+- Capture is **active-tab only**, **user-triggered**, and **local-only** (no uploads).
+- A content script is present on all URLs but only captures after you start a mode.
 - Chrome/Edge store pages and browser internal pages cannot be captured.
