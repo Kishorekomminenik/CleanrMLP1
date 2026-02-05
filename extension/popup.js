@@ -47,16 +47,26 @@ function sendMessage(message) {
   });
 }
 
+function detectBrowser(userAgent) {
+  if (/Edg\//.test(userAgent)) {
+    return "edge";
+  }
+  if (/Chrome\//.test(userAgent)) {
+    return "chrome";
+  }
+  return "chromium";
+}
+
 function parseBrowserVersion(userAgent) {
   const edgeMatch = userAgent.match(/Edg\/([\d.]+)/);
   if (edgeMatch) {
-    return `Edge ${edgeMatch[1]}`;
+    return edgeMatch[1];
   }
   const chromeMatch = userAgent.match(/Chrome\/([\d.]+)/);
   if (chromeMatch) {
-    return `Chrome ${chromeMatch[1]}`;
+    return chromeMatch[1];
   }
-  return "Unknown";
+  return "unknown";
 }
 
 function dataUrlToBlob(dataUrl) {
@@ -281,11 +291,23 @@ async function handleNetworkStop() {
 async function buildEnvironment() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const userAgent = navigator.userAgent;
+  let platform = "unknown";
+  try {
+    const platformInfo = await chrome.runtime.getPlatformInfo();
+    platform = platformInfo.os || platform;
+  } catch (error) {
+    platform = navigator.platform || platform;
+  }
+
   return {
-    url: tab && tab.url ? tab.url : "",
+    user_agent: userAgent,
+    browser: detectBrowser(userAgent),
+    browser_version: parseBrowserVersion(userAgent),
+    platform,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+    captured_url: tab && tab.url ? tab.url : "",
+    captured_title: tab && tab.title ? tab.title : "",
     timestamp: new Date().toISOString(),
-    userAgent,
-    browserVersion: parseBrowserVersion(userAgent),
   };
 }
 
