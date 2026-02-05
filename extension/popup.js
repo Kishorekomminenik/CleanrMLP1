@@ -23,6 +23,8 @@ const modeRadios = Array.from(
 );
 const modeControls = Array.from(document.querySelectorAll(".mode-controls"));
 let currentMode = "screenshot";
+const redactionToggle = document.getElementById("redactionToggle");
+const redactionStatus = document.getElementById("redactionStatus");
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -348,6 +350,11 @@ async function handleDownload() {
     return;
   }
 
+  const redactionResult = await chrome.storage.local.get({
+    redactionEnabled: true,
+  });
+  const redactionEnabled = redactionResult.redactionEnabled !== false;
+
   const zip = new JSZip();
   if (response.data.screenshotDataUrl) {
     zip.file(
@@ -366,12 +373,29 @@ async function handleDownload() {
     version: "1.0",
     entries: [],
   };
-  zip.file("network_logs.json", JSON.stringify(networkLogs, null, 2));
   const consoleLogs = response.data.consoleLogs || {
     version: "1.0",
     entries: [],
   };
-  zip.file("console_logs.json", JSON.stringify(consoleLogs, null, 2));
+  const redactedNetworkLogs = redactionEnabled && window.RedactUtils
+    ? {
+        version: networkLogs.version,
+        entries: networkLogs.entries.map((entry) =>
+          window.RedactUtils.redactNetworkEntry(entry)
+        ),
+      }
+    : networkLogs;
+  const redactedConsoleLogs = redactionEnabled && window.RedactUtils
+    ? {
+        version: consoleLogs.version,
+        entries: consoleLogs.entries.map((entry) =>
+          window.RedactUtils.redactConsoleEntry(entry)
+        ),
+      }
+    : consoleLogs;
+
+  zip.file("network_logs.json", JSON.stringify(redactedNetworkLogs, null, 2));
+  zip.file("console_logs.json", JSON.stringify(redactedConsoleLogs, null, 2));
 
   zip.file("session.json", JSON.stringify(response.data.session, null, 2));
 
@@ -403,6 +427,13 @@ async function handleResetSession() {
   await refreshStatus();
 }
 
+async function loadRedactionSetting() {
+  const result = await chrome.storage.local.get({ redactionEnabled: true });
+  const enabled = result.redactionEnabled !== false;
+  redactionToggle.checked = enabled;
+  redactionStatus.textContent = enabled ? "ON" : "OFF";
+}
+
 buttons.screenshot.addEventListener("click", handleScreenshot);
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
@@ -412,6 +443,11 @@ buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
 buttons.download.addEventListener("click", handleDownload);
 buttons.reset.addEventListener("click", handleResetSession);
+redactionToggle.addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  await chrome.storage.local.set({ redactionEnabled: enabled });
+  redactionStatus.textContent = enabled ? "ON" : "OFF";
+});
 
 modeRadios.forEach((radio) => {
   radio.addEventListener("change", (event) => {
@@ -421,4 +457,5 @@ modeRadios.forEach((radio) => {
 });
 
 setMode(currentMode);
+loadRedactionSetting();
 refreshStatus();

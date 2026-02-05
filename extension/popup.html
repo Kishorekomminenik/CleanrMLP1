@@ -93,6 +93,13 @@
 
       <section class="card">
         <h2>Export</h2>
+        <div class="toggle-row">
+          <span class="label">Redaction</span>
+          <label class="toggle">
+            <input type="checkbox" id="redactionToggle" />
+            <span id="redactionStatus">ON</span>
+          </label>
+        </div>
         <div class="button-row">
           <button id="btn_download_zip" class="primary">
             Download Evidence ZIP
@@ -104,6 +111,7 @@
     </div>
 
     <script src="lib/jszip.min.js"></script>
+    <script src="utils/redact.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
