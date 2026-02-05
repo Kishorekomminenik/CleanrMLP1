@@ -331,7 +331,7 @@ async function handleNetworkStop() {
   await refreshStatus();
 }
 
-async function buildEnvironment() {
+async function buildEnvironmentFallback() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const userAgent = navigator.userAgent;
   let platform = "unknown";
@@ -381,7 +381,8 @@ async function handleDownload() {
   }
 
   setStatus(statusElements.download, "Preparing ZIP...");
-  const response = await sendMessage({ type: "GET_EXPORT_DATA" });
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+  const response = await sendMessage({ type: "GET_EXPORT_DATA", timezone });
   if (!response.ok) {
     setStatus(statusElements.download, response.error, "error");
     return;
@@ -440,7 +441,7 @@ async function handleDownload() {
 
   zip.file("session.json", JSON.stringify(response.data.session, null, 2));
 
-  const environment = await buildEnvironment();
+  const environment = response.data.environment || await buildEnvironmentFallback();
   zip.file("environment.json", JSON.stringify(environment, null, 2));
 
   const zipBlob = await zip.generateAsync({ type: "blob" });

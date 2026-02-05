@@ -65,6 +65,28 @@ function truncateToBytes(value, maxBytes) {
   return `${truncated}${TRUNCATION_SUFFIX}`;
 }
 
+function detectBrowser(userAgent) {
+  if (/Edg\//.test(userAgent)) {
+    return "edge";
+  }
+  if (/Chrome\//.test(userAgent)) {
+    return "chrome";
+  }
+  return "chromium";
+}
+
+function parseBrowserVersion(userAgent) {
+  const edgeMatch = userAgent.match(/Edg\/([\d.]+)/);
+  if (edgeMatch) {
+    return edgeMatch[1];
+  }
+  const chromeMatch = userAgent.match(/Chrome\/([\d.]+)/);
+  if (chromeMatch) {
+    return chromeMatch[1];
+  }
+  return "unknown";
+}
+
 function isRestrictedUrl(url) {
   if (!url) {
     return true;
@@ -273,6 +295,39 @@ function normalizeHeaders(headers) {
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
+}
+
+async function buildEnvironment(context) {
+  const userAgent = navigator.userAgent || "";
+  let platform = "unknown";
+  try {
+    const platformInfo = await chrome.runtime.getPlatformInfo();
+    platform = platformInfo.os || platform;
+  } catch (error) {
+    platform = "unknown";
+  }
+
+  let timezone = "unknown";
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
+  } catch (error) {
+    timezone = "unknown";
+  }
+  if ((!timezone || timezone === "unknown") && context && context.timezone) {
+    timezone = context.timezone;
+  }
+
+  const tab = session ? session.active_tab : await getActiveTab();
+  return {
+    user_agent: userAgent,
+    browser: detectBrowser(userAgent),
+    browser_version: parseBrowserVersion(userAgent),
+    platform,
+    timezone,
+    captured_url: tab && tab.url ? tab.url : "",
+    captured_title: tab && tab.title ? tab.title : "",
+    timestamp: new Date().toISOString(),
+  };
 }
 
 function sendMessageToTab(tabId, message) {
@@ -915,23 +970,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return { ok: false, error: "No session to export yet." };
         }
         updateSessionCounts();
-        return {
-          ok: true,
-          data: {
-            screenshotDataUrl: state.screenshot.dataUrl,
-            recordingDataUrl: state.recording.dataUrl,
-            recordingMimeType: state.recording.mimeType,
-            networkLogs: {
-              version: "1.0",
-              entries: buildNetworkExportEntries(),
+        {
+          const environment = await buildEnvironment(message);
+          return {
+            ok: true,
+            data: {
+              screenshotDataUrl: state.screenshot.dataUrl,
+              recordingDataUrl: state.recording.dataUrl,
+              recordingMimeType: state.recording.mimeType,
+              networkLogs: {
+                version: "1.0",
+                entries: buildNetworkExportEntries(),
+              },
+              consoleLogs: {
+                version: "1.0",
+                entries: state.console.logs,
+              },
+              session: buildSessionExport(),
+              environment,
             },
-            consoleLogs: {
-              version: "1.0",
-              entries: state.console.logs,
-            },
-            session: buildSessionExport(),
-          },
-        };
+          };
+        }
       case "CONSOLE_LOG": {
         if (
           state.console.active &&
