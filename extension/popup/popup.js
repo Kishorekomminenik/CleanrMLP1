@@ -116,10 +116,14 @@ function setNetworkButtons(state) {
 }
 
 function applySessionLock(state) {
-  if (
-    !state.session ||
-    (state.session.state !== "capturing" && state.session.state !== "paused")
-  ) {
+  const isLocked =
+    state.session &&
+    (state.session.state === "capturing" ||
+      state.session.state === "paused" ||
+      state.recordingStatus === "recording" ||
+      state.recordingStatus === "paused" ||
+      state.networkActive);
+  if (!isLocked) {
     return;
   }
   const mode = state.session.mode;

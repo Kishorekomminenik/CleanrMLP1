@@ -157,7 +157,11 @@ function checkStartMode(mode) {
     return { allowed: true };
   }
   const active =
-    session.state === "capturing" || session.state === "paused";
+    session.state === "capturing" ||
+    session.state === "paused" ||
+    state.recording.status === "recording" ||
+    state.recording.status === "paused" ||
+    state.network.active;
   if (active) {
     if (session.mode === mode) {
       const message = `${describeMode(mode)} capture is already running.`;
