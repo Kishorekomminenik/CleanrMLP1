@@ -77,6 +77,35 @@ function setNetworkButtons(state) {
   buttons.networkStop.disabled = !state.networkActive;
 }
 
+function applySessionLock(state) {
+  if (
+    !state.session ||
+    (state.session.state !== "capturing" && state.session.state !== "paused")
+  ) {
+    return;
+  }
+  const mode = state.session.mode;
+  if (mode !== "screenshot") {
+    buttons.screenshot.disabled = true;
+  }
+  if (mode !== "recording") {
+    buttons.recordStart.disabled = true;
+  }
+  if (mode !== "network_console") {
+    buttons.networkStart.disabled = true;
+  }
+}
+
+function applyStatusMessage(state) {
+  if (!state.statusMessage || !state.statusMessage.message) {
+    return;
+  }
+  const level = state.statusMessage.level;
+  const type =
+    level === "error" ? "error" : level === "success" ? "success" : "default";
+  setStatus(statusElements.download, state.statusMessage.message, type);
+}
+
 function updateStatusUI(state) {
   if (state.screenshotCapturedAt) {
     setStatus(
@@ -105,6 +134,8 @@ function updateStatusUI(state) {
 
   setRecordingButtons(state);
   setNetworkButtons(state);
+  applySessionLock(state);
+  applyStatusMessage(state);
 }
 
 async function refreshStatus() {
@@ -123,7 +154,11 @@ async function handleScreenshot() {
     setStatus(statusElements.download, response.error, "error");
     return;
   }
-  setStatus(statusElements.download, "Screenshot captured.", "success");
+  if (response.message) {
+    setStatus(statusElements.download, response.message);
+  } else {
+    setStatus(statusElements.download, "Screenshot captured.", "success");
+  }
   await refreshStatus();
 }
 
@@ -134,7 +169,11 @@ async function handleRecordingStart() {
     setStatus(statusElements.download, response.error, "error");
     return;
   }
-  setStatus(statusElements.download, "Recording started.", "success");
+  if (response.message) {
+    setStatus(statusElements.download, response.message);
+  } else {
+    setStatus(statusElements.download, "Recording started.", "success");
+  }
   await refreshStatus();
 }
 
@@ -176,7 +215,11 @@ async function handleNetworkStart() {
     setStatus(statusElements.download, response.error, "error");
     return;
   }
-  setStatus(statusElements.download, "Network capture started.", "success");
+  if (response.message) {
+    setStatus(statusElements.download, response.message);
+  } else {
+    setStatus(statusElements.download, "Network capture started.", "success");
+  }
   await refreshStatus();
 }
 

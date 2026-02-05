@@ -28,10 +28,29 @@ const state = {
   },
 };
 
+const MODE_LABELS = {
+  screenshot: "Screenshot",
+  recording: "Recording",
+  network_console: "Network + Console",
+};
+
 let session = null;
+let statusMessage = null;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function setStatusMessage(message, level = "info") {
+  statusMessage = {
+    message,
+    level,
+    timestamp: nowIso(),
+  };
+}
+
+function clearStatusMessage() {
+  statusMessage = null;
 }
 
 function createSessionId() {
@@ -74,6 +93,33 @@ function addDiagnostic(level, message, context) {
     }
   }
   updateSessionCounts();
+}
+
+function describeMode(mode) {
+  return MODE_LABELS[mode] || mode;
+}
+
+function checkStartMode(mode) {
+  if (!session) {
+    return { allowed: true };
+  }
+  const active =
+    session.state === "capturing" || session.state === "paused";
+  if (active) {
+    if (session.mode === mode) {
+      const message = `${describeMode(mode)} capture is already running.`;
+      setStatusMessage(message, "info");
+      return { allowed: false, reason: "already_running", message };
+    }
+    const message = `Another capture (${describeMode(
+      session.mode
+    )}) is active. Stop or reset before starting ${describeMode(mode)}.`;
+    setStatusMessage(message, "error");
+    return { allowed: false, reason: "blocked", message };
+  }
+  const message = "A session already exists. Reset to start a new capture.";
+  setStatusMessage(message, "error");
+  return { allowed: false, reason: "session_exists", message };
 }
 
 function createSession(mode, tab) {
@@ -146,6 +192,7 @@ function getStatusSnapshot() {
     consoleCount: state.console.logs.length,
     session,
     artifacts: getArtifactsSnapshot(),
+    statusMessage,
   };
 }
 
@@ -250,6 +297,7 @@ async function captureScreenshot() {
     state.screenshot.capturedAt = nowIso();
     markSessionStopped();
     updateSessionCounts();
+    clearStatusMessage();
     return dataUrl;
   } catch (error) {
     addDiagnostic("error", "Screenshot capture failed.", {
@@ -284,6 +332,7 @@ async function startRecording() {
     state.recording.capturedAt = null;
     state.recording.mimeType = null;
     state.recording.error = null;
+    clearStatusMessage();
   } catch (error) {
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
@@ -302,6 +351,7 @@ async function pauseRecording() {
   }
   state.recording.status = "paused";
   setSessionState("paused");
+  clearStatusMessage();
 }
 
 async function resumeRecording() {
@@ -314,6 +364,7 @@ async function resumeRecording() {
   }
   state.recording.status = "recording";
   setSessionState("capturing");
+  clearStatusMessage();
 }
 
 async function stopRecording() {
@@ -329,6 +380,7 @@ async function stopRecording() {
   }
   state.recording.status = "stopping";
   markSessionStopped();
+  clearStatusMessage();
 }
 
 async function startNetworkCapture() {
@@ -366,6 +418,7 @@ async function startNetworkCapture() {
   state.console.stoppedAt = null;
 
   sendMessageToTab(tab.id, { type: "START_CONSOLE_CAPTURE" });
+  clearStatusMessage();
 }
 
 async function stopNetworkCapture() {
@@ -393,6 +446,7 @@ async function stopNetworkCapture() {
       });
     }
   }
+  clearStatusMessage();
 }
 
 function updateRequestEntry(requestId, updates) {
@@ -549,6 +603,7 @@ async function resetSession() {
   state.console.stoppedAt = null;
 
   session = null;
+  clearStatusMessage();
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -557,11 +612,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GET_STATUS":
         return { ok: true, state: getStatusSnapshot() };
       case "CAPTURE_SCREENSHOT":
+        {
+          const lock = checkStartMode("screenshot");
+          if (!lock.allowed) {
+            if (lock.reason === "already_running") {
+              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+            }
+            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+          }
+        }
         await captureScreenshot();
-        return { ok: true };
+        return { ok: true, state: getStatusSnapshot() };
       case "RECORDING_START":
+        {
+          const lock = checkStartMode("recording");
+          if (!lock.allowed) {
+            if (lock.reason === "already_running") {
+              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+            }
+            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+          }
+        }
         await startRecording();
-        return { ok: true };
+        return { ok: true, state: getStatusSnapshot() };
       case "RECORDING_PAUSE":
         await pauseRecording();
         return { ok: true };
@@ -572,8 +645,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await stopRecording();
         return { ok: true };
       case "NETWORK_START":
+        {
+          const lock = checkStartMode("network_console");
+          if (!lock.allowed) {
+            if (lock.reason === "already_running") {
+              return { ok: true, message: lock.message, state: getStatusSnapshot() };
+            }
+            return { ok: false, error: lock.message, state: getStatusSnapshot() };
+          }
+        }
         await startNetworkCapture();
-        return { ok: true };
+        return { ok: true, state: getStatusSnapshot() };
       case "NETWORK_STOP":
         await stopNetworkCapture();
         return { ok: true };
