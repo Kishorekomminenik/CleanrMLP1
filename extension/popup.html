@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QA Evidence Recorder</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>QA Evidence Recorder</h1>
+        <p class="subtitle">Capture evidence for bug reports.</p>
+      </header>
+
+      <section class="card">
+        <h2>Screenshot</h2>
+        <button id="captureScreenshot" class="primary">Capture Screenshot</button>
+        <p id="screenshotStatus" class="status">Not captured.</p>
+      </section>
+
+      <section class="card">
+        <h2>Recording</h2>
+        <div class="button-row">
+          <button id="recordStart" class="primary">Start</button>
+          <button id="recordPause" disabled>Pause</button>
+          <button id="recordResume" disabled>Resume</button>
+          <button id="recordStop" disabled>Stop</button>
+        </div>
+        <p id="recordStatus" class="status">Idle.</p>
+      </section>
+
+      <section class="card">
+        <h2>Network + Console</h2>
+        <div class="button-row">
+          <button id="networkStart" class="primary">Start Capture</button>
+          <button id="networkStop" disabled>Stop Capture</button>
+        </div>
+        <p id="networkStatus" class="status">Not capturing.</p>
+      </section>
+
+      <section class="card">
+        <h2>Export</h2>
+        <button id="downloadEvidence" class="primary">Download Evidence</button>
+        <p id="downloadStatus" class="status">Ready.</p>
+      </section>
+    </div>
+
+    <script src="lib/jszip.min.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
