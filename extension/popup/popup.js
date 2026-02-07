@@ -34,7 +34,10 @@ const downloadControls = document.getElementById("download_controls");
 const statusToggle = document.getElementById("status_toggle");
 const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
+const recordingUnavailable = document.getElementById("recordingUnavailable");
+const recordingRadio = document.getElementById("mode_recording");
 let statusUserToggled = false;
+let recordingAvailable = true;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -125,6 +128,13 @@ function setMode(mode) {
 }
 
 function setRecordingButtons(state) {
+  if (!recordingAvailable) {
+    buttons.recordStart.disabled = true;
+    buttons.recordPause.disabled = true;
+    buttons.recordResume.disabled = true;
+    buttons.recordStop.disabled = true;
+    return;
+  }
   const status = state.recordingStatus;
   buttons.recordStart.disabled = status === "recording" || status === "paused";
   buttons.recordPause.disabled = status !== "recording";
@@ -537,6 +547,27 @@ async function loadRedactionSetting() {
   redactionStatus.textContent = enabled ? "ON" : "OFF";
 }
 
+async function loadRecordingAvailability() {
+  const res = await send("GET_RECORDING_CAPABILITY");
+  if (!res.ok || res.isTabCaptureAvailable === false) {
+    recordingAvailable = false;
+    if (recordingRadio) {
+      recordingRadio.disabled = true;
+      if (recordingRadio.checked) {
+        const screenshotRadio = document.getElementById("mode_screenshot");
+        if (screenshotRadio) {
+          screenshotRadio.checked = true;
+          setMode("screenshot");
+        }
+      }
+    }
+    if (recordingUnavailable) {
+      recordingUnavailable.classList.remove("is-hidden");
+    }
+    setRecordingButtons({ recordingStatus: "idle" });
+  }
+}
+
 buttons.screenshot.addEventListener("click", handleScreenshot);
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
@@ -570,5 +601,6 @@ modeRadios.forEach((radio) => {
 
 setMode(currentMode);
 loadRedactionSetting();
+loadRecordingAvailability();
 refreshStatus();
 setInterval(refreshStatus, 1000);

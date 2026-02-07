@@ -1110,6 +1110,12 @@ async function handleMessage(message, sender) {
     case "GET_STATUS":
       result = { ok: true, state: getStatusSnapshot() };
       break;
+    case "GET_RECORDING_CAPABILITY":
+      result = {
+        ok: true,
+        isTabCaptureAvailable: Boolean(chrome?.tabCapture?.getMediaStreamId),
+      };
+      break;
     case "TAKE_SCREENSHOT":
       try {
         const dataUrl = await captureScreenshot();
