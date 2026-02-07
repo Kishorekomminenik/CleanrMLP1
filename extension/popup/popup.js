@@ -68,6 +68,7 @@ let recordingTotalPausedMs = 0;
 let recordingHasData = false;
 let recordingLastError = null;
 let recordingControlInFlight = false;
+let recordingStatusMessage = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -244,18 +245,31 @@ async function exportRecordingWebm() {
   if (recordingState === "recording" || recordingState === "paused") {
     return { ok: false, error: "Stop recording to download." };
   }
-  if (!recordingHasData || recordedChunks.length === 0) {
-    return { ok: false, error: "No recording available to download." };
-  }
   try {
-    const blob = new Blob(recordedChunks, {
-      type: recordingMimeType || "video/webm",
-    });
+    let downloadUrl = null;
+    let mimeType = recordingMimeType || "video/webm";
+    if (recordingHasData && recordedChunks.length > 0) {
+      const blob = new Blob(recordedChunks, {
+        type: mimeType,
+      });
+      downloadUrl = URL.createObjectURL(blob);
+    } else {
+      const fallback = await chrome.storage.session.get({
+        recordingWebmDataUrl: null,
+        recordingMimeType: null,
+      });
+      if (fallback.recordingWebmDataUrl) {
+        downloadUrl = fallback.recordingWebmDataUrl;
+        mimeType = fallback.recordingMimeType || "video/webm";
+      }
+    }
+    if (!downloadUrl) {
+      return { ok: false, error: "No recording available to download." };
+    }
     const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
-    const url = URL.createObjectURL(blob);
     try {
       await new Promise((resolve, reject) => {
-        chrome.downloads.download({ url, filename }, (downloadId) => {
+        chrome.downloads.download({ url: downloadUrl, filename }, (downloadId) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
@@ -264,7 +278,9 @@ async function exportRecordingWebm() {
         });
       });
     } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      if (downloadUrl && downloadUrl.startsWith("blob:")) {
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 2000);
+      }
     }
     return { ok: true };
   } catch (error) {
@@ -284,6 +300,17 @@ function finalizeRecordingBlob(blob) {
       mimeType: blob.type,
       size: blob.size,
     });
+    const durationMs = computeRecordingElapsedMs();
+    try {
+      await chrome.storage.session.set({
+        recordingWebmDataUrl: dataUrl,
+        recordingMimeType: blob.type || "video/webm",
+        recordingEndedAt: new Date().toISOString(),
+        recordingDurationMs: durationMs,
+      });
+    } catch (error) {
+      recordingLastError = "Failed to store recording.";
+    }
     stopActiveRecordingStream();
   };
   reader.onerror = async () => {
@@ -368,6 +395,10 @@ function clearRecordingDownloadData() {
     "latestRecordingMime",
     "latestRecordingSize",
     "latestRecordingAt",
+    "recordingWebmDataUrl",
+    "recordingEndedAt",
+    "recordingDurationMs",
+    "recordingStatusMessage",
   ]);
 }
 
@@ -376,11 +407,15 @@ async function setRecordingDownloadData(blob) {
   recordingObjectUrl = URL.createObjectURL(blob);
   recordingMimeType = blob.type || "video/webm";
   recordingCapturedAt = new Date().toISOString();
+  const durationMs = computeRecordingElapsedMs();
   await chrome.storage.session.set({
     latestRecordingUrl: recordingObjectUrl,
     latestRecordingMime: recordingMimeType,
     latestRecordingSize: blob.size,
     latestRecordingAt: recordingCapturedAt,
+    recordingWebmDataUrl: null,
+    recordingEndedAt: recordingCapturedAt,
+    recordingDurationMs: durationMs,
   });
 }
 
@@ -389,11 +424,18 @@ async function loadRecordingDownloadData() {
     latestRecordingUrl: null,
     latestRecordingMime: null,
     latestRecordingAt: null,
+    recordingWebmDataUrl: null,
+    recordingEndedAt: null,
+    recordingDurationMs: null,
+    recordingStatusMessage: null,
   });
   if (result.latestRecordingUrl) {
     recordingObjectUrl = result.latestRecordingUrl;
     recordingMimeType = result.latestRecordingMime || "video/webm";
     recordingCapturedAt = result.latestRecordingAt || null;
+  }
+  if (result.recordingStatusMessage) {
+    recordingStatusMessage = result.recordingStatusMessage;
   }
 }
 
@@ -639,6 +681,14 @@ function applySessionLock(state) {
 function applyStatusMessage(state) {
   if (currentMode === "recording") {
     const sessionState = state.session ? state.session.state : "idle";
+    if (recordingStatusMessage) {
+      setStatus(statusElements.message, recordingStatusMessage, "default");
+      if (controlsStatus) {
+        controlsStatus.textContent = recordingStatusMessage;
+        controlsStatus.classList.remove("is-hidden");
+      }
+      return;
+    }
     if (recordingBlockedReason === "policy") {
       setStatus(
         statusElements.message,
@@ -999,6 +1049,8 @@ async function handleRecordingStart() {
   console.log("[REC] start clicked");
   setStatus(statusElements.download, "Starting recording...");
   clearRecordingDownloadData();
+  recordingStatusMessage = null;
+  chrome.storage.session.remove(["recordingStatusMessage"]);
   chrome.tabCapture.capture({ video: true, audio: false }, (stream) => {
     const lastError = chrome.runtime.lastError;
     console.log("[REC] capture returned", stream, lastError);
@@ -1445,6 +1497,8 @@ async function handleResetSession() {
     await refreshStatus();
     return;
   }
+  recordingStatusMessage = null;
+  chrome.storage.session.remove(["recordingStatusMessage"]);
   clearRecordingDownloadData();
   setStatus(statusElements.download, "Session reset.", "success");
   await refreshStatus();
@@ -1642,3 +1696,24 @@ setInterval(refreshStatus, 1000);
 if (versionBadge) {
   versionBadge.textContent = APP_VERSION;
 }
+
+loadRecordingDownloadData();
+
+window.addEventListener("beforeunload", () => {
+  if (recordingState === "recording" || recordingState === "paused") {
+    recordingStatusMessage = "Recording ended (popup closed).";
+    chrome.storage.session.set({
+      recordingStatusMessage,
+    });
+    try {
+      if (activeMediaRecorder && activeMediaRecorder.state !== "inactive") {
+        activeMediaRecorder.stop();
+      }
+    } catch (error) {
+      // Best effort stop.
+    }
+    stopActiveRecordingStream();
+    setRecordingState("idle");
+    resetRecordingTiming();
+  }
+});

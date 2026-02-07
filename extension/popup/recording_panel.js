@@ -6,8 +6,16 @@ const resumeBtn = document.getElementById("panel_resume");
 const stopBtn = document.getElementById("panel_stop");
 const closeBtn = document.getElementById("closePanel");
 
-function send(type, payload = {}) {
-  return chrome.runtime.sendMessage({ type, ...payload });
+async function send(type, payload = {}) {
+  try {
+    const res = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!res) {
+      return { ok: false, error: "No response from popup." };
+    }
+    return res;
+  } catch (error) {
+    return { ok: false, error: error && error.message ? error.message : String(error) };
+  }
 }
 
 function formatElapsedWithPauses(session) {
@@ -35,7 +43,10 @@ function formatElapsedWithPauses(session) {
 async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
-    messageEl.textContent = res && res.error ? res.error : "Status unavailable.";
+    messageEl.textContent = "Recording window closed.";
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = true;
+    stopBtn.disabled = true;
     return;
   }
   const state = res.state;
