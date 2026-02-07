@@ -1521,66 +1521,6 @@ async function handleMessage(message, sender) {
       state.recording.hasData = true;
       result = { ok: true };
       break;
-    case "RECORDING_GET_STATE": {
-      const sessionState =
-        session && session.mode === "recording" ? session.state : "idle";
-      const startedAt =
-        session && session.mode === "recording" ? session.created_at : null;
-      const pausedAt =
-        session && session.mode === "recording"
-          ? session.pause_started_at
-          : null;
-      const totalPausedMs =
-        session && session.mode === "recording"
-          ? session.total_paused_ms || 0
-          : 0;
-      result = {
-        ok: true,
-        state:
-          state.recording.status === "idle" && sessionState === "idle"
-            ? "idle"
-            : state.recording.status,
-        startedAt,
-        pausedAt,
-        totalPausedMs,
-        hasData: Boolean(state.recording.dataUrl) || state.recording.hasData,
-        mimeType: state.recording.mimeType || "video/webm",
-        lastError: state.recording.error || null,
-      };
-      break;
-    }
-    case "RECORDING_EXPORT_WEBM": {
-      if (
-        state.recording.status === "recording" ||
-        state.recording.status === "paused"
-      ) {
-        result = { ok: false, error: "Stop recording to download." };
-        break;
-      }
-      if (!state.recording.dataUrl) {
-        result = { ok: false, error: "No recording available to download." };
-        break;
-      }
-      try {
-        const blob = await dataUrlToBlob(state.recording.dataUrl);
-        const filename = `repro_recording_${formatZipTimestamp(
-          new Date()
-        )}.webm`;
-        const url = URL.createObjectURL(blob);
-        try {
-          await chrome.downloads.download({ url, filename });
-        } finally {
-          setTimeout(() => URL.revokeObjectURL(url), 2000);
-        }
-        result = { ok: true };
-      } catch (error) {
-        result = {
-          ok: false,
-          error: error && error.message ? error.message : "Download failed.",
-        };
-      }
-      break;
-    }
     case "RECORDING_PAUSE":
       await pauseRecording();
       result = { ok: true };
@@ -1752,6 +1692,22 @@ async function handleMessage(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (
+    sender &&
+    sender.url &&
+    (sender.url.includes("popup/popup.html") ||
+      sender.url.includes("popup/recording_panel.html"))
+  ) {
+    if (
+      msg.type === "RECORDING_GET_STATE" ||
+      msg.type === "RECORDING_PAUSE" ||
+      msg.type === "RECORDING_RESUME" ||
+      msg.type === "RECORDING_STOP" ||
+      msg.type === "RECORDING_EXPORT_WEBM"
+    ) {
+      return false;
+    }
+  }
   (async () => {
     try {
       const result = await handleMessage(msg, sender);

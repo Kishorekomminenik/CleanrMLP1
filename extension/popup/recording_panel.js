@@ -47,13 +47,23 @@ async function refreshStatus() {
 
   const live = await send("RECORDING_GET_STATE");
   if (live && live.ok) {
-    const fakeSession = {
-      created_at: live.startedAt || (state.session ? state.session.created_at : null),
-      ended_at: null,
-      pause_started_at: live.pausedAt || null,
-      total_paused_ms: live.totalPausedMs || 0,
-    };
-    timerEl.textContent = formatElapsedWithPauses(fakeSession);
+    const startedAt =
+      typeof live.startedAt === "number" ? live.startedAt : null;
+    const pausedAt = typeof live.pausedAt === "number" ? live.pausedAt : null;
+    const totalPaused = live.totalPausedMs || 0;
+    if (startedAt) {
+      const end =
+        live.state === "paused" && pausedAt ? pausedAt : Date.now();
+      const totalSeconds = Math.max(
+        0,
+        Math.floor((end - startedAt - totalPaused) / 1000)
+      );
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+      const seconds = String(totalSeconds % 60).padStart(2, "0");
+      timerEl.textContent = `${minutes}:${seconds}`;
+    } else {
+      timerEl.textContent = "00:00";
+    }
     stateEl.textContent = live.state || sessionState || "idle";
     const isCapturing = live.state === "recording";
     const isPaused = live.state === "paused";
@@ -73,15 +83,15 @@ async function refreshStatus() {
 }
 
 pauseBtn.addEventListener("click", async () => {
-  await send("RECORDING_PANEL_PAUSE");
+  await send("RECORDING_PAUSE");
   await refreshStatus();
 });
 resumeBtn.addEventListener("click", async () => {
-  await send("RECORDING_PANEL_RESUME");
+  await send("RECORDING_RESUME");
   await refreshStatus();
 });
 stopBtn.addEventListener("click", async () => {
-  await send("RECORDING_PANEL_STOP");
+  await send("RECORDING_STOP");
   await refreshStatus();
 });
 closeBtn.addEventListener("click", () => window.close());
