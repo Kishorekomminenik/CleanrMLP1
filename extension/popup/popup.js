@@ -144,12 +144,23 @@ function setRecordingButtons(state) {
 }
 
 function setNetworkButtons(state) {
-  const isCapturing =
-    state.session &&
-    state.session.mode === "network_console" &&
-    state.session.state === "capturing";
+  const session = state.session;
+  const isNetworkMode = session && session.mode === "network_console";
+  const isCapturing = Boolean(
+    session && session.state === "capturing" && isNetworkMode
+  );
+  const hasRequests = state.networkCount > 0;
+  const hasDebuggerAttached = Boolean(
+    session &&
+      Array.isArray(session.diagnostics) &&
+      session.diagnostics.some(
+        (entry) => entry && entry.context && entry.context.debuggerAttached === true
+      )
+  );
+  const canStop =
+    isNetworkMode && (isCapturing || hasRequests || state.networkActive || hasDebuggerAttached);
   buttons.networkStart.disabled = Boolean(state.networkActive || isCapturing);
-  buttons.networkStop.disabled = !isCapturing;
+  buttons.networkStop.disabled = !canStop;
 }
 
 function applySessionLock(state) {

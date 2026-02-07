@@ -8,6 +8,9 @@ try {
 } catch (error) {
   // JSZip is required for SW-side ZIP export.
 }
+if (!globalThis.JSZip) {
+  console.warn("[SW] JSZip failed to load.");
+}
 
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
@@ -427,7 +430,8 @@ async function buildEnvironment(context) {
 }
 
 async function buildZipAndDownload(environmentOverride) {
-  if (typeof JSZip === "undefined") {
+  const JSZipCtor = globalThis.JSZip;
+  if (!JSZipCtor) {
     throw new Error("JSZip library not loaded in service worker.");
   }
   logExportPhase("collecting");
@@ -452,7 +456,7 @@ async function buildZipAndDownload(environmentOverride) {
       : consoleEntries;
 
   logExportPhase("zipping");
-  const zip = new JSZip();
+  const zip = new JSZipCtor();
   if (state.screenshot.dataUrl) {
     const screenshotBlob = await dataUrlToBlob(state.screenshot.dataUrl);
     zip.file("screenshot.png", screenshotBlob);
@@ -668,7 +672,6 @@ async function startNetworkCapture() {
   ensureTabIsCapturable(tab);
 
   ensureSessionForMode("network_console", tab);
-  setSessionState("capturing");
   try {
     await attachDebugger(tab.id);
     await sendDebuggerCommand(tab.id, "Network.enable");
@@ -691,6 +694,10 @@ async function startNetworkCapture() {
     throw error;
   }
 
+  setSessionState("capturing");
+  addDiagnostic("info", "Debugger attached.", { debuggerAttached: true });
+  setStatusMessage("Capturing network + console...");
+
   state.network.active = true;
   state.network.tabId = tab.id;
   state.network.requests = {};
@@ -705,7 +712,6 @@ async function startNetworkCapture() {
   state.console.stoppedAt = null;
 
   sendMessageToTab(tab.id, { type: "START_CONSOLE_CAPTURE" });
-  clearStatusMessage();
 }
 
 async function stopNetworkCapture() {
@@ -1271,6 +1277,13 @@ async function handleMessage(message, sender) {
     case "DOWNLOAD_EVIDENCE_ZIP":
       if (!session) {
         result = { ok: false, error: "No session to export yet." };
+        break;
+      }
+      if (!globalThis.JSZip) {
+        result = {
+          ok: false,
+          error: "JSZip library not loaded in service worker.",
+        };
         break;
       }
       updateSessionCounts();
