@@ -320,8 +320,25 @@ async function handleScreenshot() {
     await refreshStatus();
     return;
   }
-  await chrome.tabs.create({ url: response.screenshotDataUrl });
-  setStatus(statusElements.message, "Opened screenshot in new tab.", "success");
+  try {
+    await chrome.storage.session.set({
+      latestScreenshotDataUrl: response.screenshotDataUrl,
+    });
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
+    });
+    setStatus(
+      statusElements.message,
+      "Opened screenshot viewer in new tab.",
+      "success"
+    );
+  } catch (error) {
+    setStatus(
+      statusElements.message,
+      error && error.message ? error.message : "Failed to open viewer.",
+      "error"
+    );
+  }
   await refreshStatus();
 }
 
