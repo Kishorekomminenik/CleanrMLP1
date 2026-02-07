@@ -45,6 +45,7 @@ async function dataUrlToBlob(dataUrl) {
 
 async function loadScreenshot() {
   setStatus("Loading...");
+  copyBtn.textContent = "Copy (loading...)";
   copyBtn.disabled = true;
   downloadBtn.disabled = true;
   const result = await chrome.storage.session.get("latestScreenshotDataUrl");
@@ -54,16 +55,19 @@ async function loadScreenshot() {
     !latestScreenshotDataUrl.startsWith("data:image/png")
   ) {
     latestScreenshotDataUrl = null;
+    copyBtn.textContent = "Copy";
     setStatus("No screenshot data found. Capture again.", "error");
     return;
   }
   shotImg.onload = () => {
+    copyBtn.textContent = "Copy";
     copyBtn.disabled = false;
     downloadBtn.disabled = false;
     setStatus("Ready.");
   };
   shotImg.onerror = () => {
     latestScreenshotDataUrl = null;
+    copyBtn.textContent = "Copy";
     setStatus("Failed to load screenshot. Capture again.", "error");
   };
   shotImg.src = latestScreenshotDataUrl;
