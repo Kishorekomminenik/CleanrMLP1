@@ -69,6 +69,10 @@ let recordingHasData = false;
 let recordingLastError = null;
 let recordingControlInFlight = false;
 let recordingStatusMessage = null;
+let recordingStopPromise = null;
+let recordingStopResolver = null;
+let recordingStopRequestedAt = null;
+let recordingDurationMsSnapshot = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -241,11 +245,18 @@ function formatZipTimestamp(date) {
 }
 
 function pickRecordingMimeType() {
-  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
-    return "video/webm;codecs=vp9";
+  if (!window.MediaRecorder || typeof MediaRecorder.isTypeSupported !== "function") {
+    return "";
   }
-  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
-    return "video/webm;codecs=vp8";
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  for (const candidate of candidates) {
+    if (MediaRecorder.isTypeSupported(candidate)) {
+      return candidate;
+    }
   }
   return "";
 }
@@ -264,6 +275,8 @@ function resetLocalRecording() {
   recordingHasData = false;
   recordingLastError = null;
   recordingState = "idle";
+  recordingStopRequestedAt = null;
+  recordingDurationMsSnapshot = null;
   resetRecordingTiming();
 }
 
@@ -312,6 +325,28 @@ function computeRecordingElapsedMs() {
   return Math.max(0, end - recordingStartedAt - recordingTotalPausedMs);
 }
 
+function sumRecordingChunks(chunks) {
+  return chunks.reduce((total, chunk) => total + (chunk && chunk.size ? chunk.size : 0), 0);
+}
+
+function createRecordingStopPromise() {
+  if (recordingStopPromise) {
+    return recordingStopPromise;
+  }
+  recordingStopPromise = new Promise((resolve) => {
+    recordingStopResolver = resolve;
+  });
+  return recordingStopPromise;
+}
+
+function resolveRecordingStopPromise(result) {
+  if (recordingStopResolver) {
+    recordingStopResolver(result);
+  }
+  recordingStopPromise = null;
+  recordingStopResolver = null;
+}
+
 function finalizeStop(message) {
   recordingControlInFlight = false;
   recordingState = "idle";
@@ -326,15 +361,27 @@ function finalizeStop(message) {
 }
 
 async function exportRecordingWebm() {
+  const totalBytes = sumRecordingChunks(recordedChunks);
   console.log(
     "[REC] EXPORT requested:",
     `hasData=${recordingHasData}`,
-    `chunks=${recordedChunks.length}`
+    `chunks=${recordedChunks.length}`,
+    `totalBytes=${totalBytes}`
   );
   if (recordingState === "recording" || recordingState === "paused") {
     return { ok: false, error: "Stop recording to download." };
   }
   try {
+    console.log(
+      "[REC] EXPORT start",
+      `mimeType=${recordingMimeType || "video/webm"}`,
+      `stoppedAt=${recordingStopRequestedAt ? new Date(recordingStopRequestedAt).toISOString() : "unknown"}`,
+      `durationMs=${
+        typeof recordingDurationMsSnapshot === "number"
+          ? recordingDurationMsSnapshot
+          : computeRecordingElapsedMs()
+      }`
+    );
     let downloadUrl = null;
     let mimeType = recordingMimeType || "video/webm";
     if (recordingHasData && recordedChunks.length > 0) {
@@ -381,35 +428,42 @@ async function exportRecordingWebm() {
 }
 
 function finalizeRecordingBlob(blob) {
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const dataUrl = reader.result;
-    await send("RECORDING_COMPLETE", {
-      dataUrl,
-      mimeType: blob.type,
-      size: blob.size,
-    });
-    const durationMs = computeRecordingElapsedMs();
-    try {
-      await chrome.storage.session.set({
-        recordingWebmDataUrl: dataUrl,
-        recordingMimeType: blob.type || "video/webm",
-        recordingEndedAt: new Date().toISOString(),
-        recordingDurationMs: durationMs,
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result;
+      await send("RECORDING_COMPLETE", {
+        dataUrl,
+        mimeType: blob.type,
+        size: blob.size,
       });
-    } catch (error) {
-      recordingLastError = "Failed to store recording.";
-    }
-    stopActiveRecordingStream();
-  };
-  reader.onerror = async () => {
-    await send("RECORDING_ERROR", {
-      error: "Failed to finalize recording.",
-    });
-    stopActiveRecordingStream();
-    recordingLastError = "Failed to finalize recording.";
-  };
-  reader.readAsDataURL(blob);
+      const durationMs =
+        typeof recordingDurationMsSnapshot === "number"
+          ? recordingDurationMsSnapshot
+          : computeRecordingElapsedMs();
+      try {
+        await chrome.storage.session.set({
+          recordingWebmDataUrl: dataUrl,
+          recordingMimeType: blob.type || "video/webm",
+          recordingEndedAt: new Date().toISOString(),
+          recordingDurationMs: durationMs,
+        });
+      } catch (error) {
+        recordingLastError = "Failed to store recording.";
+      }
+      stopActiveRecordingStream();
+      resolve({ ok: true });
+    };
+    reader.onerror = async () => {
+      await send("RECORDING_ERROR", {
+        error: "Failed to finalize recording.",
+      });
+      stopActiveRecordingStream();
+      recordingLastError = "Failed to finalize recording.";
+      resolve({ ok: false, error: "Failed to finalize recording." });
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 function startMediaRecorderSegment() {
@@ -419,7 +473,8 @@ function startMediaRecorderSegment() {
     options.mimeType = mimeType;
   }
   activeMediaRecorder = new MediaRecorder(activeRecordingStream, options);
-  recordingMimeType = activeMediaRecorder.mimeType || "video/webm";
+  recordingMimeType = mimeType || activeMediaRecorder.mimeType || "video/webm";
+  console.log("[REC] mimeType chosen=", recordingMimeType);
   activeMediaRecorder.onstart = () => {
     setRecordingState("recording");
     console.log("[REC] START confirmed");
@@ -457,17 +512,32 @@ function startMediaRecorderSegment() {
     setStatus(statusElements.message, `Recording failed: ${errorMessage}`, "error");
     send("RECORDING_ERROR", { error: errorMessage });
   };
-  activeMediaRecorder.onstop = () => {
+  activeMediaRecorder.onstop = async () => {
     if (recordingStopReason === "pause") {
       recordingStopReason = null;
+      resolveRecordingStopPromise({ ok: true, paused: true });
       return;
     }
-    console.log("[REC] STOP confirmed (onstop fired)");
+    const stoppedAt = new Date().toISOString();
+    const durationMs = computeRecordingElapsedMs();
+    recordingDurationMsSnapshot = durationMs;
+    const totalBytes = sumRecordingChunks(recordedChunks);
+    console.log(
+      "[REC] STOP confirmed (onstop fired)",
+      `chunks=${recordedChunks.length}`,
+      `totalBytes=${totalBytes}`,
+      `stoppedAt=${stoppedAt}`,
+      `durationMs=${durationMs}`
+    );
     const blob = new Blob(recordedChunks, {
-      type: activeMediaRecorder.mimeType || "video/webm",
+      type: recordingMimeType || "video/webm",
     });
-    finalizeRecordingBlob(blob);
-    finalizeStop("Recording stopped.");
+    try {
+      await finalizeRecordingBlob(blob);
+    } finally {
+      finalizeStop("Recording stopped.");
+      resolveRecordingStopPromise({ ok: true });
+    }
   };
   activeMediaRecorder.start(250);
 }
@@ -1169,6 +1239,8 @@ async function handleRecordingStart() {
     recordedChunks = [];
     recordingHasData = false;
     recordingLastError = null;
+    recordingStopRequestedAt = null;
+    recordingDurationMsSnapshot = null;
     activeRecordingStream.getTracks().forEach((track) => {
       track.onended = () => {
         recordingLastError = "Track ended";
@@ -1296,15 +1368,27 @@ async function handleRecordingStop() {
   if (recordingControlInFlight) {
     return;
   }
+  recordingStopRequestedAt = Date.now();
   if (!activeMediaRecorder || activeMediaRecorder.state === "inactive") {
     if (recordingSegmentMode && recordedChunks.length > 0) {
+      const totalBytes = sumRecordingChunks(recordedChunks);
+      const durationMs = computeRecordingElapsedMs();
+      recordingDurationMsSnapshot = durationMs;
+      console.log(
+        "[REC] STOP finalize (segment mode)",
+        `chunks=${recordedChunks.length}`,
+        `totalBytes=${totalBytes}`,
+        `stoppedAt=${new Date(recordingStopRequestedAt).toISOString()}`,
+        `durationMs=${durationMs}`
+      );
       const blob = new Blob(recordedChunks, {
         type: recordingMimeType || "video/webm",
       });
       setRecordingState("stopping");
-      finalizeRecordingBlob(blob);
+      await finalizeRecordingBlob(blob);
       await send("RECORDING_SESSION_STOPPING");
       finalizeStop("Recording stopped.");
+      resolveRecordingStopPromise({ ok: true });
       return;
     }
     const live = await send("RECORDING_GET_STATE");
@@ -1325,13 +1409,29 @@ async function handleRecordingStop() {
     await send("RECORDING_SESSION_STOPPING");
     recordingStopReason = "stop";
     setRecordingState("stopping");
+    const stopPromise = createRecordingStopPromise();
+    if (
+      typeof activeMediaRecorder.requestData === "function" &&
+      activeMediaRecorder.state !== "inactive"
+    ) {
+      try {
+        activeMediaRecorder.requestData();
+      } catch (error) {
+        console.log(
+          "[REC] requestData failed",
+          error && error.message ? error.message : String(error)
+        );
+      }
+    }
     activeMediaRecorder.stop();
+    await stopPromise;
   } catch (error) {
     setStatus(
       statusElements.download,
       error && error.message ? error.message : "Failed to stop recording.",
       "error"
     );
+    resolveRecordingStopPromise({ ok: false, error: error && error.message });
     recordingControlInFlight = false;
     setRecordingButtons({ recordingStatus: recordingState });
   }
