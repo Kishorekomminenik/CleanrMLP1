@@ -4,6 +4,8 @@ let currentStream = null;
 let recordingState = "idle";
 let recordingMimeType = "video/webm";
 
+chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
+
 function stopStreamTracks() {
   if (currentStream) {
     currentStream.getTracks().forEach((track) => track.stop());
@@ -49,20 +51,25 @@ async function startRecording(tabId) {
     throw new Error("Recording already in progress.");
   }
 
-  resetRecording();
-  const streamId = await chrome.tabCapture.getMediaStreamId({
-    targetTabId: tabId,
-  });
+  try {
+    resetRecording();
+    const streamId = await chrome.tabCapture.getMediaStreamId({
+      targetTabId: tabId,
+    });
 
-  currentStream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: streamId,
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "tab",
+          chromeMediaSourceId: streamId,
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    throw new Error(message);
+  }
 
   const options = {};
   if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
@@ -125,6 +132,10 @@ function stopRecording() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "OFFSCREEN_PING") {
+    sendResponse({ ok: true, ready: true });
+    return;
+  }
   if (message.type === "RECORDING_START") {
     startRecording(message.tabId)
       .then(() => sendResponse({ ok: true }))

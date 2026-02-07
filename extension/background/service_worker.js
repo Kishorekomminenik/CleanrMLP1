@@ -48,6 +48,7 @@ const MODE_LABELS = {
 
 let session = null;
 let statusMessage = null;
+let offscreenReady = false;
 
 function nowIso() {
   return new Date().toISOString();
@@ -404,6 +405,18 @@ async function ensureOffscreenDocument() {
   }
 }
 
+async function ensureOffscreenReady() {
+  await ensureOffscreenDocument();
+  if (offscreenReady) {
+    return;
+  }
+  const response = await sendMessageToOffscreen({ type: "OFFSCREEN_PING" });
+  if (!response.ok) {
+    throw new Error(response.error || "Offscreen document not ready.");
+  }
+  offscreenReady = true;
+}
+
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -429,14 +442,16 @@ async function startRecording() {
   setSessionState("capturing");
 
   try {
-    await ensureOffscreenDocument();
+    await ensureOffscreenReady();
     const response = await sendMessageToOffscreen({
       type: "RECORDING_START",
       tabId: tab.id,
     });
 
     if (!response.ok) {
-      throw new Error(response.error || "Failed to start recording.");
+      const errorMessage = response.error || "Failed to start recording.";
+      setStatusMessage(errorMessage, "error");
+      throw new Error(errorMessage);
     }
 
     state.recording.status = "recording";
@@ -446,6 +461,7 @@ async function startRecording() {
     state.recording.error = null;
     clearStatusMessage();
   } catch (error) {
+    setStatusMessage(error.message || "Failed to start recording.", "error");
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
     });
@@ -915,6 +931,9 @@ function buildSessionExport() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handle = async () => {
     switch (message.type) {
+      case "OFFSCREEN_READY":
+        offscreenReady = true;
+        return { ok: true };
       case "GET_STATUS":
         return { ok: true, state: getStatusSnapshot() };
       case "CAPTURE_SCREENSHOT":
