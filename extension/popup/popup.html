@@ -19,7 +19,7 @@
       <section class="card">
         <h2>Mode Selector</h2>
         <div class="radio-group">
-          <label>
+          <div class="radio-option">
             <input
               type="radio"
               name="captureMode"
@@ -27,26 +27,26 @@
               value="screenshot"
               checked
             />
-            Screenshot
-          </label>
-          <label id="label_recording">
+            <label for="mode_screenshot">Screenshot</label>
+          </div>
+          <div class="radio-option">
             <input
               type="radio"
               name="captureMode"
               id="mode_recording"
               value="recording"
             />
-            Recording
-          </label>
-          <label id="label_network">
+            <label id="label_recording" for="mode_recording">Recording</label>
+          </div>
+          <div class="radio-option">
             <input
               type="radio"
               name="captureMode"
               id="mode_network"
               value="network_console"
             />
-            Network + Console
-          </label>
+            <label id="label_network" for="mode_network">Network + Console</label>
+          </div>
         </div>
         <div id="capability-messages" class="capability-messages">
           <div id="recording-disabled-msg" class="capability-msg hidden">
