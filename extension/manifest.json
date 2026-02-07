@@ -14,10 +14,9 @@
   },
   "permissions": [
     "activeTab",
-    "debugger",
-    "downloads",
     "tabs",
     "storage",
+    "downloads",
     "tabCapture",
     "offscreen"
   ],
