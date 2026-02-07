@@ -304,15 +304,23 @@ function startEditing(el) {
     editingTextEl.blur();
   }
   editingTextEl = el;
+  if (!el.dataset.originalText) {
+    el.dataset.originalText = el.innerText || "";
+  }
   el.contentEditable = "true";
   el.classList.add("editing");
   el.focus();
+  requestAnimationFrame(() => {
+    el.focus();
+  });
   const selection = window.getSelection();
   const range = document.createRange();
   range.selectNodeContents(el);
   range.collapse(false);
   selection.removeAllRanges();
   selection.addRange(range);
+  console.log("[TEXT] start editing", el.dataset.id);
+  console.log("activeElement", document.activeElement);
 }
 
 function finalizeEditing(el) {
@@ -327,6 +335,7 @@ function finalizeEditing(el) {
   } else {
     el.textContent = text;
   }
+  delete el.dataset.originalText;
   editingTextEl = null;
   pushState();
 }
@@ -343,6 +352,23 @@ function attachTextHandlers(el) {
   });
   el.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && el.contentEditable === "true") {
+      event.preventDefault();
+      const original = el.dataset.originalText || "";
+      if (original.trim() === "") {
+        el.remove();
+        editingTextEl = null;
+      } else {
+        el.textContent = original;
+        el.blur();
+      }
+      delete el.dataset.originalText;
+      return;
+    }
+    if (
+      event.key === "Enter" &&
+      el.contentEditable === "true" &&
+      !event.shiftKey
+    ) {
       event.preventDefault();
       el.blur();
       return;
@@ -620,7 +646,9 @@ textLayer.addEventListener("pointerdown", (event) => {
   if (event.target !== textLayer) {
     return;
   }
+  event.preventDefault();
   const point = getCanvasPoint(event);
+  console.log("[TEXT] create textbox at", point.x, point.y);
   const newText = {
     id: createId(),
     x: point.x,

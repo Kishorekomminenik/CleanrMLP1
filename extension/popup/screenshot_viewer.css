@@ -149,7 +149,7 @@ button:disabled {
 
 .text-label {
   position: absolute;
-  white-space: pre;
+  white-space: pre-wrap;
   padding: 2px 4px;
   min-width: 10px;
   outline: none;
