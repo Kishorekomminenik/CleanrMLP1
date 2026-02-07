@@ -471,6 +471,28 @@ function formatElapsed(startIso, endIso) {
   return `${minutes}:${seconds}`;
 }
 
+function formatElapsedWithPauses(session) {
+  if (!session || !session.created_at) {
+    return "00:00";
+  }
+  const start = new Date(session.created_at).getTime();
+  let end = session.ended_at ? new Date(session.ended_at).getTime() : Date.now();
+  const pausedMs = session.total_paused_ms || 0;
+  if (session.pause_started_at) {
+    const pausedAt = new Date(session.pause_started_at).getTime();
+    if (!Number.isNaN(pausedAt)) {
+      end = pausedAt;
+    }
+  }
+  const totalSeconds = Math.max(
+    0,
+    Math.floor((end - start - pausedMs) / 1000)
+  );
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function updateStatusUI(state) {
   buttons.screenshot.disabled = false;
   modeRadios.forEach((radio) => {
@@ -493,10 +515,7 @@ function updateStatusUI(state) {
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
 
-  statusElements.timer.textContent = formatElapsed(
-    state.session ? state.session.created_at : null,
-    state.session ? state.session.ended_at : null
-  );
+  statusElements.timer.textContent = formatElapsedWithPauses(state.session);
 
   const counts = state.session ? state.session.counts : null;
   const requestCount = counts ? counts.network_requests : 0;
@@ -731,6 +750,7 @@ async function handleRecordingPause() {
     return;
   }
   try {
+    console.log("[REC] pause clicked", activeMediaRecorder.state);
     activeMediaRecorder.pause();
     await send("RECORDING_SESSION_PAUSE");
     setStatus(statusElements.download, "Recording paused.", "success");
@@ -750,6 +770,7 @@ async function handleRecordingResume() {
     return;
   }
   try {
+    console.log("[REC] resume clicked", activeMediaRecorder.state);
     activeMediaRecorder.resume();
     await send("RECORDING_SESSION_RESUME");
     setStatus(statusElements.download, "Recording resumed.", "success");
@@ -770,6 +791,7 @@ async function handleRecordingStop() {
   }
   setStatus(statusElements.download, "Stopping recording...");
   try {
+    console.log("[REC] stop clicked", activeMediaRecorder.state);
     await send("RECORDING_SESSION_STOPPING");
     activeMediaRecorder.stop();
   } catch (error) {
@@ -853,6 +875,11 @@ async function handleDownload() {
   buttons.download.disabled = true;
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
+    if (!window.JSZip) {
+      setStatus(statusElements.download, "JSZip is not available.", "error");
+      hadError = true;
+      return;
+    }
     const statusResponse = await send("GET_STATUS");
     if (!statusResponse.ok) {
       setStatus(statusElements.download, statusResponse.error, "error");
@@ -883,25 +910,65 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
-    const res = await Promise.race([
-      send("DOWNLOAD_EVIDENCE_ZIP", { timezone }),
-      new Promise((resolve) =>
-        setTimeout(
-          () => resolve({ ok: false, error: "ZIP export timed out." }),
-          10000
-        )
-      ),
-    ]);
-    if (!res.ok) {
-      const phaseLabel = res.phase ? ` (${res.phase})` : "";
+    const exportResponse = await send("GET_EXPORT_DATA", { timezone });
+    if (!exportResponse.ok) {
       setStatus(
         statusElements.download,
-        `Export failed${phaseLabel}: ${res.error}`,
+        exportResponse.error || "Export data unavailable.",
         "error"
       );
       hadError = true;
       return;
     }
+
+    const data = exportResponse.data;
+    const zip = new JSZip();
+    if (data.screenshotDataUrl) {
+      const screenshotBlob = await dataUrlToBlob(data.screenshotDataUrl);
+      zip.file("screenshot.png", screenshotBlob);
+    }
+    if (data.recordingDataUrl) {
+      const recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
+      const recordingName = data.recordingMimeType
+        ? "recording.webm"
+        : "recording.webm";
+      zip.file(recordingName, recordingBlob);
+    }
+    zip.file(
+      "network_logs.json",
+      JSON.stringify(data.networkLogs || { version: "1.0", entries: [] }, null, 2)
+    );
+    zip.file(
+      "console_logs.json",
+      JSON.stringify(data.consoleLogs || { version: "1.0", entries: [] }, null, 2)
+    );
+    zip.file("session.json", JSON.stringify(data.session || {}, null, 2));
+    zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("ZIP export timed out.")), 10000)
+    );
+    await Promise.race([
+      (async () => {
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(zipBlob);
+        const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+        try {
+          await new Promise((resolve, reject) => {
+            chrome.downloads.download({ url, filename }, (downloadId) => {
+              if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+                return;
+              }
+              resolve(downloadId);
+            });
+          });
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+      })(),
+      timeoutPromise,
+    ]);
 
     setStatus(statusElements.download, "Download started.", "success");
   } catch (error) {
@@ -1045,6 +1112,37 @@ if (buttons.networkRefresh) {
 }
 buttons.download.addEventListener("click", handleDownload);
 buttons.reset.addEventListener("click", handleResetSession);
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "RECORDING_PANEL_PAUSE") {
+    (async () => {
+      await handleRecordingPause();
+      sendResponse({ ok: true });
+    })().catch((error) =>
+      sendResponse({ ok: false, error: error.message || "Pause failed." })
+    );
+    return true;
+  }
+  if (message.type === "RECORDING_PANEL_RESUME") {
+    (async () => {
+      await handleRecordingResume();
+      sendResponse({ ok: true });
+    })().catch((error) =>
+      sendResponse({ ok: false, error: error.message || "Resume failed." })
+    );
+    return true;
+  }
+  if (message.type === "RECORDING_PANEL_STOP") {
+    (async () => {
+      await handleRecordingStop();
+      sendResponse({ ok: true });
+    })().catch((error) =>
+      sendResponse({ ok: false, error: error.message || "Stop failed." })
+    );
+    return true;
+  }
+  return false;
+});
 statusToggle.addEventListener("click", () => {
   const collapsed = statusBody.classList.toggle("collapsed");
   statusChevron.textContent = collapsed ? "▸" : "▾";

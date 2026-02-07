@@ -313,6 +313,8 @@ function createSession(mode, tab) {
     ended_at: null,
     mode,
     state: "capturing",
+    pause_started_at: null,
+    total_paused_ms: 0,
     active_tab: {
       tab_id: tab && tab.id ? tab.id : null,
       url: tab && tab.url ? tab.url : "",
@@ -350,6 +352,14 @@ function setSessionState(stateValue) {
 function markSessionStopped() {
   if (!session) {
     return;
+  }
+  if (session.pause_started_at) {
+    const pausedAt = new Date(session.pause_started_at).getTime();
+    if (!Number.isNaN(pausedAt)) {
+      session.total_paused_ms =
+        (session.total_paused_ms || 0) + (Date.now() - pausedAt);
+    }
+    session.pause_started_at = null;
   }
   session.state = "stopped";
   if (!session.ended_at) {
@@ -1462,12 +1472,23 @@ async function handleMessage(message, sender) {
       break;
     }
     case "RECORDING_SESSION_PAUSE":
+      if (session && !session.pause_started_at) {
+        session.pause_started_at = nowIso();
+      }
       state.recording.status = "paused";
       setSessionState("paused");
       clearStatusMessage();
       result = { ok: true };
       break;
     case "RECORDING_SESSION_RESUME":
+      if (session && session.pause_started_at) {
+        const pausedAt = new Date(session.pause_started_at).getTime();
+        if (!Number.isNaN(pausedAt)) {
+          session.total_paused_ms =
+            (session.total_paused_ms || 0) + (Date.now() - pausedAt);
+        }
+        session.pause_started_at = null;
+      }
       state.recording.status = "recording";
       setSessionState("capturing");
       clearStatusMessage();
