@@ -98,6 +98,12 @@ button:disabled {
   color: #4b5563;
 }
 
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .status-row {
   display: flex;
   justify-content: space-between;
@@ -137,4 +143,8 @@ button:disabled {
 
 .mode-controls.active {
   display: block;
+}
+
+.is-hidden {
+  display: none;
 }

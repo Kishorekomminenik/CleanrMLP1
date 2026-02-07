@@ -407,14 +407,10 @@ async function ensureOffscreenDocument() {
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
-  ensureSessionForMode("screenshot", tab);
-  setSessionState("capturing");
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
     state.screenshot.dataUrl = dataUrl;
     state.screenshot.capturedAt = nowIso();
-    markSessionStopped();
-    updateSessionCounts();
     clearStatusMessage();
     return dataUrl;
   } catch (error) {
@@ -923,24 +919,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true, state: getStatusSnapshot() };
       case "CAPTURE_SCREENSHOT":
         {
-          const lock = checkStartMode("screenshot");
-          if (!lock.allowed) {
-            if (lock.reason === "already_running") {
-              return {
-                ok: true,
-                message: lock.message,
-                state: getStatusSnapshot(),
-              };
-            }
-            return {
-              ok: false,
-              error: lock.message,
-              state: getStatusSnapshot(),
-            };
-          }
+          const dataUrl = await captureScreenshot();
+          return { ok: true, screenshotDataUrl: dataUrl };
         }
-        await captureScreenshot();
-        return { ok: true, state: getStatusSnapshot() };
       case "RECORDING_START":
         {
           const lock = checkStartMode("recording");

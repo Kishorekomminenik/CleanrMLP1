@@ -26,6 +26,10 @@ const modeControls = Array.from(document.querySelectorAll(".mode-controls"));
 let currentMode = "screenshot";
 const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
+const screenshotHint = document.getElementById("screenshotHint");
+const statusTimerRow = document.getElementById("status_timer_row");
+const statusCountsRow = document.getElementById("status_counts_row");
+const downloadControls = document.getElementById("download_controls");
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -100,6 +104,19 @@ function setMode(mode) {
     const isActive = block.dataset.mode === mode;
     block.classList.toggle("active", isActive);
   });
+  const isScreenshot = mode === "screenshot";
+  if (screenshotHint) {
+    screenshotHint.classList.toggle("is-hidden", !isScreenshot);
+  }
+  if (statusTimerRow) {
+    statusTimerRow.classList.toggle("is-hidden", isScreenshot);
+  }
+  if (statusCountsRow) {
+    statusCountsRow.classList.toggle("is-hidden", isScreenshot);
+  }
+  if (downloadControls) {
+    downloadControls.classList.toggle("is-hidden", isScreenshot);
+  }
 }
 
 function setRecordingButtons(state) {
@@ -250,9 +267,10 @@ function updateStatusUI(state) {
   applyStatusMessage(state);
 
   if (state.artifacts) {
-    buttons.download.disabled = !state.artifacts.hasAnyArtifacts;
+    buttons.download.disabled =
+      currentMode === "screenshot" || !state.artifacts.hasAnyArtifacts;
   } else if (typeof state.hasArtifacts === "boolean") {
-    buttons.download.disabled = !state.hasArtifacts;
+    buttons.download.disabled = currentMode === "screenshot" || !state.hasArtifacts;
   }
 }
 
@@ -272,11 +290,24 @@ async function handleScreenshot() {
     await handleFailedResponse(response);
     return;
   }
-  if (response.message) {
-    setStatus(statusElements.download, response.message);
-  } else {
-    setStatus(statusElements.download, "Screenshot captured.", "success");
+  if (!response.screenshotDataUrl) {
+    await handleFailedResponse({
+      error: "Screenshot capture failed.",
+      state: response.state,
+    });
+    return;
   }
+  const screenshotBlob = dataUrlToBlob(response.screenshotDataUrl);
+  const filename = `screenshot_${formatZipTimestamp(new Date())}.png`;
+  const url = URL.createObjectURL(screenshotBlob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setStatus(statusElements.message, "Screenshot downloaded.", "success");
   await refreshStatus();
 }
 

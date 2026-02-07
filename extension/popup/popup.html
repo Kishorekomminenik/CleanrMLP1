@@ -54,6 +54,7 @@
         <h2>Controls</h2>
         <div class="mode-controls" data-mode="screenshot">
           <button id="btn_take_screenshot" class="primary">Capture</button>
+          <p id="screenshotHint" class="hint">Downloads PNG directly.</p>
         </div>
         <div class="mode-controls" data-mode="recording">
           <div class="button-row">
@@ -85,11 +86,11 @@
           <span class="label">State</span>
           <span id="status_state">idle</span>
         </div>
-        <div class="status-row">
+        <div class="status-row" id="status_timer_row">
           <span class="label">Elapsed</span>
           <span id="status_timer">00:00</span>
         </div>
-        <div class="status-row">
+        <div class="status-row" id="status_counts_row">
           <span class="label">Counts</span>
           <span id="status_counts">0 requests, 0 logs, 0 errors</span>
         </div>
@@ -104,7 +105,7 @@
             <span id="redactionStatus">ON</span>
           </label>
         </div>
-        <div class="button-row">
+        <div class="button-row" id="download_controls">
           <button id="btn_download_zip" class="primary">
             Download Evidence ZIP
           </button>
