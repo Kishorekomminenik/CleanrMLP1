@@ -47,17 +47,10 @@ async function refreshStatus() {
 
   const live = await send("RECORDING_GET_STATE");
   if (live && live.ok) {
-    const startedAt =
-      typeof live.startedAt === "number" ? live.startedAt : null;
-    const pausedAt = typeof live.pausedAt === "number" ? live.pausedAt : null;
-    const totalPaused = live.totalPausedMs || 0;
-    if (startedAt) {
-      const end =
-        live.state === "paused" && pausedAt ? pausedAt : Date.now();
-      const totalSeconds = Math.max(
-        0,
-        Math.floor((end - startedAt - totalPaused) / 1000)
-      );
+    if (live.elapsedText) {
+      timerEl.textContent = live.elapsedText;
+    } else if (typeof live.elapsedMs === "number") {
+      const totalSeconds = Math.max(0, Math.floor(live.elapsedMs / 1000));
       const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
       const seconds = String(totalSeconds % 60).padStart(2, "0");
       timerEl.textContent = `${minutes}:${seconds}`;

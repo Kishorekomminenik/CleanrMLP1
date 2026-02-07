@@ -67,6 +67,7 @@ let recordingPausedAt = null;
 let recordingTotalPausedMs = 0;
 let recordingHasData = false;
 let recordingLastError = null;
+let recordingControlInFlight = false;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -186,6 +187,17 @@ function getRecordingOwnerState() {
     hasData: recordingHasData,
     mimeType: recordingMimeType || "video/webm",
     lastError: recordingLastError,
+    elapsedMs: computeRecordingElapsedMs(),
+    recorderState: activeMediaRecorder ? activeMediaRecorder.state : "inactive",
+    elapsedText: (() => {
+      const totalSeconds = Math.max(
+        0,
+        Math.floor(computeRecordingElapsedMs() / 1000)
+      );
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+      const seconds = String(totalSeconds % 60).padStart(2, "0");
+      return `${minutes}:${seconds}`;
+    })(),
   };
 }
 
@@ -197,6 +209,30 @@ function resetRecordingTiming() {
   recordingStartedAt = null;
   recordingPausedAt = null;
   recordingTotalPausedMs = 0;
+}
+
+function computeRecordingElapsedMs() {
+  if (!recordingStartedAt) {
+    return 0;
+  }
+  let end = Date.now();
+  if (recordingState === "paused" && recordingPausedAt) {
+    end = recordingPausedAt;
+  }
+  return Math.max(0, end - recordingStartedAt - recordingTotalPausedMs);
+}
+
+function finalizeStop(message) {
+  recordingControlInFlight = false;
+  recordingState = "idle";
+  recordingPausedAt = null;
+  resetRecordingTiming();
+  recordingStopReason = null;
+  activeMediaRecorder = null;
+  if (message) {
+    setStatus(statusElements.download, message, "success");
+  }
+  refreshStatus();
 }
 
 async function exportRecordingWebm() {
@@ -249,18 +285,13 @@ function finalizeRecordingBlob(blob) {
       size: blob.size,
     });
     stopActiveRecordingStream();
-    setRecordingState("idle");
-    setStatus(statusElements.download, "Recording stopped.", "success");
-    await refreshStatus();
   };
   reader.onerror = async () => {
     await send("RECORDING_ERROR", {
       error: "Failed to finalize recording.",
     });
     stopActiveRecordingStream();
-    setRecordingState("idle");
-    setStatus(statusElements.download, "Recording failed.", "error");
-    await refreshStatus();
+    recordingLastError = "Failed to finalize recording.";
   };
   reader.readAsDataURL(blob);
 }
@@ -273,6 +304,23 @@ function startMediaRecorderSegment() {
   }
   activeMediaRecorder = new MediaRecorder(activeRecordingStream, options);
   recordingMimeType = activeMediaRecorder.mimeType || "video/webm";
+  activeMediaRecorder.onstart = () => {
+    setRecordingState("recording");
+    console.log("[REC] START confirmed");
+  };
+  activeMediaRecorder.onpause = () => {
+    recordingPausedAt = Date.now();
+    setRecordingState("paused");
+    console.log("[REC] PAUSE confirmed");
+  };
+  activeMediaRecorder.onresume = () => {
+    if (recordingPausedAt) {
+      recordingTotalPausedMs += Date.now() - recordingPausedAt;
+      recordingPausedAt = null;
+    }
+    setRecordingState("recording");
+    console.log("[REC] RESUME confirmed");
+  };
   activeMediaRecorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
       recordedChunks.push(event.data);
@@ -303,6 +351,7 @@ function startMediaRecorderSegment() {
       type: activeMediaRecorder.mimeType || "video/webm",
     });
     finalizeRecordingBlob(blob);
+    finalizeStop("Recording stopped.");
   };
   activeMediaRecorder.start(250);
 }
@@ -375,6 +424,17 @@ function setMode(mode) {
 }
 
 function setRecordingButtons(state) {
+  if (recordingControlInFlight) {
+    buttons.recordStart.disabled = true;
+    buttons.recordPause.disabled = true;
+    buttons.recordResume.disabled = true;
+    buttons.recordStop.disabled = true;
+    buttons.recordStart.classList.add("btn-disabled");
+    buttons.recordPause.classList.add("btn-disabled");
+    buttons.recordResume.classList.add("btn-disabled");
+    buttons.recordStop.classList.add("btn-disabled");
+    return;
+  }
   if (!recordingAvailable) {
     buttons.recordStart.disabled = true;
     buttons.recordPause.disabled = true;
@@ -721,18 +781,12 @@ function formatElapsedFromLiveState(liveState, fallbackSession) {
   if (!liveState || !liveState.startedAt) {
     return formatElapsedWithPauses(fallbackSession);
   }
-  const start = new Date(liveState.startedAt).getTime();
-  let end = Date.now();
-  if (liveState.state === "paused" && liveState.pausedAt) {
-    const pausedAt = new Date(liveState.pausedAt).getTime();
-    if (!Number.isNaN(pausedAt)) {
-      end = pausedAt;
-    }
+  if (liveState.elapsedText) {
+    return liveState.elapsedText;
   }
-  const totalSeconds = Math.max(
-    0,
-    Math.floor((end - start - (liveState.totalPausedMs || 0)) / 1000)
-  );
+  const elapsedMs =
+    typeof liveState.elapsedMs === "number" ? liveState.elapsedMs : 0;
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
@@ -872,7 +926,7 @@ async function refreshStatus() {
         "[REC] GET_STATE ->",
         `state=${live.state}`,
         `hasData=${live.hasData}`,
-        `mimeType=${live.mimeType}`
+        `recorderState=${live.recorderState}`
       );
     } else {
       recordingLiveState = null;
@@ -984,7 +1038,7 @@ async function handleRecordingStart() {
           state: "idle",
           reason: "ended",
         });
-        refreshStatus();
+        finalizeStop("Recording ended (popup closed).");
       };
     });
     try {
@@ -994,7 +1048,6 @@ async function handleRecordingStart() {
       recordingPausedAt = null;
       recordingTotalPausedMs = 0;
       setRecordingState("recording");
-      console.log("[REC] START confirmed");
       startMediaRecorderSegment();
     } catch (error) {
       setStatus(
@@ -1013,12 +1066,17 @@ async function handleRecordingStart() {
 }
 
 async function handleRecordingPause() {
+  if (recordingControlInFlight) {
+    return;
+  }
   if (!activeMediaRecorder || activeMediaRecorder.state !== "recording") {
     setStatus(statusElements.download, "Recording is not active.", "error");
     return;
   }
   try {
     console.log("[REC] pause clicked", activeMediaRecorder.state);
+    recordingControlInFlight = true;
+    setRecordingButtons({ recordingStatus: recordingState });
     if (typeof activeMediaRecorder.pause === "function") {
       activeMediaRecorder.pause();
     } else {
@@ -1048,16 +1106,24 @@ async function handleRecordingPause() {
         "error"
       );
     }
+  } finally {
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: recordingState });
   }
 }
 
 async function handleRecordingResume() {
+  if (recordingControlInFlight) {
+    return;
+  }
   if (!activeMediaRecorder) {
     setStatus(statusElements.download, "Recording is not paused.", "error");
     return;
   }
   try {
     console.log("[REC] resume clicked", activeMediaRecorder.state);
+    recordingControlInFlight = true;
+    setRecordingButtons({ recordingStatus: recordingState });
     if (activeMediaRecorder.state === "paused") {
       activeMediaRecorder.resume();
     } else if (recordingSegmentMode && activeMediaRecorder.state === "inactive") {
@@ -1079,10 +1145,16 @@ async function handleRecordingResume() {
       error && error.message ? error.message : "Failed to resume recording.",
       "error"
     );
+  } finally {
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: recordingState });
   }
 }
 
 async function handleRecordingStop() {
+  if (recordingControlInFlight) {
+    return;
+  }
   if (!activeMediaRecorder || activeMediaRecorder.state === "inactive") {
     if (recordingSegmentMode && recordedChunks.length > 0) {
       const blob = new Blob(recordedChunks, {
@@ -1091,21 +1163,24 @@ async function handleRecordingStop() {
       setRecordingState("stopping");
       finalizeRecordingBlob(blob);
       await send("RECORDING_SESSION_STOPPING");
+      finalizeStop("Recording stopped.");
       return;
     }
     const live = await send("RECORDING_GET_STATE");
     if (live && live.ok && (live.state === "idle" || live.state === "stopped")) {
-      setStatus(statusElements.download, "Recording already stopped.", "success");
-      await refreshStatus();
+      console.log("[REC] STOP confirmed (already stopped)");
+      finalizeStop("Recording already stopped.");
       return;
     }
-    setStatus(statusElements.download, "Recording already stopped.", "success");
-    await refreshStatus();
+    console.log("[REC] STOP confirmed (already stopped)");
+    finalizeStop("Recording already stopped.");
     return;
   }
   setStatus(statusElements.download, "Stopping recording...");
   try {
     console.log("[REC] stop clicked", activeMediaRecorder.state);
+    recordingControlInFlight = true;
+    setRecordingButtons({ recordingStatus: recordingState });
     await send("RECORDING_SESSION_STOPPING");
     recordingStopReason = "stop";
     setRecordingState("stopping");
@@ -1116,6 +1191,8 @@ async function handleRecordingStop() {
       error && error.message ? error.message : "Failed to stop recording.",
       "error"
     );
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: recordingState });
   }
 }
 
@@ -1135,7 +1212,7 @@ async function handleNetworkStart() {
     await refreshStatus();
     return;
   }
-  const baseMessage =
+    const baseMessage =
     "Capture started - now Refresh (Ctrl+R) or click a link to capture requests.";
   const warningSuffix =
     response.consoleEnabled === false
