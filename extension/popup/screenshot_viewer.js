@@ -58,6 +58,15 @@ let editingTextEl = null;
 let undoStack = [];
 let redoStack = [];
 
+function setCopyLabel(text) {
+  const label = buttons.copy ? buttons.copy.querySelector(".btn-label") : null;
+  if (label) {
+    label.textContent = text;
+  } else if (buttons.copy) {
+    buttons.copy.textContent = text;
+  }
+}
+
 function setStatus(message, type = "default", autoResetMs = 0) {
   statusEl.textContent = message;
   if (type === "error") {
@@ -119,9 +128,9 @@ function setEditorEnabled(enabled) {
   buttons.copy.disabled = !enabled;
   buttons.download.disabled = !enabled;
   if (!enabled) {
-    buttons.copy.textContent = "Copy (loading...)";
+    setCopyLabel("Copy (loading...)");
   } else {
-    buttons.copy.textContent = "Copy";
+    setCopyLabel("Copy");
   }
   updateHistoryButtons();
 }
@@ -532,7 +541,7 @@ async function loadScreenshot() {
     !latestScreenshotDataUrl.startsWith("data:image/png")
   ) {
     latestScreenshotDataUrl = null;
-    buttons.copy.textContent = "Copy";
+    setCopyLabel("Copy");
     setStatus("No screenshot data found. Capture again.", "error");
     return;
   }
@@ -556,7 +565,7 @@ async function loadScreenshot() {
   };
   image.onerror = () => {
     latestScreenshotDataUrl = null;
-    buttons.copy.textContent = "Copy";
+    setCopyLabel("Copy");
     setStatus("Failed to load screenshot. Capture again.", "error");
   };
   image.src = latestScreenshotDataUrl;

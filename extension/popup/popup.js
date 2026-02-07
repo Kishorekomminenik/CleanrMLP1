@@ -38,6 +38,9 @@ const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
 const networkTip = document.getElementById("network_tip");
 const networkGuidance = document.getElementById("networkGuidance");
+const controlsStatus = document.getElementById("controlsStatus");
+const networkStatusStrip = document.getElementById("networkStatusStrip");
+const versionBadge = document.getElementById("versionBadge");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
@@ -64,9 +67,17 @@ const STATUS_COLORS = {
   success: "#166534",
 };
 
+const APP_VERSION = "v0.1";
+
 function setStatus(element, message, type = "default") {
   element.textContent = message;
   element.style.color = STATUS_COLORS[type] || STATUS_COLORS.default;
+  element.classList.remove("status--error", "status--success");
+  if (type === "error") {
+    element.classList.add("status--error");
+  } else if (type === "success") {
+    element.classList.add("status--success");
+  }
 }
 
 async function send(type, payload = {}) {
@@ -514,17 +525,35 @@ function applyStatusMessage(state) {
       (sessionState === "idle" || sessionState === "stopped")
     ) {
       setStatus(statusElements.message, "Recording ready.", "success");
+      if (controlsStatus) {
+        controlsStatus.textContent = "Recording ready.";
+        controlsStatus.classList.remove("is-hidden");
+      }
       return;
     }
   }
   if (!state.statusMessage || !state.statusMessage.message) {
     statusElements.message.textContent = "-";
+    if (controlsStatus) {
+      controlsStatus.classList.add("is-hidden");
+    }
+    if (networkStatusStrip) {
+      networkStatusStrip.classList.add("is-hidden");
+    }
     return;
   }
   const level = state.statusMessage.level;
   const type =
     level === "error" ? "error" : level === "success" ? "success" : "default";
   setStatus(statusElements.message, state.statusMessage.message, type);
+  if (controlsStatus) {
+    controlsStatus.textContent = state.statusMessage.message;
+    controlsStatus.classList.remove("is-hidden");
+  }
+  if (networkStatusStrip) {
+    networkStatusStrip.textContent = state.statusMessage.message;
+    networkStatusStrip.classList.remove("is-hidden");
+  }
 }
 
 async function showErrorFromResponse(response) {
@@ -1335,3 +1364,7 @@ initCapabilities();
 loadRecordingDownloadData();
 refreshStatus();
 setInterval(refreshStatus, 1000);
+
+if (versionBadge) {
+  versionBadge.textContent = APP_VERSION;
+}

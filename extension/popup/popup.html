@@ -8,8 +8,11 @@
   </head>
   <body>
     <div class="container">
-      <header>
-        <h1>QA Evidence Recorder</h1>
+      <header class="app-header">
+        <div class="brand-row">
+          <h1>Repro</h1>
+          <span id="versionBadge" class="badge">v0.1</span>
+        </div>
         <p class="subtitle">Capture evidence for bug reports.</p>
         <p class="warning">
           Captures active tab only. Starts only when you press Start.
@@ -17,7 +20,7 @@
       </header>
 
       <section class="card">
-        <h2>Mode Selector</h2>
+        <h2>Mode</h2>
         <div class="radio-group">
           <div class="radio-option">
             <input
@@ -27,7 +30,10 @@
               value="screenshot"
               checked
             />
-            <label for="mode_screenshot">Screenshot</label>
+            <label for="mode_screenshot" class="mode-label">
+              <span class="mode-icon" aria-hidden="true">&#128247;</span>
+              <span class="mode-text">Screenshot</span>
+            </label>
           </div>
           <div class="radio-option">
             <input
@@ -36,7 +42,10 @@
               id="mode_recording"
               value="recording"
             />
-            <label id="label_recording" for="mode_recording">Recording</label>
+            <label id="label_recording" for="mode_recording" class="mode-label">
+              <span class="mode-icon" aria-hidden="true">&#127909;</span>
+              <span class="mode-text">Recording</span>
+            </label>
           </div>
           <div class="radio-option">
             <input
@@ -45,7 +54,10 @@
               id="mode_network"
               value="network_console"
             />
-            <label id="label_network" for="mode_network">Network + Console</label>
+            <label id="label_network" for="mode_network" class="mode-label">
+              <span class="mode-icon" aria-hidden="true">&#128225;</span>
+              <span class="mode-text">Network + Console</span>
+            </label>
           </div>
         </div>
         <div id="capability-messages" class="capability-messages">
@@ -69,14 +81,15 @@
             <button id="btn_start_recording" class="primary">Start</button>
             <button id="btn_pause_recording" disabled>Pause</button>
             <button id="btn_resume_recording" disabled>Resume</button>
-            <button id="btn_stop_recording" disabled>Stop</button>
+            <button id="btn_stop_recording" class="danger" disabled>Stop</button>
             <button id="btn_open_recording_panel">Open Recording Panel</button>
           </div>
+          <p id="controlsStatus" class="status-strip">-</p>
         </div>
         <div class="mode-controls" data-mode="network_console">
           <div class="button-row">
             <button id="btn_start_capture" class="primary">Start</button>
-            <button id="btn_stop_capture" disabled>Stop</button>
+            <button id="btn_stop_capture" class="danger" disabled>Stop</button>
           </div>
           <div class="button-row">
             <button id="refreshTabBtn" class="secondary" disabled>
@@ -86,6 +99,7 @@
           <p id="networkGuidance" class="hint is-hidden">
             Capture started - now Refresh (Ctrl+R) or click a link to capture requests.
           </p>
+          <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
         </div>
       </section>
 
@@ -135,7 +149,7 @@
             Download Evidence ZIP
           </button>
           <button id="btn_download_recording" class="primary is-hidden">
-            Download Recording
+            Download WebM
           </button>
           <button id="btn_reset_session">Reset Session</button>
         </div>
