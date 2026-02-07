@@ -15,6 +15,8 @@ const MAX_NETWORK_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRY_BYTES = 50000;
 const TRUNCATION_SUFFIX = "...[truncated]";
+const BINARY_CONTENT_TYPE_REGEX =
+  /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
 
 const state = {
   screenshot: {
@@ -33,6 +35,7 @@ const state = {
     tabId: null,
     requests: {},
     order: [],
+    capped: false,
     startedAt: null,
     stoppedAt: null,
   },
@@ -55,6 +58,7 @@ let session = null;
 let statusMessage = null;
 let offscreenReady = false;
 let recordingPanelWindowId = null;
+let exportPhase = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,6 +80,30 @@ function truncateToBytes(value, maxBytes) {
     truncated = new TextDecoder().decode(encoded.slice(0, sliceLength));
   }
   return `${truncated}${TRUNCATION_SUFFIX}`;
+}
+
+function getHeaderValue(headers, name) {
+  if (!headers) {
+    return null;
+  }
+  const target = name.toLowerCase();
+  const key = Object.keys(headers).find(
+    (headerName) => headerName.toLowerCase() === target
+  );
+  return key ? headers[key] : null;
+}
+
+function shouldSkipResponseBody(headers) {
+  const contentType = getHeaderValue(headers, "content-type");
+  if (!contentType) {
+    return false;
+  }
+  return BINARY_CONTENT_TYPE_REGEX.test(contentType);
+}
+
+function logExportPhase(phase, details) {
+  exportPhase = phase;
+  console.log("[EXPORT]", phase, details || "");
 }
 
 function detectBrowser(userAgent) {
@@ -402,6 +430,7 @@ async function buildZipAndDownload(environmentOverride) {
   if (typeof JSZip === "undefined") {
     throw new Error("JSZip library not loaded in service worker.");
   }
+  logExportPhase("collecting");
   const environment = environmentOverride || (await buildEnvironment({}));
   const redactionResult = await chrome.storage.local.get({
     redactionEnabled: true,
@@ -422,6 +451,7 @@ async function buildZipAndDownload(environmentOverride) {
         )
       : consoleEntries;
 
+  logExportPhase("zipping");
   const zip = new JSZip();
   if (state.screenshot.dataUrl) {
     const screenshotBlob = await dataUrlToBlob(state.screenshot.dataUrl);
@@ -445,8 +475,13 @@ async function buildZipAndDownload(environmentOverride) {
   const zipBlob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(zipBlob);
   const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-  await chrome.downloads.download({ url, filename });
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  logExportPhase("downloading");
+  try {
+    await chrome.downloads.download({ url, filename });
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  logExportPhase("done");
 }
 
 function sendMessageToTab(tabId, message) {
@@ -717,6 +752,7 @@ function updateRequestEntry(requestId, updates) {
       const oldest = state.network.order.shift();
       if (oldest) {
         delete state.network.requests[oldest];
+        state.network.capped = true;
       }
     }
   }
@@ -868,6 +904,7 @@ async function resetSession() {
   state.network.tabId = null;
   state.network.requests = {};
   state.network.order = [];
+  state.network.capped = false;
   state.network.startedAt = null;
   state.network.stoppedAt = null;
 
@@ -972,35 +1009,52 @@ function decodeResponseBody(entry) {
 }
 
 function buildNetworkExportEntries() {
-  return Object.values(state.network.requests).map((entry) => ({
-    request_id: entry.id || null,
-    timestamp: entry.timestampIso || nowIso(),
-    url: entry.url || null,
-    method: entry.method || null,
-    request_headers:
-      entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
-        ? entry.requestHeaders
-        : null,
-    request_post_data:
-      typeof entry.requestBody === "string" ? entry.requestBody : null,
-    response_status:
-      typeof entry.status === "number" ? entry.status : null,
-    response_status_text: entry.statusText || null,
-    response_headers:
+  const orderedIds = state.network.order.length
+    ? state.network.order
+    : Object.keys(state.network.requests);
+  const sliceIds =
+    orderedIds.length > MAX_NETWORK_ENTRIES
+      ? orderedIds.slice(-MAX_NETWORK_ENTRIES)
+      : orderedIds;
+  if (state.network.capped) {
+    addDiagnostic("warning", `Network entries capped at ${MAX_NETWORK_ENTRIES}`);
+    state.network.capped = false;
+  }
+  return sliceIds.map((id) => {
+    const entry = state.network.requests[id] || {};
+    const responseHeaders =
       entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0
         ? entry.responseHeaders
-        : null,
-    response_mime_type: entry.mimeType || null,
-    response_body: decodeResponseBody(entry),
-    timing: entry.timing || null,
-    from_disk_cache:
-      typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
-    from_service_worker:
-      typeof entry.fromServiceWorker === "boolean"
-        ? entry.fromServiceWorker
-        : null,
-    error_text: entry.errorText || null,
-  }));
+        : null;
+    const skipBody = shouldSkipResponseBody(responseHeaders);
+    return {
+      request_id: entry.id || null,
+      timestamp: entry.timestampIso || nowIso(),
+      url: entry.url || null,
+      method: entry.method || null,
+      request_headers:
+        entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
+          ? entry.requestHeaders
+          : null,
+      request_post_data:
+        typeof entry.requestBody === "string" ? entry.requestBody : null,
+      response_status:
+        typeof entry.status === "number" ? entry.status : null,
+      response_status_text: entry.statusText || null,
+      response_headers: responseHeaders,
+      response_mime_type: entry.mimeType || null,
+      response_body_skipped: skipBody ? true : undefined,
+      response_body: skipBody ? null : decodeResponseBody(entry),
+      timing: entry.timing || null,
+      from_disk_cache:
+        typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
+      from_service_worker:
+        typeof entry.fromServiceWorker === "boolean"
+          ? entry.fromServiceWorker
+          : null,
+      error_text: entry.errorText || null,
+    };
+  });
 }
 
 function normalizeDiagnosticLevel(level) {
@@ -1214,10 +1268,16 @@ async function handleMessage(message, sender) {
         break;
       }
       updateSessionCounts();
-      {
+      try {
         const environment = await buildEnvironment(message);
         await buildZipAndDownload(environment);
         result = { ok: true };
+      } catch (error) {
+        result = {
+          ok: false,
+          phase: exportPhase || "unknown",
+          error: error && error.message ? error.message : "Export failed.",
+        };
       }
       break;
     case "CONSOLE_LOG":

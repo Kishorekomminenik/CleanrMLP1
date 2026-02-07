@@ -134,8 +134,12 @@ function setRecordingButtons(state) {
 }
 
 function setNetworkButtons(state) {
-  buttons.networkStart.disabled = state.networkActive;
-  buttons.networkStop.disabled = !state.networkActive;
+  const isCapturing =
+    state.session &&
+    state.session.mode === "network_console" &&
+    state.session.state === "capturing";
+  buttons.networkStart.disabled = Boolean(state.networkActive || isCapturing);
+  buttons.networkStop.disabled = !isCapturing;
 }
 
 function applySessionLock(state) {
@@ -488,7 +492,12 @@ async function handleDownload() {
       ),
     ]);
     if (!res.ok) {
-      setStatus(statusElements.download, res.error, "error");
+      const phaseLabel = res.phase ? ` (${res.phase})` : "";
+      setStatus(
+        statusElements.download,
+        `Export failed${phaseLabel}: ${res.error}`,
+        "error"
+      );
       hadError = true;
       return;
     }
