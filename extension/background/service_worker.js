@@ -502,13 +502,11 @@ async function startRecording() {
     state.recording.mimeType = null;
     state.recording.error = null;
     clearStatusMessage();
-    await openRecordingPanelWindow();
   } catch (error) {
     setStatusMessage(error.message || "Failed to start recording.", "error");
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
     });
-    await resetSession();
     throw error;
   }
 }
@@ -1011,7 +1009,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return { ok: true, screenshotDataUrl: dataUrl };
         }
       case "RECORDING_START":
-        {
+        try {
           const lock = checkStartMode("recording");
           if (!lock.allowed) {
             if (lock.reason === "already_running") {
@@ -1021,15 +1019,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 state: getStatusSnapshot(),
               };
             }
+            if (session) {
+              session.state = "error";
+            }
             return {
               ok: false,
               error: lock.message,
               state: getStatusSnapshot(),
             };
           }
+          await startRecording();
+          if (session) {
+            session.state = "capturing";
+          }
+          await openRecordingPanelWindow();
+          return { ok: true, state: getStatusSnapshot() };
+        } catch (error) {
+          if (session) {
+            session.state = "error";
+          }
+          setStatusMessage(
+            error && error.message ? error.message : "Failed to start recording.",
+            "error"
+          );
+          return {
+            ok: false,
+            error: error && error.message ? error.message : "Failed to start recording.",
+            state: getStatusSnapshot(),
+          };
         }
-        await startRecording();
-        return { ok: true, state: getStatusSnapshot() };
       case "RECORDING_PAUSE":
         await pauseRecording();
         return { ok: true };
