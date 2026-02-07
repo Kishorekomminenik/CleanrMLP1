@@ -48,6 +48,9 @@ let recordingAvailable = true;
 let networkAvailable = true;
 let recordingCheckToken = 0;
 let recordingBlockedReason = null;
+let activeRecordingStream = null;
+let activeMediaRecorder = null;
+let recordedChunks = [];
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -114,6 +117,29 @@ function formatZipTimestamp(date) {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function pickRecordingMimeType() {
+  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) {
+    return "video/webm;codecs=vp9";
+  }
+  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) {
+    return "video/webm;codecs=vp8";
+  }
+  return "";
+}
+
+function stopActiveRecordingStream() {
+  if (activeRecordingStream) {
+    activeRecordingStream.getTracks().forEach((track) => track.stop());
+  }
+  activeRecordingStream = null;
+}
+
+function resetLocalRecording() {
+  recordedChunks = [];
+  activeMediaRecorder = null;
+  stopActiveRecordingStream();
 }
 
 function setMode(mode) {
@@ -252,6 +278,11 @@ async function checkRecordingAvailability() {
     await refreshStatus();
     return;
   }
+  if (!chrome?.tabCapture?.capture) {
+    setRecordingBlocked("unsupported");
+    await refreshStatus();
+    return;
+  }
   enableRecordingUI();
   await refreshStatus();
 }
@@ -354,6 +385,14 @@ function applyStatusMessage(state) {
       setStatus(
         statusElements.message,
         "Recording requires an active http(s) webpage.",
+        "error"
+      );
+      return;
+    }
+    if (recordingBlockedReason === "unsupported") {
+      setStatus(
+        statusElements.message,
+        "Recording not supported in this browser.",
         "error"
       );
       return;
@@ -578,56 +617,168 @@ async function handleScreenshot() {
 }
 
 async function handleRecordingStart() {
-  setStatus(statusElements.download, "Starting recording...");
-  const response = await send("RECORDING_START");
-  if (!response.ok) {
-    if (response.error && isPolicyError(response.error)) {
-      setRecordingBlocked("policy");
-    }
-    await handleFailedResponse(response);
-    await refreshStatus();
+  if (recordingBlockedReason === "invalid_tab") {
+    setStatus(
+      statusElements.message,
+      "Recording requires an active http(s) webpage.",
+      "error"
+    );
     return;
   }
-  if (response.message) {
-    setStatus(statusElements.download, response.message);
-  } else {
-    setStatus(statusElements.download, "Recording started.", "success");
+  if (recordingBlockedReason === "policy") {
+    setStatus(
+      statusElements.message,
+      "Recording is unavailable due to browser or enterprise policy.",
+      "error"
+    );
+    return;
   }
-  await refreshStatus();
+  console.log("[REC] start clicked");
+  setStatus(statusElements.download, "Starting recording...");
+  chrome.tabCapture.capture({ video: true, audio: false }, (stream) => {
+    const lastError = chrome.runtime.lastError;
+    console.log("[REC] capture returned", stream, lastError);
+    if (lastError || !stream) {
+      const message = lastError && lastError.message ? lastError.message : "";
+      if (message && isPolicyError(message)) {
+        setRecordingBlocked("policy");
+        setStatus(
+          statusElements.message,
+          "Recording blocked by browser policy.",
+          "error"
+        );
+      } else if (message) {
+        setStatus(statusElements.message, `Recording failed: ${message}`, "error");
+      } else {
+        setStatus(
+          statusElements.message,
+          "Recording failed: capture was denied or no stream returned.",
+          "error"
+        );
+      }
+      setStatus(statusElements.download, "Recording failed.", "error");
+      refreshStatus();
+      return;
+    }
+    activeRecordingStream = stream;
+    recordedChunks = [];
+    const options = {};
+    const mimeType = pickRecordingMimeType();
+    if (mimeType) {
+      options.mimeType = mimeType;
+    }
+    try {
+      activeMediaRecorder = new MediaRecorder(stream, options);
+    } catch (error) {
+      setStatus(
+        statusElements.message,
+        `Recording failed: ${error && error.message ? error.message : String(error)}`,
+        "error"
+      );
+      stopActiveRecordingStream();
+      refreshStatus();
+      return;
+    }
+    activeMediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    };
+    activeMediaRecorder.onerror = (event) => {
+      const errorMessage =
+        event.error && event.error.message
+          ? event.error.message
+          : "Recording failed.";
+      setStatus(statusElements.message, `Recording failed: ${errorMessage}`, "error");
+      send("RECORDING_ERROR", { error: errorMessage });
+    };
+    activeMediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, {
+        type: activeMediaRecorder.mimeType || "video/webm",
+      });
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = reader.result;
+        await send("RECORDING_COMPLETE", {
+          dataUrl,
+          mimeType: blob.type,
+          size: blob.size,
+        });
+        resetLocalRecording();
+        setStatus(statusElements.download, "Recording stopped.", "success");
+        await refreshStatus();
+      };
+      reader.onerror = async () => {
+        await send("RECORDING_ERROR", {
+          error: "Failed to finalize recording.",
+        });
+        resetLocalRecording();
+        setStatus(statusElements.download, "Recording failed.", "error");
+        await refreshStatus();
+      };
+      reader.readAsDataURL(blob);
+    };
+    activeMediaRecorder.start(250);
+    send("RECORDING_SESSION_START");
+    setStatus(statusElements.download, "Recording started.", "success");
+    refreshStatus();
+  });
 }
 
 async function handleRecordingPause() {
-  const response = await send("RECORDING_PAUSE");
-  if (!response.ok) {
-    await handleFailedResponse(response);
-    await refreshStatus();
+  if (!activeMediaRecorder || activeMediaRecorder.state !== "recording") {
+    setStatus(statusElements.download, "Recording is not active.", "error");
     return;
   }
-  setStatus(statusElements.download, "Recording paused.", "success");
-  await refreshStatus();
+  try {
+    activeMediaRecorder.pause();
+    await send("RECORDING_SESSION_PAUSE");
+    setStatus(statusElements.download, "Recording paused.", "success");
+    await refreshStatus();
+  } catch (error) {
+    setStatus(
+      statusElements.download,
+      error && error.message ? error.message : "Failed to pause recording.",
+      "error"
+    );
+  }
 }
 
 async function handleRecordingResume() {
-  const response = await send("RECORDING_RESUME");
-  if (!response.ok) {
-    await handleFailedResponse(response);
-    await refreshStatus();
+  if (!activeMediaRecorder || activeMediaRecorder.state !== "paused") {
+    setStatus(statusElements.download, "Recording is not paused.", "error");
     return;
   }
-  setStatus(statusElements.download, "Recording resumed.", "success");
-  await refreshStatus();
+  try {
+    activeMediaRecorder.resume();
+    await send("RECORDING_SESSION_RESUME");
+    setStatus(statusElements.download, "Recording resumed.", "success");
+    await refreshStatus();
+  } catch (error) {
+    setStatus(
+      statusElements.download,
+      error && error.message ? error.message : "Failed to resume recording.",
+      "error"
+    );
+  }
 }
 
 async function handleRecordingStop() {
-  setStatus(statusElements.download, "Stopping recording...");
-  const response = await send("RECORDING_STOP");
-  if (!response.ok) {
-    await handleFailedResponse(response);
-    await refreshStatus();
+  if (!activeMediaRecorder || activeMediaRecorder.state === "inactive") {
+    setStatus(statusElements.download, "No recording to stop.", "error");
     return;
   }
-  setStatus(statusElements.download, "Recording stopped.", "success");
-  await refreshStatus();
+  setStatus(statusElements.download, "Stopping recording...");
+  try {
+    await send("RECORDING_SESSION_STOPPING");
+    activeMediaRecorder.stop();
+  } catch (error) {
+    setStatus(
+      statusElements.download,
+      error && error.message ? error.message : "Failed to stop recording.",
+      "error"
+    );
+  }
 }
 
 async function handleNetworkStart() {

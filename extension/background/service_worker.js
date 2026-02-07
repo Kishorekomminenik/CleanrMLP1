@@ -1438,6 +1438,45 @@ async function handleMessage(message, sender) {
         };
       }
       break;
+    case "RECORDING_SESSION_START": {
+      const tab = await getActiveTab();
+      ensureTabIsCapturable(tab);
+      try {
+        ensureSessionForMode("recording", tab);
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error.message || "A session already exists.",
+          state: getStatusSnapshot(),
+        };
+        break;
+      }
+      state.recording.status = "recording";
+      state.recording.dataUrl = null;
+      state.recording.capturedAt = null;
+      state.recording.mimeType = null;
+      state.recording.error = null;
+      setSessionState("capturing");
+      clearStatusMessage();
+      result = { ok: true, state: getStatusSnapshot() };
+      break;
+    }
+    case "RECORDING_SESSION_PAUSE":
+      state.recording.status = "paused";
+      setSessionState("paused");
+      clearStatusMessage();
+      result = { ok: true };
+      break;
+    case "RECORDING_SESSION_RESUME":
+      state.recording.status = "recording";
+      setSessionState("capturing");
+      clearStatusMessage();
+      result = { ok: true };
+      break;
+    case "RECORDING_SESSION_STOPPING":
+      state.recording.status = "stopping";
+      result = { ok: true };
+      break;
     case "RECORDING_PAUSE":
       await pauseRecording();
       result = { ok: true };
