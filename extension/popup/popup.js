@@ -47,16 +47,16 @@ function setStatus(element, message, type = "default") {
   element.style.color = STATUS_COLORS[type] || STATUS_COLORS.default;
 }
 
-function sendMessage(message) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      resolve(response || { ok: false, error: "No response from background." });
-    });
-  });
+async function send(type, payload = {}) {
+  try {
+    const res = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!res) {
+      return { ok: false, error: "No response from service worker." };
+    }
+    return res;
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 function detectBrowser(userAgent) {
@@ -292,7 +292,7 @@ function updateStatusUI(state) {
 }
 
 async function refreshStatus() {
-  const response = await sendMessage({ type: "GET_STATUS" });
+  const response = await send("GET_STATUS");
   if (!response.ok) {
     setStatus(statusElements.download, response.error, "error");
     return;
@@ -302,7 +302,7 @@ async function refreshStatus() {
 
 async function handleScreenshot() {
   setStatus(statusElements.message, "Capturing screenshot...");
-  const response = await sendMessage({ type: "TAKE_SCREENSHOT" });
+  const response = await send("TAKE_SCREENSHOT");
   if (
     !response.ok ||
     typeof response.screenshotDataUrl !== "string" ||
@@ -327,9 +327,10 @@ async function handleScreenshot() {
 
 async function handleRecordingStart() {
   setStatus(statusElements.download, "Starting recording...");
-  const response = await sendMessage({ type: "RECORDING_START" });
+  const response = await send("RECORDING_START");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   if (response.message) {
@@ -341,9 +342,10 @@ async function handleRecordingStart() {
 }
 
 async function handleRecordingPause() {
-  const response = await sendMessage({ type: "RECORDING_PAUSE" });
+  const response = await send("RECORDING_PAUSE");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Recording paused.", "success");
@@ -351,9 +353,10 @@ async function handleRecordingPause() {
 }
 
 async function handleRecordingResume() {
-  const response = await sendMessage({ type: "RECORDING_RESUME" });
+  const response = await send("RECORDING_RESUME");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Recording resumed.", "success");
@@ -362,9 +365,10 @@ async function handleRecordingResume() {
 
 async function handleRecordingStop() {
   setStatus(statusElements.download, "Stopping recording...");
-  const response = await sendMessage({ type: "RECORDING_STOP" });
+  const response = await send("RECORDING_STOP");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Recording stopped.", "success");
@@ -373,9 +377,10 @@ async function handleRecordingStop() {
 
 async function handleNetworkStart() {
   setStatus(statusElements.download, "Starting network capture...");
-  const response = await sendMessage({ type: "NETWORK_START" });
+  const response = await send("NETWORK_START");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   if (response.message) {
@@ -388,9 +393,10 @@ async function handleNetworkStart() {
 
 async function handleNetworkStop() {
   setStatus(statusElements.download, "Stopping network capture...");
-  const response = await sendMessage({ type: "NETWORK_STOP" });
+  const response = await send("NETWORK_STOP");
   if (!response.ok) {
     await handleFailedResponse(response);
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Network capture stopped.", "success");
@@ -434,7 +440,7 @@ async function handleDownload() {
       hadError = true;
       return;
     }
-    const statusResponse = await sendMessage({ type: "GET_STATUS" });
+    const statusResponse = await send("GET_STATUS");
     if (!statusResponse.ok) {
       setStatus(statusElements.download, statusResponse.error, "error");
       hadError = true;
@@ -464,7 +470,7 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
-    const response = await sendMessage({ type: "GET_EXPORT_DATA", timezone });
+    const response = await send("GET_EXPORT_DATA", { timezone });
     if (!response.ok) {
       setStatus(statusElements.download, response.error, "error");
       hadError = true;
@@ -554,13 +560,15 @@ async function handleDownload() {
     if (!hadError) {
       setStatus(statusElements.download, "Ready.");
     }
+    await refreshStatus();
   }
 }
 
 async function handleResetSession() {
-  const response = await sendMessage({ type: "RESET_SESSION" });
+  const response = await send("RESET_SESSION");
   if (!response.ok) {
     setStatus(statusElements.download, response.error, "error");
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Session reset.", "success");
@@ -580,7 +588,8 @@ buttons.recordPause.addEventListener("click", handleRecordingPause);
 buttons.recordResume.addEventListener("click", handleRecordingResume);
 buttons.recordStop.addEventListener("click", handleRecordingStop);
 buttons.recordPanel.addEventListener("click", async () => {
-  await sendMessage({ type: "OPEN_RECORDING_PANEL" });
+  await send("OPEN_RECORDING_PANEL");
+  await refreshStatus();
 });
 buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
