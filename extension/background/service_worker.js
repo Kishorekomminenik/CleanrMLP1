@@ -471,6 +471,7 @@ async function startRecording() {
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
     });
+    await resetSession();
     throw error;
   }
 }
