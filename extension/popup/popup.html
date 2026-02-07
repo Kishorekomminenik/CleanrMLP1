@@ -29,7 +29,7 @@
             />
             Screenshot
           </label>
-          <label>
+          <label id="label_recording">
             <input
               type="radio"
               name="captureMode"
@@ -48,6 +48,9 @@
             Network + Console
           </label>
         </div>
+        <p id="recordingUnavailable" class="hint is-hidden">
+          Recording is unavailable in this browser/environment (enterprise policy).
+        </p>
       </section>
 
       <section class="card">
@@ -64,9 +67,6 @@
             <button id="btn_stop_recording" disabled>Stop</button>
             <button id="btn_open_recording_panel">Open Recording Panel</button>
           </div>
-          <p id="recordingUnavailable" class="hint is-hidden">
-            Recording is unavailable in this browser/environment due to policy restrictions.
-          </p>
         </div>
         <div class="mode-controls" data-mode="network_console">
           <div class="button-row">

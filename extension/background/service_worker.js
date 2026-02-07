@@ -1116,6 +1116,15 @@ async function handleMessage(message, sender) {
     case "GET_STATUS":
       result = { ok: true, state: getStatusSnapshot() };
       break;
+    case "GET_CAPABILITIES":
+      result = {
+        ok: true,
+        capabilities: {
+          tabCapture: Boolean(chrome?.tabCapture?.getMediaStreamId),
+          debugger: Boolean(chrome?.debugger),
+        },
+      };
+      break;
     case "GET_RECORDING_CAPABILITY":
       result = {
         ok: true,

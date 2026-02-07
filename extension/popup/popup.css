@@ -88,6 +88,15 @@ h2 {
   align-items: center;
 }
 
+.radio-group label.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.radio-group label.is-disabled input {
+  cursor: not-allowed;
+}
+
 .button-row {
   display: flex;
   gap: 6px;

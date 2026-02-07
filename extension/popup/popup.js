@@ -36,6 +36,7 @@ const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
 const recordingUnavailable = document.getElementById("recordingUnavailable");
 const recordingRadio = document.getElementById("mode_recording");
+const recordingLabel = document.getElementById("label_recording");
 let statusUserToggled = false;
 let recordingAvailable = true;
 
@@ -133,7 +134,15 @@ function setRecordingButtons(state) {
     buttons.recordPause.disabled = true;
     buttons.recordResume.disabled = true;
     buttons.recordStop.disabled = true;
+    if (buttons.recordPanel) {
+      buttons.recordPanel.disabled = true;
+      buttons.recordPanel.classList.add("is-hidden");
+    }
     return;
+  }
+  if (buttons.recordPanel) {
+    buttons.recordPanel.disabled = false;
+    buttons.recordPanel.classList.remove("is-hidden");
   }
   const status = state.recordingStatus;
   buttons.recordStart.disabled = status === "recording" || status === "paused";
@@ -559,11 +568,17 @@ async function loadRedactionSetting() {
 }
 
 async function loadRecordingAvailability() {
-  const res = await send("GET_RECORDING_CAPABILITY");
-  if (!res.ok || res.isTabCaptureAvailable === false) {
+  const res = await send("GET_CAPABILITIES");
+  const tabCaptureAvailable = Boolean(
+    res && res.ok && res.capabilities && res.capabilities.tabCapture
+  );
+  if (!res.ok || !tabCaptureAvailable) {
     recordingAvailable = false;
     if (recordingRadio) {
       recordingRadio.disabled = true;
+      if (recordingLabel) {
+        recordingLabel.classList.add("is-disabled");
+      }
       if (recordingRadio.checked) {
         const screenshotRadio = document.getElementById("mode_screenshot");
         if (screenshotRadio) {
@@ -576,6 +591,17 @@ async function loadRecordingAvailability() {
       recordingUnavailable.classList.remove("is-hidden");
     }
     setRecordingButtons({ recordingStatus: "idle" });
+    return;
+  }
+  recordingAvailable = true;
+  if (recordingRadio) {
+    recordingRadio.disabled = false;
+  }
+  if (recordingLabel) {
+    recordingLabel.classList.remove("is-disabled");
+  }
+  if (recordingUnavailable) {
+    recordingUnavailable.classList.add("is-hidden");
   }
 }
 
