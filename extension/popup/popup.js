@@ -425,6 +425,15 @@ async function handleDownload() {
   buttons.download.disabled = true;
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
+    if (typeof JSZip === "undefined") {
+      setStatus(
+        statusElements.message,
+        "ZIP export failed: JSZip library not loaded. Check popup.html script path.",
+        "error"
+      );
+      hadError = true;
+      return;
+    }
     const statusResponse = await sendMessage({ type: "GET_STATUS" });
     if (!statusResponse.ok) {
       setStatus(statusElements.download, statusResponse.error, "error");
