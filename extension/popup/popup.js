@@ -47,6 +47,8 @@ let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
 let recordingCheckToken = 0;
+let recordingBlockedReason = null;
+let recordingLastError = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -179,6 +181,7 @@ function setRecordingButtons(state) {
 
 function disableRecordingUI() {
   recordingAvailable = false;
+  recordingBlockedReason = "policy";
   if (recordingUnavailable) {
     const shouldShow = currentMode === "recording";
     recordingUnavailable.classList.toggle("hidden", !shouldShow);
@@ -188,13 +191,44 @@ function disableRecordingUI() {
 
 function enableRecordingUI() {
   recordingAvailable = true;
+  recordingBlockedReason = null;
   if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
   }
 }
 
+function setRecordingBlocked(reason) {
+  recordingAvailable = false;
+  recordingBlockedReason = reason;
+  if (recordingUnavailable) {
+    const shouldShow = currentMode === "recording" && reason === "policy";
+    recordingUnavailable.classList.toggle("hidden", !shouldShow);
+  }
+  setRecordingButtons({ recordingStatus: "idle" });
+}
+
+function isPolicyError(message) {
+  if (!message) {
+    return false;
+  }
+  const lower = message.toLowerCase();
+  return [
+    "policy",
+    "enterprise",
+    "managed",
+    "administrator",
+    "admin",
+    "not allowed",
+    "not permitted",
+    "blocked",
+    "disabled",
+  ].some((keyword) => lower.includes(keyword));
+}
+
 async function canUseTabCapture() {
+  recordingLastError = null;
   if (!chrome?.tabCapture?.getMediaStreamId) {
+    recordingLastError = "tabCapture API unavailable";
     return false;
   }
   try {
@@ -203,6 +237,7 @@ async function canUseTabCapture() {
       currentWindow: true,
     });
     if (!tab || !tab.id) {
+      recordingLastError = "No active tab";
       return false;
     }
     const streamId = await new Promise((resolve, reject) => {
@@ -218,22 +253,52 @@ async function canUseTabCapture() {
         reject(error);
       }
     });
-    return Boolean(streamId);
+    if (!streamId) {
+      recordingLastError = "No stream id returned";
+      return false;
+    }
+    return true;
   } catch (error) {
+    recordingLastError = error && error.message ? error.message : String(error);
     return false;
   }
 }
 
 async function checkRecordingAvailability() {
   const token = ++recordingCheckToken;
+  let activeTab = null;
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    activeTab = tab;
+  } catch (error) {
+    activeTab = null;
+  }
+  if (token !== recordingCheckToken) {
+    return;
+  }
+  if (!activeTab || !activeTab.id || !activeTab.url) {
+    enableRecordingUI();
+    await refreshStatus();
+    return;
+  }
+  if (!/^https?:\/\//i.test(activeTab.url)) {
+    setRecordingBlocked("invalid_tab");
+    await refreshStatus();
+    return;
+  }
   const canRecord = await canUseTabCapture();
   if (token !== recordingCheckToken) {
     return;
   }
   if (canRecord) {
     enableRecordingUI();
+  } else if (isPolicyError(recordingLastError)) {
+    setRecordingBlocked("policy");
   } else {
-    disableRecordingUI();
+    enableRecordingUI();
   }
   await refreshStatus();
 }
@@ -322,13 +387,31 @@ function applySessionLock(state) {
 }
 
 function applyStatusMessage(state) {
-  if (currentMode === "recording" && !recordingAvailable) {
-    setStatus(
-      statusElements.message,
-      "recording_blocked_policy: Recording unavailable due to browser/enterprise policy. Use Screenshot or Network+Console.",
-      "error"
-    );
-    return;
+  if (currentMode === "recording") {
+    const sessionState = state.session ? state.session.state : "idle";
+    if (recordingBlockedReason === "policy") {
+      setStatus(
+        statusElements.message,
+        "recording_blocked_policy: Recording is unavailable due to browser or enterprise policy. Use Screenshot or Network+Console.",
+        "error"
+      );
+      return;
+    }
+    if (recordingBlockedReason === "invalid_tab") {
+      setStatus(
+        statusElements.message,
+        "Recording requires an active http(s) webpage.",
+        "error"
+      );
+      return;
+    }
+    if (
+      (!state.statusMessage || !state.statusMessage.message) &&
+      (sessionState === "idle" || sessionState === "stopped")
+    ) {
+      setStatus(statusElements.message, "Recording ready.", "success");
+      return;
+    }
   }
   if (!state.statusMessage || !state.statusMessage.message) {
     statusElements.message.textContent = "-";
@@ -754,7 +837,7 @@ async function loadRecordingAvailability() {
     res && res.ok && res.capabilities && res.capabilities.tabCaptureAvailable
   );
   if (!res.ok || !tabCaptureAvailable) {
-    disableRecordingUI();
+    enableRecordingUI();
     return res;
   }
   enableRecordingUI();
