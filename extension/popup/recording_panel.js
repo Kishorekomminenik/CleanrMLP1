@@ -40,13 +40,31 @@ async function refreshStatus() {
   }
   const state = res.state;
   const sessionState = state.session ? state.session.state : "idle";
-  timerEl.textContent = formatElapsedWithPauses(state.session);
-  stateEl.textContent = sessionState || "idle";
   messageEl.textContent =
     state.statusMessage && state.statusMessage.message
       ? state.statusMessage.message
       : "-";
 
+  const live = await send("RECORDING_GET_STATE");
+  if (live && live.ok) {
+    const fakeSession = {
+      created_at: live.startedAt || (state.session ? state.session.created_at : null),
+      ended_at: null,
+      pause_started_at: live.pausedAt || null,
+      total_paused_ms: live.totalPausedMs || 0,
+    };
+    timerEl.textContent = formatElapsedWithPauses(fakeSession);
+    stateEl.textContent = live.state || sessionState || "idle";
+    const isCapturing = live.state === "recording";
+    const isPaused = live.state === "paused";
+    pauseBtn.disabled = !isCapturing;
+    resumeBtn.disabled = !isPaused;
+    stopBtn.disabled = !(isCapturing || isPaused);
+    return;
+  }
+
+  timerEl.textContent = formatElapsedWithPauses(state.session);
+  stateEl.textContent = sessionState || "idle";
   const isCapturing = sessionState === "capturing";
   const isPaused = sessionState === "paused";
   pauseBtn.disabled = !isCapturing;

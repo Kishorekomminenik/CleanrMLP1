@@ -44,6 +44,7 @@ const state = {
     mimeType: null,
     capturedAt: null,
     error: null,
+    hasData: false,
   },
   network: {
     active: false,
@@ -632,6 +633,7 @@ async function startRecording() {
     state.recording.capturedAt = null;
     state.recording.mimeType = null;
     state.recording.error = null;
+    state.recording.hasData = false;
     clearStatusMessage();
   } catch (error) {
     setStatusMessage(error.message || "Failed to start recording.", "error");
@@ -1466,6 +1468,7 @@ async function handleMessage(message, sender) {
       state.recording.capturedAt = null;
       state.recording.mimeType = null;
       state.recording.error = null;
+      state.recording.hasData = false;
       setSessionState("capturing");
       clearStatusMessage();
       result = { ok: true, state: getStatusSnapshot() };
@@ -1498,6 +1501,86 @@ async function handleMessage(message, sender) {
       state.recording.status = "stopping";
       result = { ok: true };
       break;
+    case "RECORDING_PAUSE":
+    case "RECORDING_RESUME":
+    case "RECORDING_STOP": {
+      const sessionState =
+        session && session.mode === "recording" ? session.state : "idle";
+      const currentState =
+        state.recording.status === "idle" && sessionState === "idle"
+          ? "idle"
+          : state.recording.status;
+      result = {
+        ok: true,
+        state: currentState,
+        alreadyStopped: message.type === "RECORDING_STOP" && currentState === "idle",
+      };
+      break;
+    }
+    case "RECORDING_DATA_AVAILABLE":
+      state.recording.hasData = true;
+      result = { ok: true };
+      break;
+    case "RECORDING_GET_STATE": {
+      const sessionState =
+        session && session.mode === "recording" ? session.state : "idle";
+      const startedAt =
+        session && session.mode === "recording" ? session.created_at : null;
+      const pausedAt =
+        session && session.mode === "recording"
+          ? session.pause_started_at
+          : null;
+      const totalPausedMs =
+        session && session.mode === "recording"
+          ? session.total_paused_ms || 0
+          : 0;
+      result = {
+        ok: true,
+        state:
+          state.recording.status === "idle" && sessionState === "idle"
+            ? "idle"
+            : state.recording.status,
+        startedAt,
+        pausedAt,
+        totalPausedMs,
+        hasData: Boolean(state.recording.dataUrl) || state.recording.hasData,
+        mimeType: state.recording.mimeType || "video/webm",
+        lastError: state.recording.error || null,
+      };
+      break;
+    }
+    case "RECORDING_EXPORT_WEBM": {
+      if (
+        state.recording.status === "recording" ||
+        state.recording.status === "paused"
+      ) {
+        result = { ok: false, error: "Stop recording to download." };
+        break;
+      }
+      if (!state.recording.dataUrl) {
+        result = { ok: false, error: "No recording available to download." };
+        break;
+      }
+      try {
+        const blob = await dataUrlToBlob(state.recording.dataUrl);
+        const filename = `repro_recording_${formatZipTimestamp(
+          new Date()
+        )}.webm`;
+        const url = URL.createObjectURL(blob);
+        try {
+          await chrome.downloads.download({ url, filename });
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+        result = { ok: true };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Download failed.",
+        };
+      }
+      break;
+    }
     case "RECORDING_PAUSE":
       await pauseRecording();
       result = { ok: true };
@@ -1642,6 +1725,7 @@ async function handleMessage(message, sender) {
       state.recording.mimeType = message.mimeType;
       state.recording.capturedAt = nowIso();
       state.recording.error = null;
+      state.recording.hasData = true;
       markSessionStopped();
       updateSessionCounts();
       result = { ok: true };
@@ -1649,6 +1733,7 @@ async function handleMessage(message, sender) {
     case "RECORDING_ERROR":
       state.recording.status = "idle";
       state.recording.error = message.error || "Recording failed.";
+      state.recording.hasData = Boolean(state.recording.dataUrl);
       addDiagnostic("error", "Recording failed.", {
         error: message.error || "Recording failed.",
       });

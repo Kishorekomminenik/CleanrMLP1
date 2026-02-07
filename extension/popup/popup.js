@@ -60,6 +60,7 @@ let recordingMimeType = "video/webm";
 let recordingCapturedAt = null;
 let recordingStopReason = null;
 let recordingSegmentMode = false;
+let recordingLiveState = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -160,13 +161,6 @@ function resetLocalRecording() {
 }
 
 function finalizeRecordingBlob(blob) {
-  setRecordingDownloadData(blob).catch(() => {
-    setStatus(
-      statusElements.message,
-      "Recording saved but could not store download data.",
-      "error"
-    );
-  });
   const reader = new FileReader();
   reader.onload = async () => {
     const dataUrl = reader.result;
@@ -201,6 +195,9 @@ function startMediaRecorderSegment() {
   activeMediaRecorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
       recordedChunks.push(event.data);
+      if (recordedChunks.length === 1) {
+        send("RECORDING_DATA_AVAILABLE");
+      }
     }
   };
   activeMediaRecorder.onerror = (event) => {
@@ -634,6 +631,27 @@ function formatElapsedWithPauses(session) {
   return `${minutes}:${seconds}`;
 }
 
+function formatElapsedFromLiveState(liveState, fallbackSession) {
+  if (!liveState || !liveState.startedAt) {
+    return formatElapsedWithPauses(fallbackSession);
+  }
+  const start = new Date(liveState.startedAt).getTime();
+  let end = Date.now();
+  if (liveState.state === "paused" && liveState.pausedAt) {
+    const pausedAt = new Date(liveState.pausedAt).getTime();
+    if (!Number.isNaN(pausedAt)) {
+      end = pausedAt;
+    }
+  }
+  const totalSeconds = Math.max(
+    0,
+    Math.floor((end - start - (liveState.totalPausedMs || 0)) / 1000)
+  );
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function updateStatusUI(state) {
   buttons.screenshot.disabled = false;
   modeRadios.forEach((radio) => {
@@ -651,12 +669,19 @@ function updateStatusUI(state) {
   }
 
   const sessionMode = state.session ? state.session.mode : null;
-  const sessionState = state.session ? state.session.state : "idle";
+  const liveRecordingState =
+    sessionMode === "recording" && recordingLiveState
+      ? recordingLiveState.state
+      : null;
+  const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
   const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
 
-  statusElements.timer.textContent = formatElapsedWithPauses(state.session);
+  statusElements.timer.textContent = formatElapsedFromLiveState(
+    recordingLiveState,
+    state.session
+  );
 
   const counts = state.session ? state.session.counts : null;
   const requestCount = counts ? counts.network_requests : 0;
@@ -700,6 +725,9 @@ function updateStatusUI(state) {
       currentMode !== "network_console" || !networkAvailable || !hasActiveTab;
   }
 
+  if (liveRecordingState) {
+    state.recordingStatus = liveRecordingState;
+  }
   setRecordingButtons(state);
   setNetworkButtons(state);
   applySessionLock(state);
@@ -720,8 +748,9 @@ function updateStatusUI(state) {
       buttons.download.disabled = currentMode === "screenshot" || !state.hasArtifacts;
     }
   } else if (buttons.downloadRecording) {
+    const hasRecording = state.artifacts ? state.artifacts.hasRecording : false;
     const recordingReady =
-      Boolean(recordingObjectUrl) &&
+      hasRecording &&
       state.recordingStatus !== "recording" &&
       state.recordingStatus !== "paused";
     buttons.downloadRecording.disabled = !recordingReady;
@@ -745,6 +774,25 @@ async function refreshStatus() {
   if (!response.ok) {
     setStatus(statusElements.download, response.error, "error");
     return;
+  }
+  if (
+    currentMode === "recording" ||
+    (response.state.session && response.state.session.mode === "recording")
+  ) {
+    const live = await send("RECORDING_GET_STATE");
+    if (live && live.ok) {
+      recordingLiveState = live;
+      console.log(
+        "[REC] GET_STATE ->",
+        `state=${live.state}`,
+        `hasData=${live.hasData}`,
+        `mimeType=${live.mimeType}`
+      );
+    } else {
+      recordingLiveState = null;
+    }
+  } else {
+    recordingLiveState = null;
   }
   updateStatusUI(response.state);
 }
@@ -929,7 +977,14 @@ async function handleRecordingStop() {
       await send("RECORDING_SESSION_STOPPING");
       return;
     }
-    setStatus(statusElements.download, "No recording to stop.", "error");
+    const live = await send("RECORDING_GET_STATE");
+    if (live && live.ok && (live.state === "idle" || live.state === "stopped")) {
+      setStatus(statusElements.download, "Recording already stopped.", "success");
+      await refreshStatus();
+      return;
+    }
+    setStatus(statusElements.download, "Recording already stopped.", "success");
+    await refreshStatus();
     return;
   }
   setStatus(statusElements.download, "Stopping recording...");
@@ -1140,37 +1195,35 @@ async function handleDownload() {
 }
 
 async function handleRecordingDownload() {
-  if (!recordingObjectUrl) {
-    await loadRecordingDownloadData();
-  }
-  if (!recordingObjectUrl) {
+  const live = await send("RECORDING_GET_STATE");
+  if (live && live.ok && (live.state === "recording" || live.state === "paused")) {
     setStatus(
       statusElements.download,
-      "No recording available. Record again.",
+      "Stop recording to download.",
       "error"
     );
     return;
   }
-  const filename = `recording_${formatZipTimestamp(new Date())}.webm`;
-  setStatus(statusElements.download, "Downloading recording...");
+  setStatus(statusElements.download, "Preparing download...");
   try {
-    await new Promise((resolve, reject) => {
-      chrome.downloads.download(
-        { url: recordingObjectUrl, filename, saveAs: false },
-        (downloadId) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          resolve(downloadId);
-        }
+    const res = await Promise.race([
+      send("RECORDING_EXPORT_WEBM"),
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ ok: false, error: "Download timed out." }),
+          10000
+        )
+      ),
+    ]);
+    if (!res.ok) {
+      setStatus(
+        statusElements.download,
+        res.error || "No recording available to download.",
+        "error"
       );
-    });
+      return;
+    }
     setStatus(statusElements.download, "Download started.", "success");
-    setTimeout(() => {
-      clearRecordingDownloadData();
-      refreshStatus();
-    }, 10000);
   } catch (error) {
     setStatus(
       statusElements.download,
@@ -1361,7 +1414,6 @@ modeRadios.forEach((radio) => {
 setMode(currentMode);
 loadRedactionSetting();
 initCapabilities();
-loadRecordingDownloadData();
 refreshStatus();
 setInterval(refreshStatus, 1000);
 
