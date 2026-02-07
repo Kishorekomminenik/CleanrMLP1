@@ -1,3 +1,7 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", Arial, sans-serif;
@@ -5,36 +9,40 @@ body {
   color: #1f2330;
 }
 
+#editorRoot {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar-group {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
 }
 
-.status {
+.toolbar-group.status {
   margin-left: auto;
   font-size: 12px;
   color: #4b5563;
 }
 
-.content {
-  padding: 24px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-#shot {
-  max-width: 90%;
-  max-height: 80vh;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
-  background: #ffffff;
-}
-
-button {
+button,
+.tool-button {
   font-size: 12px;
   padding: 6px 10px;
   border-radius: 6px;
@@ -42,6 +50,12 @@ button {
   background: #f2f4f8;
   color: #1f2330;
   cursor: pointer;
+}
+
+.tool-button.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
 }
 
 button.primary {
@@ -53,4 +67,102 @@ button.primary {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.control-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.control-group input[type="color"] {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.control-group select,
+.control-group input[type="range"] {
+  font-size: 12px;
+}
+
+.toggle input {
+  margin-right: 4px;
+}
+
+.is-hidden {
+  display: none;
+}
+
+#stage {
+  flex: 1;
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: #ffffff;
+  overflow: auto;
+}
+
+#canvasWrap {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+}
+
+#baseCanvas,
+#drawCanvas,
+#textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+#baseCanvas,
+#drawCanvas {
+  width: 100%;
+  height: 100%;
+}
+
+#baseCanvas {
+  pointer-events: none;
+}
+
+#drawCanvas {
+  touch-action: none;
+}
+
+#textLayer {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#textLayer.is-interactive {
+  pointer-events: auto;
+}
+
+.text-label {
+  position: absolute;
+  white-space: pre;
+  padding: 2px 4px;
+  min-width: 10px;
+  outline: none;
+  user-select: text;
+  cursor: text;
+}
+
+.text-label.is-dragging {
+  outline: 1px dashed #94a3b8;
+  cursor: move;
+}
+
+.text-label.editing {
+  background: #f8fafc;
+  outline: 1px solid #93c5fd;
 }
