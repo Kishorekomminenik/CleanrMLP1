@@ -1277,7 +1277,11 @@ async function handleDownload() {
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
     if (!window.JSZip) {
-      setStatus(statusElements.download, "JSZip is not available.", "error");
+      setStatus(
+        statusElements.download,
+        "Export unavailable: JSZip failed to load. Check popup.html script path.",
+        "error"
+      );
       hadError = true;
       return;
     }
@@ -1311,7 +1315,15 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
-    const exportResponse = await send("GET_EXPORT_DATA", { timezone });
+    const exportResponse = await Promise.race([
+      send("GET_EVIDENCE_EXPORT_DATA", { timezone }),
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ ok: false, error: "ZIP export timed out. Try again or reduce capture size." }),
+          10000
+        )
+      ),
+    ]);
     if (!exportResponse.ok) {
       setStatus(
         statusElements.download,
@@ -1347,7 +1359,10 @@ async function handleDownload() {
     zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("ZIP export timed out.")), 10000)
+      setTimeout(
+        () => reject(new Error("ZIP export timed out. Try again or reduce capture size.")),
+        10000
+      )
     );
     await Promise.race([
       (async () => {

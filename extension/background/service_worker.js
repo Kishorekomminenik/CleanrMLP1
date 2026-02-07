@@ -3,26 +3,6 @@ try {
 } catch (error) {
   // Redaction helper is optional; export will fall back to raw values.
 }
-try {
-  importScripts(chrome.runtime.getURL("lib/jszip.min.js"));
-} catch (error) {
-  // JSZip is required for SW-side ZIP export.
-}
-if (!globalThis.JSZip) {
-  console.warn("[SW] JSZip failed to load.");
-}
-
-function ensureJsZipLoaded() {
-  if (globalThis.JSZip) {
-    return true;
-  }
-  try {
-    importScripts(chrome.runtime.getURL("lib/jszip.min.js"));
-  } catch (error) {
-    return false;
-  }
-  return Boolean(globalThis.JSZip);
-}
 
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
@@ -452,13 +432,9 @@ async function buildEnvironment(context) {
   };
 }
 
-async function buildZipAndDownload(environmentOverride) {
-  if (!ensureJsZipLoaded()) {
-    throw new Error("JSZip library not loaded in service worker.");
-  }
-  const JSZipCtor = globalThis.JSZip;
-  logExportPhase("collecting");
-  const environment = environmentOverride || (await buildEnvironment({}));
+async function buildEvidenceExportData(context) {
+  updateSessionCounts();
+  const environment = await buildEnvironment(context);
   const redactionResult = await chrome.storage.local.get({
     redactionEnabled: true,
   });
@@ -477,38 +453,21 @@ async function buildZipAndDownload(environmentOverride) {
           globalThis.RedactUtils.redactConsoleEntry(entry)
         )
       : consoleEntries;
-
-  logExportPhase("zipping");
-  const zip = new JSZipCtor();
-  if (state.screenshot.dataUrl) {
-    const screenshotBlob = await dataUrlToBlob(state.screenshot.dataUrl);
-    zip.file("screenshot.png", screenshotBlob);
-  }
-  if (state.recording.dataUrl) {
-    const recordingBlob = await dataUrlToBlob(state.recording.dataUrl);
-    zip.file("recording.webm", recordingBlob);
-  }
-  zip.file(
-    "network_logs.json",
-    JSON.stringify({ version: "1.0", entries: redactedNetworkEntries }, null, 2)
-  );
-  zip.file(
-    "console_logs.json",
-    JSON.stringify({ version: "1.0", entries: redactedConsoleEntries }, null, 2)
-  );
-  zip.file("session.json", JSON.stringify(buildSessionExport(), null, 2));
-  zip.file("environment.json", JSON.stringify(environment, null, 2));
-
-  const zipBlob = await zip.generateAsync({ type: "blob" });
-  const url = URL.createObjectURL(zipBlob);
-  const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-  logExportPhase("downloading");
-  try {
-    await chrome.downloads.download({ url, filename });
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-  logExportPhase("done");
+  return {
+    screenshotDataUrl: state.screenshot.dataUrl,
+    recordingDataUrl: state.recording.dataUrl,
+    recordingMimeType: state.recording.mimeType,
+    networkLogs: {
+      version: "1.0",
+      entries: redactedNetworkEntries,
+    },
+    consoleLogs: {
+      version: "1.0",
+      entries: redactedConsoleEntries,
+    },
+    session: buildSessionExport(),
+    environment,
+  };
 }
 
 function sendMessageToTab(tabId, message) {
@@ -1580,71 +1539,20 @@ async function handleMessage(message, sender) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
-      updateSessionCounts();
-      {
-        const environment = await buildEnvironment(message);
-        const redactionResult = await chrome.storage.local.get({
-          redactionEnabled: true,
-        });
-        const redactionEnabled = redactionResult.redactionEnabled !== false;
-        const networkEntries = buildNetworkExportEntries();
-        const consoleEntries = buildConsoleExportEntries();
-        const redactedNetworkEntries =
-          redactionEnabled && globalThis.RedactUtils
-            ? networkEntries.map((entry) =>
-                globalThis.RedactUtils.redactNetworkEntry(entry)
-              )
-            : networkEntries;
-        const redactedConsoleEntries =
-          redactionEnabled && globalThis.RedactUtils
-            ? consoleEntries.map((entry) =>
-                globalThis.RedactUtils.redactConsoleEntry(entry)
-              )
-            : consoleEntries;
-        result = {
-          ok: true,
-          data: {
-            screenshotDataUrl: state.screenshot.dataUrl,
-            recordingDataUrl: state.recording.dataUrl,
-            recordingMimeType: state.recording.mimeType,
-            networkLogs: {
-              version: "1.0",
-              entries: redactedNetworkEntries,
-            },
-            consoleLogs: {
-              version: "1.0",
-              entries: redactedConsoleEntries,
-            },
-            session: buildSessionExport(),
-            environment,
-          },
-        };
-      }
+      result = { ok: true, data: await buildEvidenceExportData(message) };
       break;
-    case "DOWNLOAD_EVIDENCE_ZIP":
+    case "GET_EVIDENCE_EXPORT_DATA":
       if (!session) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
-      if (!ensureJsZipLoaded()) {
-        result = {
-          ok: false,
-          error: "JSZip library not loaded in service worker.",
-        };
-        break;
-      }
-      updateSessionCounts();
-      try {
-        const environment = await buildEnvironment(message);
-        await buildZipAndDownload(environment);
-        result = { ok: true };
-      } catch (error) {
-        result = {
-          ok: false,
-          phase: exportPhase || "unknown",
-          error: error && error.message ? error.message : "Export failed.",
-        };
-      }
+      result = { ok: true, data: await buildEvidenceExportData(message) };
+      break;
+    case "DOWNLOAD_EVIDENCE_ZIP":
+      result = {
+        ok: false,
+        error: "Export is handled in the popup.",
+      };
       break;
     case "CONSOLE_LOG":
       if (
