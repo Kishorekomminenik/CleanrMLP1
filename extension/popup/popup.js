@@ -448,15 +448,6 @@ async function handleDownload() {
   buttons.download.disabled = true;
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
-    if (typeof JSZip === "undefined") {
-      setStatus(
-        statusElements.message,
-        "ZIP export failed: JSZip library not loaded. Check popup.html script path.",
-        "error"
-      );
-      hadError = true;
-      return;
-    }
     const statusResponse = await send("GET_STATUS");
     if (!statusResponse.ok) {
       setStatus(statusElements.download, statusResponse.error, "error");
@@ -487,84 +478,22 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
-    const response = await send("GET_EXPORT_DATA", { timezone });
-    if (!response.ok) {
-      setStatus(statusElements.download, response.error, "error");
+    const res = await Promise.race([
+      send("DOWNLOAD_EVIDENCE_ZIP", { timezone }),
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ ok: false, error: "ZIP export timed out." }),
+          10000
+        )
+      ),
+    ]);
+    if (!res.ok) {
+      setStatus(statusElements.download, res.error, "error");
       hadError = true;
       return;
     }
-    if (!response.data.session) {
-      setStatus(statusElements.download, "No session to export yet.", "error");
-      hadError = true;
-      return;
-    }
 
-    const redactionResult = await chrome.storage.local.get({
-      redactionEnabled: true,
-    });
-    const redactionEnabled = redactionResult.redactionEnabled !== false;
-
-    const zip = new JSZip();
-    if (response.data.screenshotDataUrl) {
-      zip.file(
-        "screenshot.png",
-        dataUrlToBlob(response.data.screenshotDataUrl)
-      );
-    }
-    if (response.data.recordingDataUrl) {
-      zip.file(
-        "recording.webm",
-        dataUrlToBlob(response.data.recordingDataUrl)
-      );
-    }
-
-    const networkLogs = response.data.networkLogs || {
-      version: "1.0",
-      entries: [],
-    };
-    const consoleLogs = response.data.consoleLogs || {
-      version: "1.0",
-      entries: [],
-    };
-    const redactedNetworkLogs = redactionEnabled && window.RedactUtils
-      ? {
-          version: networkLogs.version,
-          entries: networkLogs.entries.map((entry) =>
-            window.RedactUtils.redactNetworkEntry(entry)
-          ),
-        }
-      : networkLogs;
-    const redactedConsoleLogs = redactionEnabled && window.RedactUtils
-      ? {
-          version: consoleLogs.version,
-          entries: consoleLogs.entries.map((entry) =>
-            window.RedactUtils.redactConsoleEntry(entry)
-          ),
-        }
-      : consoleLogs;
-
-    zip.file("network_logs.json", JSON.stringify(redactedNetworkLogs, null, 2));
-    zip.file("console_logs.json", JSON.stringify(redactedConsoleLogs, null, 2));
-
-    zip.file("session.json", JSON.stringify(response.data.session, null, 2));
-
-    const environment =
-      response.data.environment || (await buildEnvironmentFallback());
-    zip.file("environment.json", JSON.stringify(environment, null, 2));
-
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-    const url = URL.createObjectURL(zipBlob);
-
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-
-    setStatus(statusElements.download, "Download ready.", "success");
+    setStatus(statusElements.download, "Download started.", "success");
   } catch (error) {
     hadError = true;
     setStatus(

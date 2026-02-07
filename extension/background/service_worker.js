@@ -3,6 +3,11 @@ try {
 } catch (error) {
   // Redaction helper is optional; export will fall back to raw values.
 }
+try {
+  importScripts(chrome.runtime.getURL("lib/jszip.min.js"));
+} catch (error) {
+  // JSZip is required for SW-side ZIP export.
+}
 
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
@@ -93,6 +98,20 @@ function parseBrowserVersion(userAgent) {
     return chromeMatch[1];
   }
   return "unknown";
+}
+
+function formatZipTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function dataUrlToBlob(dataUrl) {
+  return fetch(dataUrl).then((res) => res.blob());
 }
 
 function isRestrictedUrl(url) {
@@ -377,6 +396,57 @@ async function buildEnvironment(context) {
     captured_title: tab && tab.title ? tab.title : "",
     timestamp: new Date().toISOString(),
   };
+}
+
+async function buildZipAndDownload(environmentOverride) {
+  if (typeof JSZip === "undefined") {
+    throw new Error("JSZip library not loaded in service worker.");
+  }
+  const environment = environmentOverride || (await buildEnvironment({}));
+  const redactionResult = await chrome.storage.local.get({
+    redactionEnabled: true,
+  });
+  const redactionEnabled = redactionResult.redactionEnabled !== false;
+  const networkEntries = buildNetworkExportEntries();
+  const consoleEntries = buildConsoleExportEntries();
+  const redactedNetworkEntries =
+    redactionEnabled && globalThis.RedactUtils
+      ? networkEntries.map((entry) =>
+          globalThis.RedactUtils.redactNetworkEntry(entry)
+        )
+      : networkEntries;
+  const redactedConsoleEntries =
+    redactionEnabled && globalThis.RedactUtils
+      ? consoleEntries.map((entry) =>
+          globalThis.RedactUtils.redactConsoleEntry(entry)
+        )
+      : consoleEntries;
+
+  const zip = new JSZip();
+  if (state.screenshot.dataUrl) {
+    const screenshotBlob = await dataUrlToBlob(state.screenshot.dataUrl);
+    zip.file("screenshot.png", screenshotBlob);
+  }
+  if (state.recording.dataUrl) {
+    const recordingBlob = await dataUrlToBlob(state.recording.dataUrl);
+    zip.file("recording.webm", recordingBlob);
+  }
+  zip.file(
+    "network_logs.json",
+    JSON.stringify({ version: "1.0", entries: redactedNetworkEntries }, null, 2)
+  );
+  zip.file(
+    "console_logs.json",
+    JSON.stringify({ version: "1.0", entries: redactedConsoleEntries }, null, 2)
+  );
+  zip.file("session.json", JSON.stringify(buildSessionExport(), null, 2));
+  zip.file("environment.json", JSON.stringify(environment, null, 2));
+
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(zipBlob);
+  const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+  await chrome.downloads.download({ url, filename });
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 function sendMessageToTab(tabId, message) {
@@ -1136,6 +1206,18 @@ async function handleMessage(message, sender) {
             environment,
           },
         };
+      }
+      break;
+    case "DOWNLOAD_EVIDENCE_ZIP":
+      if (!session) {
+        result = { ok: false, error: "No session to export yet." };
+        break;
+      }
+      updateSessionCounts();
+      {
+        const environment = await buildEnvironment(message);
+        await buildZipAndDownload(environment);
+        result = { ok: true };
       }
       break;
     case "CONSOLE_LOG":
