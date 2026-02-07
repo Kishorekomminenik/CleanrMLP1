@@ -81,95 +81,9 @@ const STATUS_COLORS = {
 };
 
 const APP_VERSION = "v0.1";
-
-let jszipLoadPromise = null;
-
-function ensureJsZipLoaded() {
-  if (window.JSZip) {
-    return Promise.resolve(window.JSZip);
-  }
-  if (jszipLoadPromise) {
-    return jszipLoadPromise;
-  }
-  jszipLoadPromise = new Promise((resolve, reject) => {
-    const fail = (error) => {
-      jszipLoadPromise = null;
-      reject(error);
-    };
-    const succeed = () => {
-      if (window.JSZip) {
-        resolve(window.JSZip);
-        return;
-      }
-      fail(
-        new Error(
-          "Export unavailable: JSZip failed to initialize. Reload the extension and try again."
-        )
-      );
-    };
-    const timeoutId = setTimeout(() => {
-      fail(
-        new Error(
-          "Export unavailable: JSZip load timed out. Reload the extension and try again."
-        )
-      );
-    }, 5000);
-
-    try {
-      const existing = document.querySelector('script[data-jszip="true"]');
-      if (existing) {
-        existing.addEventListener(
-          "load",
-          () => {
-            clearTimeout(timeoutId);
-            succeed();
-          },
-          { once: true }
-        );
-        existing.addEventListener(
-          "error",
-          () => {
-            clearTimeout(timeoutId);
-            fail(
-              new Error(
-                "Export unavailable: JSZip failed to load. Ensure lib/jszip.min.js is valid JavaScript."
-              )
-            );
-          },
-          { once: true }
-        );
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = chrome.runtime.getURL("lib/jszip.min.js");
-      script.type = "text/javascript";
-      script.async = false;
-      script.dataset.jszip = "true";
-      script.onload = () => {
-        clearTimeout(timeoutId);
-        succeed();
-      };
-      script.onerror = () => {
-        clearTimeout(timeoutId);
-        fail(
-          new Error(
-            "Export unavailable: JSZip failed to load. Ensure lib/jszip.min.js is valid JavaScript."
-          )
-        );
-      };
-      (document.head || document.documentElement).appendChild(script);
-    } catch (error) {
-      clearTimeout(timeoutId);
-      fail(
-        new Error(
-          error && error.message ? error.message : "JSZip load failed unexpectedly."
-        )
-      );
-    }
-  });
-  return jszipLoadPromise;
-}
+const JSZIP_LOAD_ERROR =
+  "Export unavailable: JSZip failed to load. Check popup.html script path.";
+let jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -180,6 +94,20 @@ function setStatus(element, message, type = "default") {
   } else if (type === "success") {
     element.classList.add("status--success");
   }
+}
+
+function assertJsZipAvailable() {
+  jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
+  if (jszipAvailable) {
+    return true;
+  }
+  if (buttons.download) {
+    buttons.download.disabled = true;
+  }
+  if (statusElements.download) {
+    setStatus(statusElements.download, JSZIP_LOAD_ERROR, "error");
+  }
+  return false;
 }
 
 async function send(type, payload = {}) {
@@ -1144,6 +1072,9 @@ async function refreshStatus() {
     recordingLiveState = null;
   }
   updateStatusUI(response.state);
+  if (!jszipAvailable) {
+    assertJsZipAvailable();
+  }
 }
 
 async function handleScreenshot() {
@@ -1517,7 +1448,6 @@ async function handleDownload() {
   buttons.download.disabled = true;
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
-    await ensureJsZipLoaded();
     const statusResponse = await send("GET_STATUS");
     if (!statusResponse.ok) {
       setStatus(statusElements.download, statusResponse.error, "error");
@@ -1868,6 +1798,7 @@ modeRadios.forEach((radio) => {
   });
 });
 
+assertJsZipAvailable();
 setMode(currentMode);
 loadRedactionSetting();
 initCapabilities();
