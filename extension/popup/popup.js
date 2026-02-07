@@ -34,6 +34,11 @@ const downloadControls = document.getElementById("download_controls");
 const statusToggle = document.getElementById("status_toggle");
 const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
+const networkTip = document.getElementById("network_tip");
+const diagnosticsStatus = document.getElementById("diagnostics_status");
+const diagDebugger = document.getElementById("diag_debugger");
+const diagTab = document.getElementById("diag_tab");
+const diagEvents = document.getElementById("diag_events");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
@@ -338,6 +343,65 @@ function updateStatusUI(state) {
   const logCount = counts ? counts.console_entries : 0;
   const errorCount = counts ? counts.errors : 0;
   statusElements.counts.textContent = `${requestCount} requests, ${logCount} logs, ${errorCount} errors`;
+
+  if (networkTip) {
+    let showTip = false;
+    if (
+      sessionMode === "network_console" &&
+      sessionState === "capturing" &&
+      requestCount === 0
+    ) {
+      const attachedAt =
+        state.session &&
+        state.session.diagnostics &&
+        state.session.diagnostics.debugger_attached_at;
+      const startMs = attachedAt
+        ? Date.parse(attachedAt)
+        : state.session && state.session.created_at
+          ? Date.parse(state.session.created_at)
+          : null;
+      if (startMs && Date.now() - startMs > 3000) {
+        showTip = true;
+      }
+    }
+    networkTip.classList.toggle("is-hidden", !showTip);
+  }
+
+  if (diagnosticsStatus && diagDebugger && diagTab && diagEvents) {
+    const diagnostics = state.session ? state.session.diagnostics : null;
+    const attached =
+      diagnostics && diagnostics.debugger_attached === true ? "attached" : "not attached";
+    diagDebugger.textContent =
+      sessionMode === "network_console" ? attached : "-";
+    const tabId =
+      diagnostics && diagnostics.debugger_tab_id != null
+        ? diagnostics.debugger_tab_id
+        : "-";
+    let hostname = "-";
+    if (diagnostics && diagnostics.debugger_tab_url) {
+      try {
+        hostname = new URL(diagnostics.debugger_tab_url).host || "-";
+      } catch (error) {
+        hostname = "-";
+      }
+    }
+    diagTab.textContent =
+      sessionMode === "network_console" ? `${tabId} ${hostname}` : "-";
+    const eventCounts =
+      diagnostics && diagnostics.net_events_received
+        ? diagnostics.net_events_received
+        : null;
+    if (sessionMode === "network_console" && eventCounts) {
+      const requestWillBeSent = eventCounts.requestWillBeSent || 0;
+      const responseReceived = eventCounts.responseReceived || 0;
+      const loadingFinished = eventCounts.loadingFinished || 0;
+      diagEvents.textContent = `req ${requestWillBeSent} / resp ${responseReceived} / done ${loadingFinished}`;
+    } else {
+      diagEvents.textContent = "-";
+    }
+    diagnosticsStatus.textContent =
+      sessionMode === "network_console" ? "live" : "-";
+  }
 
   setRecordingButtons(state);
   setNetworkButtons(state);

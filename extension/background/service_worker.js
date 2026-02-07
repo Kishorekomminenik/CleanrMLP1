@@ -684,9 +684,10 @@ async function startNetworkCapture() {
   ensureTabIsCapturable(tab);
 
   ensureSessionForMode("network_console", tab);
+  let attached = false;
   try {
     await attachDebugger(tab.id);
-    await sendDebuggerCommand(tab.id, "Network.enable");
+    attached = true;
   } catch (error) {
     const message = error.message || String(error);
     addDiagnostic("error", "Debugger attach failed.", {
@@ -705,10 +706,47 @@ async function startNetworkCapture() {
     }
     throw error;
   }
+  try {
+    await sendDebuggerCommand(tab.id, "Network.enable");
+  } catch (error) {
+    const message = error.message || String(error);
+    addDiagnostic("warning", "Network enable failed.", {
+      error: message,
+    });
+    if (attached) {
+      try {
+        await detachDebugger(tab.id);
+      } catch (detachError) {
+        addDiagnostic("warning", "Debugger detach failed after enable error.", {
+          error: detachError.message || String(detachError),
+        });
+      }
+    }
+    setSessionState("error");
+    setStatusMessage(
+      "Unable to enable network capture. Try again or switch tabs.",
+      "error"
+    );
+    throw error;
+  }
 
   setSessionState("capturing");
+  if (session && session.diagnostics) {
+    session.diagnostics.debugger_attached = true;
+    session.diagnostics.debugger_tab_id = tab.id;
+    session.diagnostics.debugger_tab_url = tab.url || "";
+    session.diagnostics.debugger_attached_at = nowIso();
+    session.diagnostics.net_events_received = {
+      requestWillBeSent: 0,
+      responseReceived: 0,
+      loadingFinished: 0,
+      loadingFailed: 0,
+    };
+  }
   addDiagnostic("info", "Debugger attached.", { debuggerAttached: true });
-  setStatusMessage("Capturing network + console...");
+  setStatusMessage(
+    "Capturing network + console... Refresh (Ctrl+R) or navigate to capture requests."
+  );
 
   state.network.active = true;
   state.network.tabId = tab.id;
@@ -783,6 +821,19 @@ function updateRequestEntry(requestId, updates) {
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.network.active || source.tabId !== state.network.tabId) {
     return;
+  }
+
+  if (session && session.diagnostics && session.diagnostics.net_events_received) {
+    const counters = session.diagnostics.net_events_received;
+    if (method === "Network.requestWillBeSent") {
+      counters.requestWillBeSent += 1;
+    } else if (method === "Network.responseReceived") {
+      counters.responseReceived += 1;
+    } else if (method === "Network.loadingFinished") {
+      counters.loadingFinished += 1;
+    } else if (method === "Network.loadingFailed") {
+      counters.loadingFailed += 1;
+    }
   }
 
   if (method === "Network.requestWillBeSent") {
