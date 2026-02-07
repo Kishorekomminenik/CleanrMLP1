@@ -35,10 +35,6 @@ const statusToggle = document.getElementById("status_toggle");
 const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
 const networkTip = document.getElementById("network_tip");
-const diagnosticsStatus = document.getElementById("diagnostics_status");
-const diagDebugger = document.getElementById("diag_debugger");
-const diagTab = document.getElementById("diag_tab");
-const diagEvents = document.getElementById("diag_events");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
@@ -365,42 +361,6 @@ function updateStatusUI(state) {
       }
     }
     networkTip.classList.toggle("is-hidden", !showTip);
-  }
-
-  if (diagnosticsStatus && diagDebugger && diagTab && diagEvents) {
-    const diagnostics = state.session ? state.session.diagnostics : null;
-    const attached =
-      diagnostics && diagnostics.debugger_attached === true ? "attached" : "not attached";
-    diagDebugger.textContent =
-      sessionMode === "network_console" ? attached : "-";
-    const tabId =
-      diagnostics && diagnostics.debugger_tab_id != null
-        ? diagnostics.debugger_tab_id
-        : "-";
-    let hostname = "-";
-    if (diagnostics && diagnostics.debugger_tab_url) {
-      try {
-        hostname = new URL(diagnostics.debugger_tab_url).host || "-";
-      } catch (error) {
-        hostname = "-";
-      }
-    }
-    diagTab.textContent =
-      sessionMode === "network_console" ? `${tabId} ${hostname}` : "-";
-    const eventCounts =
-      diagnostics && diagnostics.net_events_received
-        ? diagnostics.net_events_received
-        : null;
-    if (sessionMode === "network_console" && eventCounts) {
-      const requestWillBeSent = eventCounts.requestWillBeSent || 0;
-      const responseReceived = eventCounts.responseReceived || 0;
-      const loadingFinished = eventCounts.loadingFinished || 0;
-      diagEvents.textContent = `req ${requestWillBeSent} / resp ${responseReceived} / done ${loadingFinished}`;
-    } else {
-      diagEvents.textContent = "-";
-    }
-    diagnosticsStatus.textContent =
-      sessionMode === "network_console" ? "live" : "-";
   }
 
   setRecordingButtons(state);

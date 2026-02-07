@@ -693,17 +693,10 @@ async function startNetworkCapture() {
     addDiagnostic("error", "Debugger attach failed.", {
       error: message,
     });
-    if (message.toLowerCase().includes("permission")) {
-      setStatusMessage(
-        "Network capture needs Debugger permission. Enable it when prompted and try again.",
-        "error"
-      );
-    } else {
-      setStatusMessage(
-        "Unable to attach the debugger to this tab. Try a regular website tab and retry.",
-        "error"
-      );
-    }
+    setStatusMessage(
+      "Network + Console unavailable due to browser policy.",
+      "error"
+    );
     throw error;
   }
   try {
@@ -730,23 +723,33 @@ async function startNetworkCapture() {
     throw error;
   }
 
-  setSessionState("capturing");
-  if (session && session.diagnostics) {
-    session.diagnostics.debugger_attached = true;
-    session.diagnostics.debugger_tab_id = tab.id;
-    session.diagnostics.debugger_tab_url = tab.url || "";
-    session.diagnostics.debugger_attached_at = nowIso();
-    session.diagnostics.net_events_received = {
-      requestWillBeSent: 0,
-      responseReceived: 0,
-      loadingFinished: 0,
-      loadingFailed: 0,
-    };
+  let runtimeEnabled = false;
+  try {
+    await sendDebuggerCommand(tab.id, "Runtime.enable");
+    runtimeEnabled = true;
+  } catch (error) {
+    const message = error.message || String(error);
+    addDiagnostic("warning", "Runtime enable failed.", {
+      error: message,
+    });
+    setStatusMessage(
+      "Console capture unavailable. Network capture is running.",
+      "info"
+    );
   }
-  addDiagnostic("info", "Debugger attached.", { debuggerAttached: true });
-  setStatusMessage(
-    "Capturing network + console... Refresh (Ctrl+R) or navigate to capture requests."
-  );
+
+  setSessionState("capturing");
+  addDiagnostic("info", "Debugger attached.", {
+    debuggerAttached: true,
+    tabId: tab.id,
+    tabUrl: tab.url || "",
+  });
+  if (runtimeEnabled) {
+    setStatusMessage(
+      "Console captured via browser debugger. Refresh (Ctrl+R) or navigate to capture requests.",
+      "success"
+    );
+  }
 
   state.network.active = true;
   state.network.tabId = tab.id;
@@ -755,13 +758,11 @@ async function startNetworkCapture() {
   state.network.startedAt = nowIso();
   state.network.stoppedAt = null;
 
-  state.console.active = true;
-  state.console.tabId = tab.id;
+  state.console.active = runtimeEnabled;
+  state.console.tabId = runtimeEnabled ? tab.id : null;
   state.console.logs = [];
   state.console.startedAt = nowIso();
   state.console.stoppedAt = null;
-
-  sendMessageToTab(tab.id, { type: "START_CONSOLE_CAPTURE" });
 }
 
 async function stopNetworkCapture() {
@@ -779,7 +780,6 @@ async function stopNetworkCapture() {
   markSessionStopped();
 
   if (tabId) {
-    sendMessageToTab(tabId, { type: "STOP_CONSOLE_CAPTURE" });
     try {
       await detachDebugger(tabId);
     } catch (error) {
@@ -823,17 +823,75 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     return;
   }
 
-  if (session && session.diagnostics && session.diagnostics.net_events_received) {
-    const counters = session.diagnostics.net_events_received;
-    if (method === "Network.requestWillBeSent") {
-      counters.requestWillBeSent += 1;
-    } else if (method === "Network.responseReceived") {
-      counters.responseReceived += 1;
-    } else if (method === "Network.loadingFinished") {
-      counters.loadingFinished += 1;
-    } else if (method === "Network.loadingFailed") {
-      counters.loadingFailed += 1;
-    }
+  if (method === "Runtime.consoleAPICalled" && state.console.active) {
+    const args = Array.isArray(params.args)
+      ? params.args.map((arg) => formatRemoteObject(arg))
+      : [];
+    const level =
+      params.type === "warning"
+        ? "warn"
+        : params.type === "debug"
+          ? "debug"
+          : params.type === "info"
+            ? "info"
+            : params.type === "error"
+              ? "error"
+              : "log";
+    const message = args.join(" ");
+    const frames = params.stackTrace ? params.stackTrace.callFrames : null;
+    const topFrame = frames && frames.length ? frames[0] : null;
+    addConsoleEntry({
+      timestamp: nowIso(),
+      level,
+      message,
+      args,
+      source: "console",
+      url: topFrame && topFrame.url ? topFrame.url : null,
+      line:
+        topFrame && typeof topFrame.lineNumber === "number"
+          ? topFrame.lineNumber
+          : null,
+      column:
+        topFrame && typeof topFrame.columnNumber === "number"
+          ? topFrame.columnNumber
+          : null,
+      stack: extractStackFromFrames(frames),
+    });
+    return;
+  }
+
+  if (method === "Runtime.exceptionThrown" && state.console.active) {
+    const details = params.exceptionDetails || {};
+    const exception = details.exception || {};
+    const message =
+      details.text ||
+      exception.description ||
+      (typeof exception.value !== "undefined" ? String(exception.value) : null) ||
+      "Uncaught exception";
+    const frames = details.stackTrace ? details.stackTrace.callFrames : null;
+    const topFrame = frames && frames.length ? frames[0] : null;
+    addConsoleEntry({
+      timestamp: nowIso(),
+      level: "error",
+      message,
+      args: [String(message)],
+      source: "window.onerror",
+      url: details.url || (topFrame && topFrame.url ? topFrame.url : null),
+      line:
+        typeof details.lineNumber === "number"
+          ? details.lineNumber
+          : topFrame && typeof topFrame.lineNumber === "number"
+            ? topFrame.lineNumber
+            : null,
+      column:
+        typeof details.columnNumber === "number"
+          ? details.columnNumber
+          : topFrame && typeof topFrame.columnNumber === "number"
+            ? topFrame.columnNumber
+            : null,
+      stack: extractStackFromFrames(frames),
+    });
+    return;
   }
 
   if (method === "Network.requestWillBeSent") {
@@ -938,13 +996,10 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   state.console.active = false;
   state.console.stoppedAt = nowIso();
   addDiagnostic("error", "Debugger detached unexpectedly.", { reason });
-
-  sendMessageToTab(source.tabId, { type: "STOP_CONSOLE_CAPTURE" });
 });
 
 async function resetSession() {
   if (state.network.tabId) {
-    sendMessageToTab(state.network.tabId, { type: "STOP_CONSOLE_CAPTURE" });
     try {
       await detachDebugger(state.network.tabId);
     } catch (error) {
@@ -1046,6 +1101,69 @@ function sanitizeConsoleEntry(entry) {
   }
   sanitized.args = trimmedArgs;
   return sanitized;
+}
+
+function formatRemoteObject(remote) {
+  if (!remote) {
+    return "undefined";
+  }
+  if (remote.type === "string") {
+    return typeof remote.value === "string"
+      ? remote.value
+      : remote.description || "";
+  }
+  if (remote.type === "number" || remote.type === "boolean") {
+    return typeof remote.value !== "undefined"
+      ? String(remote.value)
+      : remote.description || String(remote.type);
+  }
+  if (remote.type === "undefined") {
+    return "undefined";
+  }
+  if (remote.subtype === "null") {
+    return "null";
+  }
+  if (remote.type === "object") {
+    if (typeof remote.value !== "undefined") {
+      try {
+        return JSON.stringify(remote.value);
+      } catch (error) {
+        return String(remote.value);
+      }
+    }
+    if (remote.description) {
+      return String(remote.description);
+    }
+    return "[Object]";
+  }
+  if (remote.type === "function") {
+    return remote.description || "[Function]";
+  }
+  return remote.description || String(remote.type);
+}
+
+function extractStackFromFrames(frames) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return null;
+  }
+  return frames
+    .map((frame) => {
+      const url = frame.url || "<anonymous>";
+      const line = typeof frame.lineNumber === "number" ? frame.lineNumber : 0;
+      const column =
+        typeof frame.columnNumber === "number" ? frame.columnNumber : 0;
+      return `${url}:${line}:${column}`;
+    })
+    .join("\n");
+}
+
+function addConsoleEntry(entry) {
+  const sanitized = sanitizeConsoleEntry(entry);
+  state.console.logs.push(sanitized);
+  if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
+    state.console.logs.shift();
+  }
+  updateSessionCounts();
 }
 
 function buildConsoleExportEntries() {
@@ -1482,15 +1600,10 @@ async function handleMessage(message, sender) {
         sender.tab &&
         sender.tab.id === state.console.tabId
       ) {
-        const sanitized = sanitizeConsoleEntry({
+        addConsoleEntry({
           ...message.payload,
           tabId: sender.tab.id,
         });
-        state.console.logs.push(sanitized);
-        if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
-          state.console.logs.shift();
-        }
-        updateSessionCounts();
       }
       result = { ok: true };
       break;
