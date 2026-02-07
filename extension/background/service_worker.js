@@ -231,6 +231,12 @@ function createSession(mode, tab) {
 
 function ensureSessionForMode(mode, tab) {
   if (session) {
+    if (session.mode === mode && session.state === "error") {
+      session.state = "capturing";
+      session.ended_at = null;
+      clearStatusMessage();
+      return;
+    }
     throw new Error("A session already exists. Reset to start a new capture.");
   }
   createSession(mode, tab);

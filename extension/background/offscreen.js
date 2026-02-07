@@ -51,6 +51,12 @@ async function startRecording(tabId) {
     throw new Error("Recording already in progress.");
   }
 
+  if (!chrome?.tabCapture?.getMediaStreamId) {
+    throw new Error(
+      "tabCapture.getMediaStreamId is unavailable. Check manifest permissions / browser policy."
+    );
+  }
+
   try {
     resetRecording();
     const streamId = await chrome.tabCapture.getMediaStreamId({
