@@ -48,7 +48,6 @@ let recordingAvailable = true;
 let networkAvailable = true;
 let recordingCheckToken = 0;
 let recordingBlockedReason = null;
-let recordingLastError = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -225,47 +224,11 @@ function isPolicyError(message) {
   ].some((keyword) => lower.includes(keyword));
 }
 
-async function canUseTabCapture() {
-  recordingLastError = null;
-  if (!chrome?.tabCapture?.getMediaStreamId) {
-    recordingLastError = "tabCapture API unavailable";
-    return false;
-  }
-  try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
-    if (!tab || !tab.id) {
-      recordingLastError = "No active tab";
-      return false;
-    }
-    const streamId = await new Promise((resolve, reject) => {
-      try {
-        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (id) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          resolve(id);
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
-    if (!streamId) {
-      recordingLastError = "No stream id returned";
-      return false;
-    }
-    return true;
-  } catch (error) {
-    recordingLastError = error && error.message ? error.message : String(error);
-    return false;
-  }
-}
-
 async function checkRecordingAvailability() {
   const token = ++recordingCheckToken;
+  if (recordingBlockedReason === "policy") {
+    return;
+  }
   let activeTab = null;
   try {
     const [tab] = await chrome.tabs.query({
@@ -289,17 +252,7 @@ async function checkRecordingAvailability() {
     await refreshStatus();
     return;
   }
-  const canRecord = await canUseTabCapture();
-  if (token !== recordingCheckToken) {
-    return;
-  }
-  if (canRecord) {
-    enableRecordingUI();
-  } else if (isPolicyError(recordingLastError)) {
-    setRecordingBlocked("policy");
-  } else {
-    enableRecordingUI();
-  }
+  enableRecordingUI();
   await refreshStatus();
 }
 
@@ -628,6 +581,9 @@ async function handleRecordingStart() {
   setStatus(statusElements.download, "Starting recording...");
   const response = await send("RECORDING_START");
   if (!response.ok) {
+    if (response.error && isPolicyError(response.error)) {
+      setRecordingBlocked("policy");
+    }
     await handleFailedResponse(response);
     await refreshStatus();
     return;

@@ -580,38 +580,6 @@ async function ensureOffscreenReady() {
   offscreenReady = true;
 }
 
-function getTabCaptureStreamId(tabId) {
-  return new Promise((resolve, reject) => {
-    if (!chrome?.tabCapture?.getMediaStreamId) {
-      reject(
-        new Error(
-          "Recording is unavailable due to browser or enterprise policy."
-        )
-      );
-      return;
-    }
-    try {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (!streamId) {
-          reject(
-            new Error(
-              "Recording is unavailable due to browser or enterprise policy."
-            )
-          );
-          return;
-        }
-        resolve(streamId);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -637,12 +605,10 @@ async function startRecording() {
   setSessionState("capturing");
 
   try {
-    const streamId = await getTabCaptureStreamId(tab.id);
     await ensureOffscreenReady();
     const response = await sendMessageToOffscreen({
       type: "RECORDING_START",
       tabId: tab.id,
-      streamId,
     });
 
     if (!response.ok) {
@@ -1339,7 +1305,7 @@ async function handleMessage(message, sender) {
       result = {
         ok: true,
         capabilities: {
-          tabCaptureAvailable: Boolean(chrome?.tabCapture?.getMediaStreamId),
+          tabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
           debuggerApiPresent: Boolean(chrome?.debugger),
         },
       };
@@ -1399,60 +1365,10 @@ async function handleMessage(message, sender) {
       }
       break;
     }
-    case "PROBE_TAB_CAPTURE": {
-      let tabId = message.tabId;
-      let tab = null;
-      if (!tabId) {
-        tab = await getActiveTab();
-        tabId = tab && tab.id ? tab.id : null;
-      }
-      if (!tabId) {
-        result = { ok: false, error: "No active tab" };
-        break;
-      }
-      if (!tab) {
-        try {
-          tab = await chrome.tabs.get(tabId);
-        } catch (error) {
-          result = { ok: false, error: "No active tab" };
-          break;
-        }
-      }
-      try {
-        ensureTabIsCapturable(tab);
-      } catch (error) {
-        result = {
-          ok: false,
-          error: error && error.message ? error.message : "Tab not capturable.",
-        };
-        break;
-      }
-      try {
-        await ensureOffscreenReady();
-      } catch (error) {
-        result = {
-          ok: false,
-          error:
-            error && error.message
-              ? error.message
-              : "Offscreen document not ready.",
-        };
-        break;
-      }
-      const probeResponse = await sendMessageToOffscreen({
-        type: "TAB_CAPTURE_PROBE",
-        tabId,
-      });
-      result = probeResponse || {
-        ok: false,
-        error: "No response from offscreen.",
-      };
-      break;
-    }
     case "GET_RECORDING_CAPABILITY":
       result = {
         ok: true,
-        isTabCaptureAvailable: Boolean(chrome?.tabCapture?.getMediaStreamId),
+        isTabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
       };
       break;
     case "TAKE_SCREENSHOT":

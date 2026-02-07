@@ -50,24 +50,52 @@ async function startRecording(tabId, streamId) {
   if (recordingState === "recording" || recordingState === "paused") {
     throw new Error("Recording already in progress.");
   }
-  if (!streamId) {
-    throw new Error("No stream id available for recording.");
+  if (!chrome?.tabCapture?.capture) {
+    throw new Error("Recording not supported in this browser.");
   }
 
   try {
     resetRecording();
-    currentStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: "tab",
-          chromeMediaSourceId: streamId,
-        },
-      },
+    currentStream = await new Promise((resolve, reject) => {
+      try {
+        chrome.tabCapture.capture(
+          {
+            audio: false,
+            video: true,
+          },
+          (stream) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (!stream) {
+              reject(new Error("No stream returned"));
+              return;
+            }
+            resolve(stream);
+          }
+        );
+      } catch (error) {
+        reject(error);
+      }
     });
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
-    throw new Error(message);
+    const lower = message.toLowerCase();
+    if (
+      lower.includes("policy") ||
+      lower.includes("enterprise") ||
+      lower.includes("managed") ||
+      lower.includes("administrator") ||
+      lower.includes("admin") ||
+      lower.includes("not allowed") ||
+      lower.includes("not permitted") ||
+      lower.includes("blocked") ||
+      lower.includes("disabled")
+    ) {
+      throw new Error("Recording blocked by browser policy.");
+    }
+    throw new Error("Recording not supported in this browser.");
   }
 
   const options = {};
@@ -106,30 +134,6 @@ async function startRecording(tabId, streamId) {
   recordingState = "recording";
 }
 
-async function probeTabCapture(tabId) {
-  if (!tabId) {
-    return { ok: false, error: "No active tab" };
-  }
-  if (!chrome?.tabCapture?.getMediaStreamId) {
-    return {
-      ok: true,
-      tabCaptureAllowed: false,
-      reason:
-        "tabCapture.getMediaStreamId is unavailable. Check manifest permissions / browser policy.",
-    };
-  }
-  try {
-    await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-    return { ok: true, tabCaptureAllowed: true };
-  } catch (error) {
-    return {
-      ok: true,
-      tabCaptureAllowed: false,
-      reason: error && error.message ? error.message : "Probe failed.",
-    };
-  }
-}
-
 function pauseRecording() {
   if (!mediaRecorder || recordingState !== "recording") {
     throw new Error("Recording is not active.");
@@ -160,18 +164,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
   if (message.type === "RECORDING_START") {
-    startRecording(message.tabId, message.streamId)
+    startRecording(message.tabId)
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
         sendResponse({ ok: false, error: error.message || "Start failed." })
-      );
-    return true;
-  }
-  if (message.type === "TAB_CAPTURE_PROBE") {
-    probeTabCapture(message.tabId)
-      .then((result) => sendResponse(result))
-      .catch((error) =>
-        sendResponse({ ok: false, error: error.message || "Probe failed." })
       );
     return true;
   }
