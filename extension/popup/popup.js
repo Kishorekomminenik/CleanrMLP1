@@ -30,6 +30,10 @@ const screenshotHint = document.getElementById("screenshotHint");
 const statusTimerRow = document.getElementById("status_timer_row");
 const statusCountsRow = document.getElementById("status_counts_row");
 const downloadControls = document.getElementById("download_controls");
+const statusToggle = document.getElementById("status_toggle");
+const statusChevron = document.getElementById("status_chevron");
+const statusBody = document.getElementById("status_body");
+let statusUserToggled = false;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -271,6 +275,18 @@ function updateStatusUI(state) {
       currentMode === "screenshot" || !state.artifacts.hasAnyArtifacts;
   } else if (typeof state.hasArtifacts === "boolean") {
     buttons.download.disabled = currentMode === "screenshot" || !state.hasArtifacts;
+  }
+
+  const hasError = state.session && state.session.state === "error";
+  const autoExpand =
+    sessionState === "capturing" || sessionState === "paused" || hasError;
+  const shouldCollapse =
+    currentMode === "screenshot" ||
+    ((sessionState === "idle" || sessionState === "stopped") && !hasError);
+  if (!statusUserToggled) {
+    const collapsed = shouldCollapse && !autoExpand;
+    statusBody.classList.toggle("collapsed", collapsed);
+    statusChevron.textContent = collapsed ? "▸" : "▾";
   }
 }
 
@@ -560,6 +576,11 @@ buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
 buttons.download.addEventListener("click", handleDownload);
 buttons.reset.addEventListener("click", handleResetSession);
+statusToggle.addEventListener("click", () => {
+  const collapsed = statusBody.classList.toggle("collapsed");
+  statusChevron.textContent = collapsed ? "▸" : "▾";
+  statusUserToggled = true;
+});
 redactionToggle.addEventListener("change", async (event) => {
   const enabled = event.target.checked;
   await chrome.storage.local.set({ redactionEnabled: enabled });

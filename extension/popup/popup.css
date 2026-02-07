@@ -53,6 +53,29 @@ h2 {
   margin: 0 0 8px;
 }
 
+.section-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0 0 8px;
+  cursor: pointer;
+  color: #1f2330;
+}
+
+.chevron {
+  font-size: 14px;
+}
+
+.status-body.collapsed {
+  display: none;
+}
+
 .radio-group {
   display: grid;
   gap: 6px;

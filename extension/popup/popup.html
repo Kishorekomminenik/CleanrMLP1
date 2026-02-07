@@ -73,26 +73,31 @@
       </section>
 
       <section class="card">
-        <h2>Session Status</h2>
-        <div class="status-row">
-          <span class="label">Message</span>
-          <span id="status_message">-</span>
-        </div>
-        <div class="status-row">
-          <span class="label">Mode</span>
-          <span id="status_mode">-</span>
-        </div>
-        <div class="status-row">
-          <span class="label">State</span>
-          <span id="status_state">idle</span>
-        </div>
-        <div class="status-row" id="status_timer_row">
-          <span class="label">Elapsed</span>
-          <span id="status_timer">00:00</span>
-        </div>
-        <div class="status-row" id="status_counts_row">
-          <span class="label">Counts</span>
-          <span id="status_counts">0 requests, 0 logs, 0 errors</span>
+        <button id="status_toggle" class="section-toggle" type="button">
+          <span>Session Status</span>
+          <span id="status_chevron" class="chevron">▸</span>
+        </button>
+        <div id="status_body" class="status-body collapsed">
+          <div class="status-row">
+            <span class="label">Message</span>
+            <span id="status_message">-</span>
+          </div>
+          <div class="status-row">
+            <span class="label">Mode</span>
+            <span id="status_mode">-</span>
+          </div>
+          <div class="status-row">
+            <span class="label">State</span>
+            <span id="status_state">idle</span>
+          </div>
+          <div class="status-row" id="status_timer_row">
+            <span class="label">Elapsed</span>
+            <span id="status_timer">00:00</span>
+          </div>
+          <div class="status-row" id="status_counts_row">
+            <span class="label">Counts</span>
+            <span id="status_counts">0 requests, 0 logs, 0 errors</span>
+          </div>
         </div>
       </section>
 
