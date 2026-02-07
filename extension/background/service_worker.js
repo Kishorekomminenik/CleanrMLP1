@@ -971,206 +971,230 @@ function buildSessionExport() {
   };
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const handle = async () => {
-    switch (message.type) {
-      case "OPEN_RECORDING_PANEL":
-        await openRecordingPanelWindow();
-        return { ok: true };
-      case "OFFSCREEN_READY":
-        offscreenReady = true;
-        return { ok: true };
-      case "GET_STATUS":
-        return { ok: true, state: getStatusSnapshot() };
-      case "TAKE_SCREENSHOT":
-        {
-          try {
-            const dataUrl = await captureScreenshot();
-            if (
-              typeof dataUrl !== "string" ||
-              !dataUrl.startsWith("data:image/png")
-            ) {
-              return {
-                ok: false,
-                error: "Screenshot capture failed to return a PNG data URL.",
-              };
-            }
-            return { ok: true, screenshotDataUrl: dataUrl };
-          } catch (error) {
-            return {
-              ok: false,
-              error: error && error.message ? error.message : "Screenshot failed.",
-            };
-          }
+async function handleMessage(message, sender) {
+  console.log("[SW] msg", message.type);
+  let result;
+  switch (message.type) {
+    case "OPEN_RECORDING_PANEL":
+      await openRecordingPanelWindow();
+      result = { ok: true };
+      break;
+    case "OFFSCREEN_READY":
+      offscreenReady = true;
+      result = { ok: true };
+      break;
+    case "GET_STATUS":
+      result = { ok: true, state: getStatusSnapshot() };
+      break;
+    case "TAKE_SCREENSHOT":
+      try {
+        const dataUrl = await captureScreenshot();
+        if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png")) {
+          result = {
+            ok: false,
+            error: "Screenshot capture failed to return a PNG data URL.",
+          };
+          break;
         }
-      case "CAPTURE_SCREENSHOT":
-        {
-          const dataUrl = await captureScreenshot();
-          return { ok: true, screenshotDataUrl: dataUrl };
-        }
-      case "RECORDING_START":
-        try {
-          const lock = checkStartMode("recording");
-          if (!lock.allowed) {
-            if (lock.reason === "already_running") {
-              return {
-                ok: true,
-                message: lock.message,
-                state: getStatusSnapshot(),
-              };
-            }
-            if (session) {
-              session.state = "error";
-            }
-            return {
-              ok: false,
-              error: lock.message,
+        result = { ok: true, screenshotDataUrl: dataUrl };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Screenshot failed.",
+        };
+      }
+      break;
+    case "CAPTURE_SCREENSHOT":
+      {
+        const dataUrl = await captureScreenshot();
+        result = { ok: true, screenshotDataUrl: dataUrl };
+      }
+      break;
+    case "RECORDING_START":
+      try {
+        const lock = checkStartMode("recording");
+        if (!lock.allowed) {
+          if (lock.reason === "already_running") {
+            result = {
+              ok: true,
+              message: lock.message,
               state: getStatusSnapshot(),
             };
+            break;
           }
-          await startRecording();
-          if (session) {
-            session.state = "capturing";
-          }
-          await openRecordingPanelWindow();
-          return { ok: true, state: getStatusSnapshot() };
-        } catch (error) {
           if (session) {
             session.state = "error";
           }
-          setStatusMessage(
-            error && error.message ? error.message : "Failed to start recording.",
-            "error"
-          );
-          return {
+          result = {
             ok: false,
-            error: error && error.message ? error.message : "Failed to start recording.",
+            error: lock.message,
             state: getStatusSnapshot(),
           };
+          break;
         }
-      case "RECORDING_PAUSE":
-        await pauseRecording();
-        return { ok: true };
-      case "RECORDING_RESUME":
-        await resumeRecording();
-        return { ok: true };
-      case "RECORDING_STOP":
-        await stopRecording();
-        return { ok: true };
-      case "NETWORK_START":
-        {
-          const lock = checkStartMode("network_console");
-          if (!lock.allowed) {
-            if (lock.reason === "already_running") {
-              return {
-                ok: true,
-                message: lock.message,
-                state: getStatusSnapshot(),
-              };
-            }
-            return {
-              ok: false,
-              error: lock.message,
+        await startRecording();
+        if (session) {
+          session.state = "capturing";
+        }
+        await openRecordingPanelWindow();
+        result = { ok: true, state: getStatusSnapshot() };
+      } catch (error) {
+        if (session) {
+          session.state = "error";
+        }
+        setStatusMessage(
+          error && error.message ? error.message : "Failed to start recording.",
+          "error"
+        );
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Failed to start recording.",
+          state: getStatusSnapshot(),
+        };
+      }
+      break;
+    case "RECORDING_PAUSE":
+      await pauseRecording();
+      result = { ok: true };
+      break;
+    case "RECORDING_RESUME":
+      await resumeRecording();
+      result = { ok: true };
+      break;
+    case "RECORDING_STOP":
+      await stopRecording();
+      result = { ok: true };
+      break;
+    case "NETWORK_START":
+      {
+        const lock = checkStartMode("network_console");
+        if (!lock.allowed) {
+          if (lock.reason === "already_running") {
+            result = {
+              ok: true,
+              message: lock.message,
               state: getStatusSnapshot(),
             };
+            break;
           }
-        }
-        await startNetworkCapture();
-        return { ok: true, state: getStatusSnapshot() };
-      case "NETWORK_STOP":
-        await stopNetworkCapture();
-        return { ok: true };
-      case "GET_EXPORT_DATA":
-        if (!session) {
-          return { ok: false, error: "No session to export yet." };
-        }
-        updateSessionCounts();
-        {
-          const environment = await buildEnvironment(message);
-          const redactionResult = await chrome.storage.local.get({
-            redactionEnabled: true,
-          });
-          const redactionEnabled = redactionResult.redactionEnabled !== false;
-          const networkEntries = buildNetworkExportEntries();
-          const consoleEntries = buildConsoleExportEntries();
-          const redactedNetworkEntries =
-            redactionEnabled && globalThis.RedactUtils
-              ? networkEntries.map((entry) =>
-                  globalThis.RedactUtils.redactNetworkEntry(entry)
-                )
-              : networkEntries;
-          const redactedConsoleEntries =
-            redactionEnabled && globalThis.RedactUtils
-              ? consoleEntries.map((entry) =>
-                  globalThis.RedactUtils.redactConsoleEntry(entry)
-                )
-              : consoleEntries;
-          return {
-            ok: true,
-            data: {
-              screenshotDataUrl: state.screenshot.dataUrl,
-              recordingDataUrl: state.recording.dataUrl,
-              recordingMimeType: state.recording.mimeType,
-              networkLogs: {
-                version: "1.0",
-                entries: redactedNetworkEntries,
-              },
-              consoleLogs: {
-                version: "1.0",
-                entries: redactedConsoleEntries,
-              },
-              session: buildSessionExport(),
-              environment,
-            },
+          result = {
+            ok: false,
+            error: lock.message,
+            state: getStatusSnapshot(),
           };
+          break;
         }
-      case "CONSOLE_LOG": {
-        if (
-          state.console.active &&
-          sender.tab &&
-          sender.tab.id === state.console.tabId
-        ) {
-          const sanitized = sanitizeConsoleEntry({
-            ...message.payload,
-            tabId: sender.tab.id,
-          });
-          state.console.logs.push(sanitized);
-          if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
-            state.console.logs.shift();
-          }
-          updateSessionCounts();
-        }
-        return { ok: true };
       }
-      case "RECORDING_COMPLETE":
-        state.recording.status = "stopped";
-        state.recording.dataUrl = message.dataUrl;
-        state.recording.mimeType = message.mimeType;
-        state.recording.capturedAt = nowIso();
-        state.recording.error = null;
-        markSessionStopped();
-        updateSessionCounts();
-        return { ok: true };
-      case "RECORDING_ERROR":
-        state.recording.status = "idle";
-        state.recording.error = message.error || "Recording failed.";
-        addDiagnostic("error", "Recording failed.", {
-          error: message.error || "Recording failed.",
+      await startNetworkCapture();
+      result = { ok: true, state: getStatusSnapshot() };
+      break;
+    case "NETWORK_STOP":
+      await stopNetworkCapture();
+      result = { ok: true };
+      break;
+    case "GET_EXPORT_DATA":
+      if (!session) {
+        result = { ok: false, error: "No session to export yet." };
+        break;
+      }
+      updateSessionCounts();
+      {
+        const environment = await buildEnvironment(message);
+        const redactionResult = await chrome.storage.local.get({
+          redactionEnabled: true,
         });
-        return { ok: true };
-      case "RESET_SESSION":
-        await resetSession();
-        return { ok: true, state: getStatusSnapshot() };
-      default:
-        return { ok: false, error: "Unknown message type." };
+        const redactionEnabled = redactionResult.redactionEnabled !== false;
+        const networkEntries = buildNetworkExportEntries();
+        const consoleEntries = buildConsoleExportEntries();
+        const redactedNetworkEntries =
+          redactionEnabled && globalThis.RedactUtils
+            ? networkEntries.map((entry) =>
+                globalThis.RedactUtils.redactNetworkEntry(entry)
+              )
+            : networkEntries;
+        const redactedConsoleEntries =
+          redactionEnabled && globalThis.RedactUtils
+            ? consoleEntries.map((entry) =>
+                globalThis.RedactUtils.redactConsoleEntry(entry)
+              )
+            : consoleEntries;
+        result = {
+          ok: true,
+          data: {
+            screenshotDataUrl: state.screenshot.dataUrl,
+            recordingDataUrl: state.recording.dataUrl,
+            recordingMimeType: state.recording.mimeType,
+            networkLogs: {
+              version: "1.0",
+              entries: redactedNetworkEntries,
+            },
+            consoleLogs: {
+              version: "1.0",
+              entries: redactedConsoleEntries,
+            },
+            session: buildSessionExport(),
+            environment,
+          },
+        };
+      }
+      break;
+    case "CONSOLE_LOG":
+      if (
+        state.console.active &&
+        sender.tab &&
+        sender.tab.id === state.console.tabId
+      ) {
+        const sanitized = sanitizeConsoleEntry({
+          ...message.payload,
+          tabId: sender.tab.id,
+        });
+        state.console.logs.push(sanitized);
+        if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
+          state.console.logs.shift();
+        }
+        updateSessionCounts();
+      }
+      result = { ok: true };
+      break;
+    case "RECORDING_COMPLETE":
+      state.recording.status = "stopped";
+      state.recording.dataUrl = message.dataUrl;
+      state.recording.mimeType = message.mimeType;
+      state.recording.capturedAt = nowIso();
+      state.recording.error = null;
+      markSessionStopped();
+      updateSessionCounts();
+      result = { ok: true };
+      break;
+    case "RECORDING_ERROR":
+      state.recording.status = "idle";
+      state.recording.error = message.error || "Recording failed.";
+      addDiagnostic("error", "Recording failed.", {
+        error: message.error || "Recording failed.",
+      });
+      result = { ok: true };
+      break;
+    case "RESET_SESSION":
+      await resetSession();
+      result = { ok: true, state: getStatusSnapshot() };
+      break;
+    default:
+      result = { ok: false, error: "Unknown message type." };
+      break;
+  }
+  console.log("[SW] reply", result);
+  return result;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      const result = await handleMessage(msg, sender);
+      sendResponse(result ?? { ok: true });
+    } catch (e) {
+      console.log("[SW] error", e);
+      sendResponse({ ok: false, error: e?.message || String(e) });
     }
-  };
-
-  handle()
-    .then((response) => sendResponse(response))
-    .catch((error) =>
-      sendResponse({ ok: false, error: error.message || "Request failed." })
-    );
-
+  })();
   return true;
 });
