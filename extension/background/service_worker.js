@@ -694,10 +694,14 @@ async function startNetworkCapture() {
       error: message,
     });
     setStatusMessage(
-      "Network + Console unavailable due to browser policy.",
+      "Network+Console blocked by enterprise policy.",
       "error"
     );
-    throw error;
+    const attachError = new Error(
+      "Network+Console blocked by enterprise policy."
+    );
+    attachError.code = "debugger_blocked";
+    throw attachError;
   }
   try {
     await sendDebuggerCommand(tab.id, "Network.enable");
@@ -732,10 +736,6 @@ async function startNetworkCapture() {
     addDiagnostic("warning", "Runtime enable failed.", {
       error: message,
     });
-    setStatusMessage(
-      "Console capture unavailable. Network capture is running.",
-      "info"
-    );
   }
 
   setSessionState("capturing");
@@ -744,12 +744,15 @@ async function startNetworkCapture() {
     tabId: tab.id,
     tabUrl: tab.url || "",
   });
-  if (runtimeEnabled) {
-    setStatusMessage(
-      "Console captured via browser debugger. Refresh (Ctrl+R) or navigate to capture requests.",
-      "success"
-    );
-  }
+  const baseMessage =
+    "Capture started - now Refresh (Ctrl+R) or click a link to capture requests.";
+  const warningSuffix = runtimeEnabled
+    ? ""
+    : " Console capture unavailable (policy blocked). Network capture still running.";
+  setStatusMessage(
+    `${baseMessage}${warningSuffix}`,
+    runtimeEnabled ? "success" : "info"
+  );
 
   state.network.active = true;
   state.network.tabId = tab.id;
@@ -763,6 +766,7 @@ async function startNetworkCapture() {
   state.console.logs = [];
   state.console.startedAt = nowIso();
   state.console.stoppedAt = null;
+  return { consoleEnabled: runtimeEnabled };
 }
 
 async function stopNetworkCapture() {
@@ -1516,8 +1520,23 @@ async function handleMessage(message, sender) {
           break;
         }
       }
-      await startNetworkCapture();
-      result = { ok: true, state: getStatusSnapshot() };
+      try {
+        const captureResult = await startNetworkCapture();
+        result = {
+          ok: true,
+          consoleEnabled: captureResult.consoleEnabled,
+          state: getStatusSnapshot(),
+        };
+      } catch (error) {
+        const message =
+          error && error.message ? error.message : "Failed to start capture.";
+        result = {
+          ok: false,
+          error: message,
+          code: error && error.code ? error.code : undefined,
+          state: getStatusSnapshot(),
+        };
+      }
       break;
     case "NETWORK_STOP":
       await stopNetworkCapture();

@@ -16,6 +16,7 @@ const buttons = {
   recordPanel: document.getElementById("btn_open_recording_panel"),
   networkStart: document.getElementById("btn_start_capture"),
   networkStop: document.getElementById("btn_stop_capture"),
+  networkRefresh: document.getElementById("refreshTabBtn"),
   download: document.getElementById("btn_download_zip"),
   reset: document.getElementById("btn_reset_session"),
 };
@@ -35,6 +36,7 @@ const statusToggle = document.getElementById("status_toggle");
 const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
 const networkTip = document.getElementById("network_tip");
+const networkGuidance = document.getElementById("networkGuidance");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
@@ -188,6 +190,40 @@ function enableRecordingUI() {
   }
   if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
+  }
+}
+
+function disableNetworkUI() {
+  networkAvailable = false;
+  if (networkRadio) {
+    networkRadio.disabled = true;
+  }
+  if (networkLabel) {
+    networkLabel.classList.add("is-disabled");
+  }
+  if (networkUnavailable) {
+    networkUnavailable.classList.remove("hidden");
+  }
+  if (networkRadio && networkRadio.checked) {
+    const screenshotRadio = document.getElementById("mode_screenshot");
+    if (screenshotRadio) {
+      screenshotRadio.checked = true;
+      setMode("screenshot");
+    }
+  }
+  setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
+}
+
+function enableNetworkUI() {
+  networkAvailable = true;
+  if (networkRadio) {
+    networkRadio.disabled = false;
+  }
+  if (networkLabel) {
+    networkLabel.classList.remove("is-disabled");
+  }
+  if (networkUnavailable) {
+    networkUnavailable.classList.add("hidden");
   }
 }
 
@@ -347,13 +383,8 @@ function updateStatusUI(state) {
       sessionState === "capturing" &&
       requestCount === 0
     ) {
-      const attachedAt =
-        state.session &&
-        state.session.diagnostics &&
-        state.session.diagnostics.debugger_attached_at;
-      const startMs = attachedAt
-        ? Date.parse(attachedAt)
-        : state.session && state.session.created_at
+      const startMs =
+        state.session && state.session.created_at
           ? Date.parse(state.session.created_at)
           : null;
       if (startMs && Date.now() - startMs > 3000) {
@@ -361,6 +392,24 @@ function updateStatusUI(state) {
       }
     }
     networkTip.classList.toggle("is-hidden", !showTip);
+  }
+
+  if (networkGuidance) {
+    const showGuidance =
+      sessionMode === "network_console" && sessionState === "capturing";
+    if (showGuidance && state.statusMessage && state.statusMessage.message) {
+      networkGuidance.textContent = state.statusMessage.message;
+    }
+    networkGuidance.classList.toggle("is-hidden", !showGuidance);
+  }
+
+  if (buttons.networkRefresh) {
+    const hasActiveTab =
+      state.session &&
+      state.session.active_tab &&
+      state.session.active_tab.tab_id;
+    buttons.networkRefresh.disabled =
+      currentMode !== "network_console" || !networkAvailable || !hasActiveTab;
   }
 
   setRecordingButtons(state);
@@ -494,14 +543,30 @@ async function handleNetworkStart() {
   const response = await send("NETWORK_START");
   if (!response.ok) {
     await handleFailedResponse(response);
+    if (response.code === "debugger_blocked") {
+      disableNetworkUI();
+      setStatus(
+        statusElements.message,
+        "Network+Console is blocked by enterprise policy on this browser.",
+        "error"
+      );
+    }
     await refreshStatus();
     return;
   }
-  if (response.message) {
-    setStatus(statusElements.download, response.message);
-  } else {
-    setStatus(statusElements.download, "Network capture started.", "success");
+  const baseMessage =
+    "Capture started - now Refresh (Ctrl+R) or click a link to capture requests.";
+  const warningSuffix =
+    response.consoleEnabled === false
+      ? " Console capture unavailable (policy blocked). Network capture still running."
+      : "";
+  const message = `${baseMessage}${warningSuffix}`;
+  setStatus(statusElements.message, message, "success");
+  if (networkGuidance) {
+    networkGuidance.textContent = message;
+    networkGuidance.classList.remove("is-hidden");
   }
+  setStatus(statusElements.download, "Network capture started.", "success");
   await refreshStatus();
 }
 
@@ -662,76 +727,24 @@ async function loadNetworkAvailability(capabilities, tabId) {
     statusState.session.mode === "network_console" &&
     (statusState.session.state === "capturing" || statusState.networkActive);
   if (captureActive) {
-    networkAvailable = true;
-    if (networkRadio) {
-      networkRadio.disabled = false;
-    }
-    if (networkLabel) {
-      networkLabel.classList.remove("is-disabled");
-    }
-    if (networkUnavailable) {
-      networkUnavailable.classList.add("hidden");
-    }
+    enableNetworkUI();
     return;
   }
   const debuggerPresent = Boolean(
     capabilities && capabilities.debuggerApiPresent
   );
   if (!debuggerPresent) {
-    networkAvailable = false;
-    if (networkRadio) {
-      networkRadio.disabled = true;
-    }
-    if (networkLabel) {
-      networkLabel.classList.add("is-disabled");
-    }
-    if (networkUnavailable) {
-      networkUnavailable.classList.remove("hidden");
-    }
-    if (networkRadio && networkRadio.checked) {
-      const screenshotRadio = document.getElementById("mode_screenshot");
-      if (screenshotRadio) {
-        screenshotRadio.checked = true;
-        setMode("screenshot");
-      }
-    }
-    setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
+    disableNetworkUI();
     return;
   }
 
   const probe = await send("PROBE_DEBUGGER", { tabId });
   if (probe.ok && probe.debuggerAttachAllowed === false) {
-    networkAvailable = false;
-    if (networkRadio) {
-      networkRadio.disabled = true;
-    }
-    if (networkLabel) {
-      networkLabel.classList.add("is-disabled");
-    }
-    if (networkUnavailable) {
-      networkUnavailable.classList.remove("hidden");
-    }
-    if (networkRadio && networkRadio.checked) {
-      const screenshotRadio = document.getElementById("mode_screenshot");
-      if (screenshotRadio) {
-        screenshotRadio.checked = true;
-        setMode("screenshot");
-      }
-    }
-    setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
+    disableNetworkUI();
     return;
   }
 
-  networkAvailable = true;
-  if (networkRadio) {
-    networkRadio.disabled = false;
-  }
-  if (networkLabel) {
-    networkLabel.classList.remove("is-disabled");
-  }
-  if (networkUnavailable) {
-    networkUnavailable.classList.add("hidden");
-  }
+  enableNetworkUI();
 }
 
 async function initCapabilities() {
@@ -764,6 +777,32 @@ buttons.recordPanel.addEventListener("click", async () => {
 });
 buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
+if (buttons.networkRefresh) {
+  buttons.networkRefresh.addEventListener("click", async () => {
+    try {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+      if (!tab || !tab.id) {
+        setStatus(
+          statusElements.message,
+          "No active tab to refresh.",
+          "error"
+        );
+        return;
+      }
+      await chrome.tabs.reload(tab.id);
+      setStatus(statusElements.message, "Refreshing tab...", "success");
+    } catch (error) {
+      setStatus(
+        statusElements.message,
+        "Unable to refresh the active tab.",
+        "error"
+      );
+    }
+  });
+}
 buttons.download.addEventListener("click", handleDownload);
 buttons.reset.addEventListener("click", handleResetSession);
 statusToggle.addEventListener("click", () => {

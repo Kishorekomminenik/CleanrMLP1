@@ -53,7 +53,7 @@
             Recording is unavailable in this browser/environment due to enterprise policy.
           </div>
           <div id="network-disabled-msg" class="capability-msg hidden">
-            Network + Console is unavailable in this browser/environment (debugger blocked by policy).
+            Network+Console blocked by enterprise policy.
           </div>
         </div>
       </section>
@@ -78,6 +78,14 @@
             <button id="btn_start_capture" class="primary">Start</button>
             <button id="btn_stop_capture" disabled>Stop</button>
           </div>
+          <div class="button-row">
+            <button id="refreshTabBtn" class="secondary" disabled>
+              Refresh Tab
+            </button>
+          </div>
+          <p id="networkGuidance" class="hint is-hidden">
+            Capture started - now Refresh (Ctrl+R) or click a link to capture requests.
+          </p>
         </div>
       </section>
 
@@ -108,7 +116,7 @@
             <span id="status_counts">0 requests, 0 logs, 0 errors</span>
           </div>
           <div id="network_tip" class="status-tip is-hidden">
-            No requests yet. Try refreshing the page or clicking a link.
+            No requests yet. Try Refresh (Ctrl+R) or click a link / trigger an API call.
           </div>
         </div>
       </section>

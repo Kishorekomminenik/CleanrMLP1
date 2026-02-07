@@ -132,6 +132,12 @@ button.primary {
   color: #ffffff;
 }
 
+button.secondary {
+  background: #e5e7eb;
+  border-color: #c6cad6;
+  color: #1f2330;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
