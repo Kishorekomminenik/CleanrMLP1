@@ -43,26 +43,19 @@ async function finalizeRecording() {
   stopStreamTracks();
 }
 
-async function startRecording(tabId) {
+async function startRecording(tabId, streamId) {
   if (!tabId) {
     throw new Error("No active tab to record.");
   }
   if (recordingState === "recording" || recordingState === "paused") {
     throw new Error("Recording already in progress.");
   }
-
-  if (!chrome?.tabCapture?.getMediaStreamId) {
-    throw new Error(
-      "tabCapture.getMediaStreamId is unavailable. Check manifest permissions / browser policy."
-    );
+  if (!streamId) {
+    throw new Error("No stream id available for recording.");
   }
 
   try {
     resetRecording();
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tabId,
-    });
-
     currentStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
@@ -167,7 +160,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
   if (message.type === "RECORDING_START") {
-    startRecording(message.tabId)
+    startRecording(message.tabId, message.streamId)
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
         sendResponse({ ok: false, error: error.message || "Start failed." })

@@ -580,6 +580,38 @@ async function ensureOffscreenReady() {
   offscreenReady = true;
 }
 
+function getTabCaptureStreamId(tabId) {
+  return new Promise((resolve, reject) => {
+    if (!chrome?.tabCapture?.getMediaStreamId) {
+      reject(
+        new Error(
+          "Recording is unavailable due to browser or enterprise policy."
+        )
+      );
+      return;
+    }
+    try {
+      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!streamId) {
+          reject(
+            new Error(
+              "Recording is unavailable due to browser or enterprise policy."
+            )
+          );
+          return;
+        }
+        resolve(streamId);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -605,10 +637,12 @@ async function startRecording() {
   setSessionState("capturing");
 
   try {
+    const streamId = await getTabCaptureStreamId(tab.id);
     await ensureOffscreenReady();
     const response = await sendMessageToOffscreen({
       type: "RECORDING_START",
       tabId: tab.id,
+      streamId,
     });
 
     if (!response.ok) {
