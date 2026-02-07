@@ -46,6 +46,7 @@ const networkLabel = document.getElementById("label_network");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
+let recordingCheckToken = 0;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -133,6 +134,11 @@ function setMode(mode) {
   if (downloadControls) {
     downloadControls.classList.toggle("is-hidden", isScreenshot);
   }
+  if (mode === "recording") {
+    checkRecordingAvailability();
+  } else if (recordingUnavailable) {
+    recordingUnavailable.classList.add("hidden");
+  }
 }
 
 function setRecordingButtons(state) {
@@ -141,6 +147,10 @@ function setRecordingButtons(state) {
     buttons.recordPause.disabled = true;
     buttons.recordResume.disabled = true;
     buttons.recordStop.disabled = true;
+    buttons.recordStart.classList.add("btn-disabled");
+    buttons.recordPause.classList.add("btn-disabled");
+    buttons.recordResume.classList.add("btn-disabled");
+    buttons.recordStop.classList.add("btn-disabled");
     if (buttons.recordPanel) {
       buttons.recordPanel.disabled = true;
       buttons.recordPanel.classList.add("is-hidden");
@@ -152,45 +162,80 @@ function setRecordingButtons(state) {
     buttons.recordPanel.classList.remove("is-hidden");
   }
   const status = state.recordingStatus;
-  buttons.recordStart.disabled = status === "recording" || status === "paused";
-  buttons.recordPause.disabled = status !== "recording";
-  buttons.recordResume.disabled = status !== "paused";
-  buttons.recordStop.disabled =
+  const startDisabled = status === "recording" || status === "paused";
+  const pauseDisabled = status !== "recording";
+  const resumeDisabled = status !== "paused";
+  const stopDisabled =
     status === "idle" || status === "stopped" || status === "stopping";
+  buttons.recordStart.disabled = startDisabled;
+  buttons.recordPause.disabled = pauseDisabled;
+  buttons.recordResume.disabled = resumeDisabled;
+  buttons.recordStop.disabled = stopDisabled;
+  buttons.recordStart.classList.toggle("btn-disabled", startDisabled);
+  buttons.recordPause.classList.toggle("btn-disabled", pauseDisabled);
+  buttons.recordResume.classList.toggle("btn-disabled", resumeDisabled);
+  buttons.recordStop.classList.toggle("btn-disabled", stopDisabled);
 }
 
 function disableRecordingUI() {
   recordingAvailable = false;
-  if (recordingRadio) {
-    recordingRadio.disabled = true;
-  }
-  if (recordingLabel) {
-    recordingLabel.classList.add("is-disabled");
-  }
-  if (recordingRadio && recordingRadio.checked) {
-    const screenshotRadio = document.getElementById("mode_screenshot");
-    if (screenshotRadio) {
-      screenshotRadio.checked = true;
-      setMode("screenshot");
-    }
-  }
   if (recordingUnavailable) {
-    recordingUnavailable.classList.remove("hidden");
+    const shouldShow = currentMode === "recording";
+    recordingUnavailable.classList.toggle("hidden", !shouldShow);
   }
   setRecordingButtons({ recordingStatus: "idle" });
 }
 
 function enableRecordingUI() {
   recordingAvailable = true;
-  if (recordingRadio) {
-    recordingRadio.disabled = false;
-  }
-  if (recordingLabel) {
-    recordingLabel.classList.remove("is-disabled");
-  }
   if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
   }
+}
+
+async function canUseTabCapture() {
+  if (!chrome?.tabCapture?.getMediaStreamId) {
+    return false;
+  }
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (!tab || !tab.id) {
+      return false;
+    }
+    const streamId = await new Promise((resolve, reject) => {
+      try {
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }, (id) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(id);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    return Boolean(streamId);
+  } catch (error) {
+    return false;
+  }
+}
+
+async function checkRecordingAvailability() {
+  const token = ++recordingCheckToken;
+  const canRecord = await canUseTabCapture();
+  if (token !== recordingCheckToken) {
+    return;
+  }
+  if (canRecord) {
+    enableRecordingUI();
+  } else {
+    disableRecordingUI();
+  }
+  await refreshStatus();
 }
 
 function disableNetworkUI() {
@@ -277,6 +322,14 @@ function applySessionLock(state) {
 }
 
 function applyStatusMessage(state) {
+  if (currentMode === "recording" && !recordingAvailable) {
+    setStatus(
+      statusElements.message,
+      "recording_blocked_policy: Recording unavailable due to browser/enterprise policy. Use Screenshot or Network+Console.",
+      "error"
+    );
+    return;
+  }
   if (!state.statusMessage || !state.statusMessage.message) {
     statusElements.message.textContent = "-";
     return;
@@ -708,14 +761,11 @@ async function loadRecordingAvailability() {
   return res;
 }
 
-async function probeRecordingAvailability(tabId) {
-  if (!recordingAvailable) {
+async function probeRecordingAvailability() {
+  if (currentMode !== "recording") {
     return;
   }
-  const probe = await send("PROBE_TAB_CAPTURE", { tabId });
-  if (probe && probe.ok && probe.tabCaptureAllowed === false) {
-    disableRecordingUI();
-  }
+  await checkRecordingAvailability();
 }
 
 async function loadNetworkAvailability(capabilities, tabId) {
@@ -762,7 +812,7 @@ async function initCapabilities() {
   } catch (error) {
     tabId = null;
   }
-  await probeRecordingAvailability(tabId);
+  await probeRecordingAvailability();
   await loadNetworkAvailability(res.capabilities, tabId);
 }
 

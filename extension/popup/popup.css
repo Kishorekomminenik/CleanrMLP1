@@ -141,6 +141,13 @@ button.secondary {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  pointer-events: none;
+}
+
+button.btn-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .status {
