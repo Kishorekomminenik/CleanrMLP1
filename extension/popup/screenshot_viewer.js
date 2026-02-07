@@ -1,11 +1,12 @@
 const shotImg = document.getElementById("shot");
-const statusEl = document.getElementById("status");
+const statusEl = document.getElementById("statusText");
 const copyBtn = document.getElementById("copyBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 
 let latestScreenshotDataUrl = null;
+let statusTimer = null;
 
-function setStatus(message, type = "default") {
+function setStatus(message, type = "default", autoResetMs = 0) {
   statusEl.textContent = message;
   if (type === "error") {
     statusEl.style.color = "#b91c1c";
@@ -13,6 +14,17 @@ function setStatus(message, type = "default") {
     statusEl.style.color = "#166534";
   } else {
     statusEl.style.color = "#4b5563";
+  }
+  if (statusTimer) {
+    clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  if (autoResetMs > 0) {
+    statusTimer = setTimeout(() => {
+      statusEl.textContent = "Ready.";
+      statusEl.style.color = "#4b5563";
+      statusTimer = null;
+    }, autoResetMs);
   }
 }
 
@@ -26,16 +38,34 @@ function formatTimestamp(date) {
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
 }
 
+async function dataUrlToBlob(dataUrl) {
+  const response = await fetch(dataUrl);
+  return response.blob();
+}
+
 async function loadScreenshot() {
+  setStatus("Loading...");
+  copyBtn.disabled = true;
+  downloadBtn.disabled = true;
   const result = await chrome.storage.session.get("latestScreenshotDataUrl");
   latestScreenshotDataUrl = result.latestScreenshotDataUrl;
   if (
     typeof latestScreenshotDataUrl !== "string" ||
     !latestScreenshotDataUrl.startsWith("data:image/png")
   ) {
-    setStatus("No screenshot found.", "error");
+    latestScreenshotDataUrl = null;
+    setStatus("No screenshot data found. Capture again.", "error");
     return;
   }
+  shotImg.onload = () => {
+    copyBtn.disabled = false;
+    downloadBtn.disabled = false;
+    setStatus("Ready.");
+  };
+  shotImg.onerror = () => {
+    latestScreenshotDataUrl = null;
+    setStatus("Failed to load screenshot. Capture again.", "error");
+  };
   shotImg.src = latestScreenshotDataUrl;
 }
 
@@ -45,21 +75,18 @@ copyBtn.addEventListener("click", async () => {
     return;
   }
   if (!navigator.clipboard || !window.ClipboardItem) {
-    setStatus(
-      "Copy failed due to browser/permission restrictions. Use right-click Copy image.",
-      "error"
-    );
+    setStatus("Copy failed: Clipboard API unavailable. Use Download.", "error");
     return;
   }
   try {
-    const blob = await (await fetch(latestScreenshotDataUrl)).blob();
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-    setStatus("Copied!", "success");
+    const blob = await dataUrlToBlob(latestScreenshotDataUrl);
+    await navigator.clipboard.write([
+      new ClipboardItem({ "image/png": blob }),
+    ]);
+    setStatus("Copied!", "success", 2000);
   } catch (error) {
-    setStatus(
-      "Copy failed due to browser/permission restrictions. Use right-click Copy image.",
-      "error"
-    );
+    const message = error && error.message ? error.message : "Unknown error";
+    setStatus(`Copy failed: ${message}. Use Download.`, "error");
   }
 });
 
@@ -69,16 +96,27 @@ downloadBtn.addEventListener("click", async () => {
     return;
   }
   const filename = `screenshot_${formatTimestamp(new Date())}.png`;
+  setStatus("Downloading...");
+  let objectUrl = null;
   try {
+    const blob = await dataUrlToBlob(latestScreenshotDataUrl);
+    objectUrl = URL.createObjectURL(blob);
     await chrome.downloads.download({
-      url: latestScreenshotDataUrl,
+      url: objectUrl,
       filename,
       saveAs: true,
     });
-    setStatus("Download started.", "success");
+    setStatus("Downloaded.", "success", 2000);
   } catch (error) {
-    setStatus("Download failed.", "error");
+    const message = error && error.message ? error.message : "Download failed.";
+    setStatus(message, "error");
+  } finally {
+    if (objectUrl) {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+    }
   }
 });
 
-loadScreenshot();
+document.addEventListener("DOMContentLoaded", () => {
+  loadScreenshot();
+});
