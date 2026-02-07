@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recording Controls</title>
+    <link rel="stylesheet" href="recording_panel.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <div class="header">
+        <h1>Recording Controls</h1>
+        <button id="closePanel" class="close">Close</button>
+      </div>
+      <div class="row">
+        <span class="label">Elapsed</span>
+        <span id="panel_timer">00:00</span>
+      </div>
+      <div class="row">
+        <span class="label">State</span>
+        <span id="panel_state">idle</span>
+      </div>
+      <div class="row">
+        <span class="label">Message</span>
+        <span id="panel_message">-</span>
+      </div>
+      <div class="buttons">
+        <button id="panel_pause">Pause</button>
+        <button id="panel_resume">Resume</button>
+        <button id="panel_stop" class="primary">Stop</button>
+      </div>
+    </div>
+
+    <script src="recording_panel.js"></script>
+  </body>
+</html>

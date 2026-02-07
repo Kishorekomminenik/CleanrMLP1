@@ -13,6 +13,7 @@ const buttons = {
   recordPause: document.getElementById("btn_pause_recording"),
   recordResume: document.getElementById("btn_resume_recording"),
   recordStop: document.getElementById("btn_stop_recording"),
+  recordPanel: document.getElementById("btn_open_recording_panel"),
   networkStart: document.getElementById("btn_start_capture"),
   networkStop: document.getElementById("btn_stop_capture"),
   download: document.getElementById("btn_download_zip"),
@@ -300,8 +301,8 @@ async function refreshStatus() {
 }
 
 async function handleScreenshot() {
-  setStatus(statusElements.download, "Capturing screenshot...");
-  const response = await sendMessage({ type: "CAPTURE_SCREENSHOT" });
+  setStatus(statusElements.message, "Capturing screenshot...");
+  const response = await sendMessage({ type: "TAKE_SCREENSHOT" });
   if (!response.ok) {
     await handleFailedResponse(response);
     return;
@@ -313,17 +314,8 @@ async function handleScreenshot() {
     });
     return;
   }
-  const screenshotBlob = dataUrlToBlob(response.screenshotDataUrl);
-  const filename = `screenshot_${formatZipTimestamp(new Date())}.png`;
-  const url = URL.createObjectURL(screenshotBlob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  setStatus(statusElements.message, "Screenshot downloaded.", "success");
+  await chrome.tabs.create({ url: response.screenshotDataUrl });
+  setStatus(statusElements.message, "Opened screenshot in new tab.", "success");
   await refreshStatus();
 }
 
@@ -572,6 +564,9 @@ buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
 buttons.recordResume.addEventListener("click", handleRecordingResume);
 buttons.recordStop.addEventListener("click", handleRecordingStop);
+buttons.recordPanel.addEventListener("click", async () => {
+  await sendMessage({ type: "OPEN_RECORDING_PANEL" });
+});
 buttons.networkStart.addEventListener("click", handleNetworkStart);
 buttons.networkStop.addEventListener("click", handleNetworkStop);
 buttons.download.addEventListener("click", handleDownload);

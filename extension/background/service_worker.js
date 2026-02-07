@@ -49,6 +49,7 @@ const MODE_LABELS = {
 let session = null;
 let statusMessage = null;
 let offscreenReady = false;
+let recordingPanelWindowId = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -138,6 +139,41 @@ function setStatusMessage(message, level = "info") {
 function clearStatusMessage() {
   statusMessage = null;
 }
+
+async function openRecordingPanelWindow() {
+  if (recordingPanelWindowId) {
+    try {
+      await chrome.windows.update(recordingPanelWindowId, { focused: true });
+      return;
+    } catch (error) {
+      recordingPanelWindowId = null;
+    }
+  }
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL("popup/recording_panel.html"),
+    type: "popup",
+    width: 340,
+    height: 240,
+    focused: true,
+  });
+  recordingPanelWindowId = created && created.id ? created.id : null;
+}
+
+function closeRecordingPanelWindowIfOpen() {
+  if (!recordingPanelWindowId) {
+    return;
+  }
+  chrome.windows.remove(recordingPanelWindowId, () => {
+    void chrome.runtime.lastError;
+  });
+  recordingPanelWindowId = null;
+}
+
+chrome.windows.onRemoved.addListener((id) => {
+  if (id === recordingPanelWindowId) {
+    recordingPanelWindowId = null;
+  }
+});
 
 function createSessionId() {
   if (crypto && typeof crypto.randomUUID === "function") {
@@ -466,6 +502,7 @@ async function startRecording() {
     state.recording.mimeType = null;
     state.recording.error = null;
     clearStatusMessage();
+    await openRecordingPanelWindow();
   } catch (error) {
     setStatusMessage(error.message || "Failed to start recording.", "error");
     addDiagnostic("error", "Recording start failed.", {
@@ -516,6 +553,7 @@ async function stopRecording() {
   state.recording.status = "stopping";
   markSessionStopped();
   clearStatusMessage();
+  closeRecordingPanelWindowIfOpen();
 }
 
 async function startNetworkCapture() {
@@ -938,11 +976,19 @@ function buildSessionExport() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handle = async () => {
     switch (message.type) {
+      case "OPEN_RECORDING_PANEL":
+        await openRecordingPanelWindow();
+        return { ok: true };
       case "OFFSCREEN_READY":
         offscreenReady = true;
         return { ok: true };
       case "GET_STATUS":
         return { ok: true, state: getStatusSnapshot() };
+      case "TAKE_SCREENSHOT":
+        {
+          const dataUrl = await captureScreenshot();
+          return { ok: true, screenshotDataUrl: dataUrl };
+        }
       case "CAPTURE_SCREENSHOT":
         {
           const dataUrl = await captureScreenshot();
