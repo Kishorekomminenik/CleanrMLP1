@@ -986,8 +986,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true, state: getStatusSnapshot() };
       case "TAKE_SCREENSHOT":
         {
-          const dataUrl = await captureScreenshot();
-          return { ok: true, screenshotDataUrl: dataUrl };
+          try {
+            const dataUrl = await captureScreenshot();
+            if (
+              typeof dataUrl !== "string" ||
+              !dataUrl.startsWith("data:image/png")
+            ) {
+              return {
+                ok: false,
+                error: "Screenshot capture failed to return a PNG data URL.",
+              };
+            }
+            return { ok: true, screenshotDataUrl: dataUrl };
+          } catch (error) {
+            return {
+              ok: false,
+              error: error && error.message ? error.message : "Screenshot failed.",
+            };
+          }
         }
       case "CAPTURE_SCREENSHOT":
         {

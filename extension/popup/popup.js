@@ -303,15 +303,21 @@ async function refreshStatus() {
 async function handleScreenshot() {
   setStatus(statusElements.message, "Capturing screenshot...");
   const response = await sendMessage({ type: "TAKE_SCREENSHOT" });
-  if (!response.ok) {
-    await handleFailedResponse(response);
-    return;
-  }
-  if (!response.screenshotDataUrl) {
-    await handleFailedResponse({
-      error: "Screenshot capture failed.",
-      state: response.state,
-    });
+  if (
+    !response.ok ||
+    typeof response.screenshotDataUrl !== "string" ||
+    !response.screenshotDataUrl.startsWith("data:image/png")
+  ) {
+    const reason =
+      response && response.error
+        ? response.error
+        : "missing dataUrl";
+    setStatus(
+      statusElements.message,
+      `Screenshot capture failed: ${reason}`,
+      "error"
+    );
+    await refreshStatus();
     return;
   }
   await chrome.tabs.create({ url: response.screenshotDataUrl });
