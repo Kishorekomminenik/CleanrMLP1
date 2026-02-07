@@ -38,7 +38,7 @@
             />
             Recording
           </label>
-          <label>
+          <label id="label_network">
             <input
               type="radio"
               name="captureMode"
@@ -48,9 +48,14 @@
             Network + Console
           </label>
         </div>
-        <p id="recordingUnavailable" class="hint is-hidden">
-          Recording is unavailable in this browser/environment (enterprise policy).
-        </p>
+        <div id="capability-messages" class="capability-messages">
+          <div id="recording-disabled-msg" class="capability-msg hidden">
+            Recording is unavailable in this browser/environment due to enterprise policy.
+          </div>
+          <div id="network-disabled-msg" class="capability-msg hidden">
+            Network + Console is unavailable in this browser/environment (debugger blocked by policy).
+          </div>
+        </div>
       </section>
 
       <section class="card">

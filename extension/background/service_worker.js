@@ -1120,11 +1120,62 @@ async function handleMessage(message, sender) {
       result = {
         ok: true,
         capabilities: {
-          tabCapture: Boolean(chrome?.tabCapture?.getMediaStreamId),
-          debugger: Boolean(chrome?.debugger),
+          tabCaptureAvailable: Boolean(chrome?.tabCapture?.getMediaStreamId),
+          debuggerApiPresent: Boolean(chrome?.debugger),
         },
       };
       break;
+    case "PROBE_DEBUGGER": {
+      let tabId = message.tabId;
+      let tab = null;
+      if (!tabId) {
+        tab = await getActiveTab();
+        tabId = tab && tab.id ? tab.id : null;
+      }
+      if (!tabId) {
+        result = { ok: false, error: "No active tab" };
+        break;
+      }
+      if (!tab) {
+        try {
+          tab = await chrome.tabs.get(tabId);
+        } catch (error) {
+          result = { ok: false, error: "No active tab" };
+          break;
+        }
+      }
+      try {
+        ensureTabIsCapturable(tab);
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Tab not capturable.",
+        };
+        break;
+      }
+
+      let attached = false;
+      try {
+        await attachDebugger(tabId);
+        attached = true;
+        result = { ok: true, debuggerAttachAllowed: true };
+      } catch (error) {
+        result = {
+          ok: true,
+          debuggerAttachAllowed: false,
+          reason: error && error.message ? error.message : "Attach failed.",
+        };
+      } finally {
+        if (attached) {
+          try {
+            await detachDebugger(tabId);
+          } catch (error) {
+            // Ignore detach failures for probe.
+          }
+        }
+      }
+      break;
+    }
     case "GET_RECORDING_CAPABILITY":
       result = {
         ok: true,

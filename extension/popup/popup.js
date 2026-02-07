@@ -34,11 +34,15 @@ const downloadControls = document.getElementById("download_controls");
 const statusToggle = document.getElementById("status_toggle");
 const statusChevron = document.getElementById("status_chevron");
 const statusBody = document.getElementById("status_body");
-const recordingUnavailable = document.getElementById("recordingUnavailable");
+const recordingUnavailable = document.getElementById("recording-disabled-msg");
+const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
 const recordingLabel = document.getElementById("label_recording");
+const networkRadio = document.getElementById("mode_network");
+const networkLabel = document.getElementById("label_network");
 let statusUserToggled = false;
 let recordingAvailable = true;
+let networkAvailable = true;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -153,6 +157,11 @@ function setRecordingButtons(state) {
 }
 
 function setNetworkButtons(state) {
+  if (!networkAvailable) {
+    buttons.networkStart.disabled = true;
+    buttons.networkStop.disabled = true;
+    return;
+  }
   const session = state.session;
   const isNetworkMode = session && session.mode === "network_console";
   const isCapturing = Boolean(
@@ -570,7 +579,7 @@ async function loadRedactionSetting() {
 async function loadRecordingAvailability() {
   const res = await send("GET_CAPABILITIES");
   const tabCaptureAvailable = Boolean(
-    res && res.ok && res.capabilities && res.capabilities.tabCapture
+    res && res.ok && res.capabilities && res.capabilities.tabCaptureAvailable
   );
   if (!res.ok || !tabCaptureAvailable) {
     recordingAvailable = false;
@@ -588,10 +597,10 @@ async function loadRecordingAvailability() {
       }
     }
     if (recordingUnavailable) {
-      recordingUnavailable.classList.remove("is-hidden");
+      recordingUnavailable.classList.remove("hidden");
     }
     setRecordingButtons({ recordingStatus: "idle" });
-    return;
+    return res;
   }
   recordingAvailable = true;
   if (recordingRadio) {
@@ -601,8 +610,88 @@ async function loadRecordingAvailability() {
     recordingLabel.classList.remove("is-disabled");
   }
   if (recordingUnavailable) {
-    recordingUnavailable.classList.add("is-hidden");
+    recordingUnavailable.classList.add("hidden");
   }
+  return res;
+}
+
+async function loadNetworkAvailability(capabilities, tabId) {
+  const debuggerPresent = Boolean(
+    capabilities && capabilities.debuggerApiPresent
+  );
+  if (!debuggerPresent) {
+    networkAvailable = false;
+    if (networkRadio) {
+      networkRadio.disabled = true;
+    }
+    if (networkLabel) {
+      networkLabel.classList.add("is-disabled");
+    }
+    if (networkUnavailable) {
+      networkUnavailable.classList.remove("hidden");
+    }
+    if (networkRadio && networkRadio.checked) {
+      const screenshotRadio = document.getElementById("mode_screenshot");
+      if (screenshotRadio) {
+        screenshotRadio.checked = true;
+        setMode("screenshot");
+      }
+    }
+    setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
+    return;
+  }
+
+  const probe = await send("PROBE_DEBUGGER", { tabId });
+  if (probe.ok && probe.debuggerAttachAllowed === false) {
+    networkAvailable = false;
+    if (networkRadio) {
+      networkRadio.disabled = true;
+    }
+    if (networkLabel) {
+      networkLabel.classList.add("is-disabled");
+    }
+    if (networkUnavailable) {
+      networkUnavailable.classList.remove("hidden");
+    }
+    if (networkRadio && networkRadio.checked) {
+      const screenshotRadio = document.getElementById("mode_screenshot");
+      if (screenshotRadio) {
+        screenshotRadio.checked = true;
+        setMode("screenshot");
+      }
+    }
+    setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
+    return;
+  }
+
+  networkAvailable = true;
+  if (networkRadio) {
+    networkRadio.disabled = false;
+  }
+  if (networkLabel) {
+    networkLabel.classList.remove("is-disabled");
+  }
+  if (networkUnavailable) {
+    networkUnavailable.classList.add("hidden");
+  }
+}
+
+async function initCapabilities() {
+  const res = await loadRecordingAvailability();
+  if (!res || !res.ok) {
+    return;
+  }
+  let tabId = null;
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    tabId = tab && tab.id ? tab.id : null;
+  } catch (error) {
+    tabId = null;
+  }
+  await loadNetworkAvailability(res.capabilities, tabId);
 }
 
 buttons.screenshot.addEventListener("click", handleScreenshot);
@@ -638,6 +727,6 @@ modeRadios.forEach((radio) => {
 
 setMode(currentMode);
 loadRedactionSetting();
-loadRecordingAvailability();
+initCapabilities();
 refreshStatus();
 setInterval(refreshStatus, 1000);
