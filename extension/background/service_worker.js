@@ -12,6 +12,18 @@ if (!globalThis.JSZip) {
   console.warn("[SW] JSZip failed to load.");
 }
 
+function ensureJsZipLoaded() {
+  if (globalThis.JSZip) {
+    return true;
+  }
+  try {
+    importScripts(chrome.runtime.getURL("lib/jszip.min.js"));
+  } catch (error) {
+    return false;
+  }
+  return Boolean(globalThis.JSZip);
+}
+
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
@@ -430,10 +442,10 @@ async function buildEnvironment(context) {
 }
 
 async function buildZipAndDownload(environmentOverride) {
-  const JSZipCtor = globalThis.JSZip;
-  if (!JSZipCtor) {
+  if (!ensureJsZipLoaded()) {
     throw new Error("JSZip library not loaded in service worker.");
   }
+  const JSZipCtor = globalThis.JSZip;
   logExportPhase("collecting");
   const environment = environmentOverride || (await buildEnvironment({}));
   const redactionResult = await chrome.storage.local.get({
@@ -1136,6 +1148,10 @@ async function handleMessage(message, sender) {
         result = { ok: false, error: "No active tab" };
         break;
       }
+      if (state.network.active && state.network.tabId === tabId) {
+        result = { ok: true, debuggerAttachAllowed: true };
+        break;
+      }
       if (!tab) {
         try {
           tab = await chrome.tabs.get(tabId);
@@ -1389,7 +1405,7 @@ async function handleMessage(message, sender) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
-      if (!globalThis.JSZip) {
+      if (!ensureJsZipLoaded()) {
         result = {
           ok: false,
           error: "JSZip library not loaded in service worker.",

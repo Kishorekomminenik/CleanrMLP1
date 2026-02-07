@@ -191,11 +191,6 @@ function enableRecordingUI() {
 }
 
 function setNetworkButtons(state) {
-  if (!networkAvailable) {
-    buttons.networkStart.disabled = true;
-    buttons.networkStop.disabled = true;
-    return;
-  }
   const session = state.session;
   const isNetworkMode = session && session.mode === "network_console";
   const isCapturing = Boolean(
@@ -211,7 +206,8 @@ function setNetworkButtons(state) {
   );
   const canStop =
     isNetworkMode && (isCapturing || hasRequests || state.networkActive || hasDebuggerAttached);
-  buttons.networkStart.disabled = Boolean(state.networkActive || isCapturing);
+  buttons.networkStart.disabled =
+    !networkAvailable || Boolean(state.networkActive || isCapturing);
   buttons.networkStop.disabled = !canStop;
 }
 
@@ -634,6 +630,26 @@ async function probeRecordingAvailability(tabId) {
 }
 
 async function loadNetworkAvailability(capabilities, tabId) {
+  const statusResponse = await send("GET_STATUS");
+  const statusState = statusResponse && statusResponse.ok ? statusResponse.state : null;
+  const captureActive =
+    statusState &&
+    statusState.session &&
+    statusState.session.mode === "network_console" &&
+    (statusState.session.state === "capturing" || statusState.networkActive);
+  if (captureActive) {
+    networkAvailable = true;
+    if (networkRadio) {
+      networkRadio.disabled = false;
+    }
+    if (networkLabel) {
+      networkLabel.classList.remove("is-disabled");
+    }
+    if (networkUnavailable) {
+      networkUnavailable.classList.add("hidden");
+    }
+    return;
+  }
   const debuggerPresent = Boolean(
     capabilities && capabilities.debuggerApiPresent
   );
