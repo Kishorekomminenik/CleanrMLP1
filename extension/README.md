@@ -48,3 +48,10 @@ Redaction is ON by default. Toggle **Redaction ON/OFF** to mask:
 - Capture is **active-tab only**, **user-triggered**, and **local-only** (no uploads).
 - A content script is present on all URLs but only captures after you start a mode.
 - Chrome/Edge store pages and browser internal pages cannot be captured.
+
+## Managed environment limitations
+- Tab recording may be unavailable if `chrome.tabCapture` is blocked by policy.
+- When recording is unavailable, the UI auto-disables Recording and explains why.
+- Screenshot mode usually works in managed environments.
+- Network + Console capture requires the **debugger** permission and may be blocked
+  by enterprise policy.
