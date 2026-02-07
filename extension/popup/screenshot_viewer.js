@@ -757,3 +757,11 @@ document.addEventListener("DOMContentLoaded", () => {
   setEditorEnabled(false);
   loadScreenshot();
 });
+
+document.addEventListener("keydown", () => {
+  if (editingTextEl && editingTextEl.contentEditable === "true") {
+    if (document.activeElement !== editingTextEl) {
+      editingTextEl.focus();
+    }
+  }
+});
