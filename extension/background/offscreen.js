@@ -113,6 +113,30 @@ async function startRecording(tabId) {
   recordingState = "recording";
 }
 
+async function probeTabCapture(tabId) {
+  if (!tabId) {
+    return { ok: false, error: "No active tab" };
+  }
+  if (!chrome?.tabCapture?.getMediaStreamId) {
+    return {
+      ok: true,
+      tabCaptureAllowed: false,
+      reason:
+        "tabCapture.getMediaStreamId is unavailable. Check manifest permissions / browser policy.",
+    };
+  }
+  try {
+    await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    return { ok: true, tabCaptureAllowed: true };
+  } catch (error) {
+    return {
+      ok: true,
+      tabCaptureAllowed: false,
+      reason: error && error.message ? error.message : "Probe failed.",
+    };
+  }
+}
+
 function pauseRecording() {
   if (!mediaRecorder || recordingState !== "recording") {
     throw new Error("Recording is not active.");
@@ -147,6 +171,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) =>
         sendResponse({ ok: false, error: error.message || "Start failed." })
+      );
+    return true;
+  }
+  if (message.type === "TAB_CAPTURE_PROBE") {
+    probeTabCapture(message.tabId)
+      .then((result) => sendResponse(result))
+      .catch((error) =>
+        sendResponse({ ok: false, error: error.message || "Probe failed." })
       );
     return true;
   }

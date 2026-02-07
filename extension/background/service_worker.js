@@ -1176,6 +1176,56 @@ async function handleMessage(message, sender) {
       }
       break;
     }
+    case "PROBE_TAB_CAPTURE": {
+      let tabId = message.tabId;
+      let tab = null;
+      if (!tabId) {
+        tab = await getActiveTab();
+        tabId = tab && tab.id ? tab.id : null;
+      }
+      if (!tabId) {
+        result = { ok: false, error: "No active tab" };
+        break;
+      }
+      if (!tab) {
+        try {
+          tab = await chrome.tabs.get(tabId);
+        } catch (error) {
+          result = { ok: false, error: "No active tab" };
+          break;
+        }
+      }
+      try {
+        ensureTabIsCapturable(tab);
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Tab not capturable.",
+        };
+        break;
+      }
+      try {
+        await ensureOffscreenReady();
+      } catch (error) {
+        result = {
+          ok: false,
+          error:
+            error && error.message
+              ? error.message
+              : "Offscreen document not ready.",
+        };
+        break;
+      }
+      const probeResponse = await sendMessageToOffscreen({
+        type: "TAB_CAPTURE_PROBE",
+        tabId,
+      });
+      result = probeResponse || {
+        ok: false,
+        error: "No response from offscreen.",
+      };
+      break;
+    }
     case "GET_RECORDING_CAPABILITY":
       result = {
         ok: true,

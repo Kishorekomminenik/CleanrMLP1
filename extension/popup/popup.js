@@ -156,6 +156,40 @@ function setRecordingButtons(state) {
     status === "idle" || status === "stopped" || status === "stopping";
 }
 
+function disableRecordingUI() {
+  recordingAvailable = false;
+  if (recordingRadio) {
+    recordingRadio.disabled = true;
+  }
+  if (recordingLabel) {
+    recordingLabel.classList.add("is-disabled");
+  }
+  if (recordingRadio && recordingRadio.checked) {
+    const screenshotRadio = document.getElementById("mode_screenshot");
+    if (screenshotRadio) {
+      screenshotRadio.checked = true;
+      setMode("screenshot");
+    }
+  }
+  if (recordingUnavailable) {
+    recordingUnavailable.classList.remove("hidden");
+  }
+  setRecordingButtons({ recordingStatus: "idle" });
+}
+
+function enableRecordingUI() {
+  recordingAvailable = true;
+  if (recordingRadio) {
+    recordingRadio.disabled = false;
+  }
+  if (recordingLabel) {
+    recordingLabel.classList.remove("is-disabled");
+  }
+  if (recordingUnavailable) {
+    recordingUnavailable.classList.add("hidden");
+  }
+}
+
 function setNetworkButtons(state) {
   if (!networkAvailable) {
     buttons.networkStart.disabled = true;
@@ -582,37 +616,21 @@ async function loadRecordingAvailability() {
     res && res.ok && res.capabilities && res.capabilities.tabCaptureAvailable
   );
   if (!res.ok || !tabCaptureAvailable) {
-    recordingAvailable = false;
-    if (recordingRadio) {
-      recordingRadio.disabled = true;
-      if (recordingLabel) {
-        recordingLabel.classList.add("is-disabled");
-      }
-      if (recordingRadio.checked) {
-        const screenshotRadio = document.getElementById("mode_screenshot");
-        if (screenshotRadio) {
-          screenshotRadio.checked = true;
-          setMode("screenshot");
-        }
-      }
-    }
-    if (recordingUnavailable) {
-      recordingUnavailable.classList.remove("hidden");
-    }
-    setRecordingButtons({ recordingStatus: "idle" });
+    disableRecordingUI();
     return res;
   }
-  recordingAvailable = true;
-  if (recordingRadio) {
-    recordingRadio.disabled = false;
-  }
-  if (recordingLabel) {
-    recordingLabel.classList.remove("is-disabled");
-  }
-  if (recordingUnavailable) {
-    recordingUnavailable.classList.add("hidden");
-  }
+  enableRecordingUI();
   return res;
+}
+
+async function probeRecordingAvailability(tabId) {
+  if (!recordingAvailable) {
+    return;
+  }
+  const probe = await send("PROBE_TAB_CAPTURE", { tabId });
+  if (probe && probe.ok && probe.tabCaptureAllowed === false) {
+    disableRecordingUI();
+  }
 }
 
 async function loadNetworkAvailability(capabilities, tabId) {
@@ -691,6 +709,7 @@ async function initCapabilities() {
   } catch (error) {
     tabId = null;
   }
+  await probeRecordingAvailability(tabId);
   await loadNetworkAvailability(res.capabilities, tabId);
 }
 
