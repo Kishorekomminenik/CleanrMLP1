@@ -667,7 +667,7 @@ async function checkRecordingAvailability() {
     await refreshStatus();
     return;
   }
-  if (!chrome?.tabCapture?.capture) {
+  if (!chrome?.tabCapture?.getMediaStreamId) {
     setRecordingBlocked("unsupported");
     await refreshStatus();
     return;
@@ -1057,7 +1057,7 @@ async function refreshStatus() {
     if (live && live.ok) {
       recordingLiveState = live;
       console.log(
-        "[REC] GET_STATE ->",
+        "[REC][popup] GET_STATE ->",
         `state=${live.state}`,
         `hasData=${live.hasData}`,
         `recorderState=${live.recorderState}`
@@ -1133,35 +1133,115 @@ async function handleRecordingStart() {
     );
     return;
   }
-  console.log("[REC] start clicked");
+  console.log("[REC][popup] start clicked");
   setStatus(statusElements.download, "Starting recording...");
   recordingStatusMessage = null;
   chrome.storage.session.remove(["recordingStatusMessage"]);
   recordingControlInFlight = true;
   setRecordingButtons({ recordingStatus: "recording" });
-  const response = await send("RECORDING_START");
-  if (!response.ok) {
-    const message = response.error || "Failed to start recording.";
-    if (isPolicyError(message)) {
-      setRecordingBlocked("policy");
-      setStatus(
-        statusElements.message,
-        "Recording blocked by browser policy.",
-        "error"
-      );
-    } else {
-      setStatus(statusElements.message, message, "error");
-    }
-    setStatus(statusElements.download, "Recording failed.", "error");
-  } else {
-    setStatus(statusElements.download, "Recording started.", "success");
+  let activeTab = null;
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    activeTab = tab;
+  } catch (error) {
+    activeTab = null;
   }
-  recordingControlInFlight = false;
-  setRecordingButtons({
-    recordingStatus:
-      response && response.ok && response.state ? response.state : "idle",
+  if (!activeTab || !activeTab.id || !activeTab.url) {
+    setStatus(statusElements.message, "No active tab to record.", "error");
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: "idle" });
+    await refreshStatus();
+    return;
+  }
+  console.log("[REC][popup] start clicked ->", {
+    tabId: activeTab.id,
+    url: activeTab.url,
   });
-  await refreshStatus();
+  if (!/^https?:\/\//i.test(activeTab.url)) {
+    setStatus(
+      statusElements.message,
+      "Recording requires an active http(s) webpage.",
+      "error"
+    );
+    setRecordingBlocked("invalid_tab");
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: "idle" });
+    await refreshStatus();
+    return;
+  }
+  if (!chrome?.tabCapture?.getMediaStreamId) {
+    setStatus(
+      statusElements.message,
+      "Recording not supported: tabCapture.getMediaStreamId is unavailable.",
+      "error"
+    );
+    setRecordingBlocked("unsupported");
+    recordingControlInFlight = false;
+    setRecordingButtons({ recordingStatus: "idle" });
+    await refreshStatus();
+    return;
+  }
+  chrome.tabCapture.getMediaStreamId(
+    { targetTabId: activeTab.id },
+    (streamId) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError || !streamId) {
+        const message =
+          lastError && lastError.message ? lastError.message : "No stream ID returned.";
+        console.log("[REC][popup] getMediaStreamId failed", message);
+        if (isPolicyError(message)) {
+          setRecordingBlocked("policy");
+          setStatus(
+            statusElements.message,
+            "Recording blocked by browser policy.",
+            "error"
+          );
+        } else {
+          setStatus(statusElements.message, message, "error");
+        }
+        setStatus(statusElements.download, "Recording failed.", "error");
+        recordingControlInFlight = false;
+        setRecordingButtons({ recordingStatus: "idle" });
+        refreshStatus();
+        return;
+      }
+      console.log("[REC][popup] getMediaStreamId ok", {
+        streamId,
+      });
+      (async () => {
+        const response = await send("RECORDING_START", {
+          tabId: activeTab.id,
+          streamId,
+          startedAt: Date.now(),
+        });
+        if (!response.ok) {
+          const message = response.error || "Failed to start recording.";
+          setStatus(statusElements.message, message, "error");
+          setStatus(statusElements.download, "Recording failed.", "error");
+        } else {
+          setStatus(statusElements.download, "Recording started.", "success");
+        }
+        recordingControlInFlight = false;
+    setRecordingButtons({
+      recordingStatus:
+        response && response.ok && response.state ? response.state : "idle",
+    });
+        await refreshStatus();
+      })().catch((error) => {
+        setStatus(
+          statusElements.message,
+          error && error.message ? error.message : "Recording failed to start.",
+          "error"
+        );
+        recordingControlInFlight = false;
+        setRecordingButtons({ recordingStatus: "idle" });
+        refreshStatus();
+      });
+    }
+  );
 }
 
 async function handleRecordingPause() {
@@ -1489,6 +1569,7 @@ async function handleResetSession() {
   recordingStatusMessage = null;
   chrome.storage.session.remove(["recordingStatusMessage"]);
   clearRecordingDownloadData();
+  setStatus(statusElements.message, "Ready.", "default");
   setStatus(statusElements.download, "Session reset.", "success");
   await refreshStatus();
 }

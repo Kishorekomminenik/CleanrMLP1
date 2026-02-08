@@ -330,34 +330,34 @@ function resolveStopPromise(result) {
   recordingStopResolver = null;
 }
 
-async function captureTabStream() {
-  if (!chrome?.tabCapture?.capture) {
-    throw new Error("Recording not supported in this browser.");
+async function captureTabStream(streamId) {
+  if (!streamId) {
+    throw new Error("Missing stream id. Start recording from the popup.");
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("MediaDevices API not available.");
   }
   try {
-    return await new Promise((resolve, reject) => {
-      try {
-        chrome.tabCapture.capture({ audio: false, video: true }, (stream) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (!stream) {
-            reject(new Error("No stream returned"));
-            return;
-          }
-          resolve(stream);
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
+    const constraints = {
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: "tab",
+          chromeMediaSourceId: streamId,
+        },
+      },
+    };
+    return await navigator.mediaDevices.getUserMedia(constraints);
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
+    console.log("[REC][offscreen] getUserMedia failed", message);
     if (isPolicyError(message)) {
       throw new Error("Recording blocked by browser policy.");
     }
-    throw new Error(message || "Recording not supported in this browser.");
+    if (error && error.name === "NotAllowedError") {
+      throw new Error("Recording permission was denied.");
+    }
+    throw new Error(message || "Failed to acquire tab media.");
   }
 }
 
@@ -367,11 +367,13 @@ function attachRecorderHandlers(recorder) {
       recordingStartedAt = nowMs();
     }
     recordingState = "recording";
+    console.log("[REC][offscreen] onstart");
     notifyStateChanged("start");
   };
   recorder.onpause = () => {
     recordingPausedAt = nowMs();
     recordingState = "paused";
+    console.log("[REC][offscreen] onpause");
     notifyStateChanged("pause");
   };
   recorder.onresume = () => {
@@ -380,6 +382,7 @@ function attachRecorderHandlers(recorder) {
       recordingPausedAt = null;
     }
     recordingState = "recording";
+    console.log("[REC][offscreen] onresume");
     notifyStateChanged("resume");
   };
   recorder.ondataavailable = (event) => {
@@ -409,7 +412,7 @@ function attachRecorderHandlers(recorder) {
     recordingDurationMsSnapshot = durationMs;
     const totalBytes = sumChunkBytes(recordedChunks);
     console.log(
-      "[REC] STOP confirmed (offscreen)",
+      "[REC][offscreen] STOP confirmed",
       `chunks=${recordedChunks.length}`,
       `totalBytes=${totalBytes}`,
       `durationMs=${durationMs}`
@@ -422,7 +425,7 @@ function attachRecorderHandlers(recorder) {
   };
 }
 
-async function startRecording() {
+async function startRecording(streamId, tabId) {
   if (recordingState === "recording" || recordingState === "paused") {
     throw new Error("Recording already in progress.");
   }
@@ -430,7 +433,9 @@ async function startRecording() {
   stopStreamTracks();
   resetRecordingState();
   revokeRecordingUrl();
-  currentStream = await captureTabStream();
+  console.log("[REC][offscreen] start ->", { tabId });
+  currentStream = await captureTabStream(streamId);
+  console.log("[REC][offscreen] getUserMedia ok");
   currentStream.getTracks().forEach((track) => {
     track.onended = () => {
       recordingLastError = "Track ended";
@@ -629,7 +634,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           result = { ok: true, ...getRecordingStateSnapshot() };
           break;
         case "RECORDING_START":
-          result = await startRecording();
+          result = await startRecording(message.streamId, message.tabId);
           break;
         case "RECORDING_PAUSE":
           result = await pauseRecording();

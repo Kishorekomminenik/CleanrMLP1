@@ -613,8 +613,8 @@ async function captureScreenshot() {
   }
 }
 
-async function startRecording() {
-  const tab = await getActiveTab();
+async function startRecording(streamId, tabId) {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
 
   ensureSessionForMode("recording", tab);
@@ -622,9 +622,16 @@ async function startRecording() {
 
   try {
     await ensureOffscreenReady();
+    if (!streamId) {
+      throw new Error("Missing stream id. Start recording from the popup.");
+    }
+    console.log("[REC][sw] routing RECORDING_START to offscreen", {
+      tabId: tab.id,
+    });
     const response = await sendMessageToOffscreen({
       type: "RECORDING_START",
       tabId: tab.id,
+      streamId,
     });
 
     if (!response.ok) {
@@ -1035,14 +1042,15 @@ async function resetSession() {
     }
   }
 
-  if (state.recording.status !== "idle") {
-    try {
-      await sendMessageToOffscreen({ type: "RECORDING_STOP" });
-    } catch (error) {
-      console.warn("Failed to stop recording on reset:", error);
-    }
-  }
   try {
+    await ensureOffscreenReady();
+    if (state.recording.status !== "idle") {
+      try {
+        await sendMessageToOffscreen({ type: "RECORDING_STOP" });
+      } catch (error) {
+        console.warn("Failed to stop recording on reset:", error);
+      }
+    }
     await sendMessageToOffscreen({ type: "RECORDING_RESET" });
   } catch (error) {
     console.warn("Failed to reset recording on reset:", error);
@@ -1349,7 +1357,9 @@ async function handleMessage(message, sender) {
       result = {
         ok: true,
         capabilities: {
-          tabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
+          tabCaptureAvailable: Boolean(
+            chrome?.tabCapture?.getMediaStreamId || chrome?.tabCapture?.capture
+          ),
           debuggerApiPresent: Boolean(chrome?.debugger),
         },
       };
@@ -1460,7 +1470,7 @@ async function handleMessage(message, sender) {
           };
           break;
         }
-        const response = await startRecording();
+        const response = await startRecording(message.streamId, message.tabId);
         if (session) {
           session.state = "capturing";
         }
