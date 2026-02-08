@@ -13,6 +13,10 @@ const resumeBtn = document.getElementById("resumeBtn");
 const stopBtn = document.getElementById("stopBtn");
 const screenshotBtn = document.getElementById("screenshotBtn");
 const markerBtn = document.getElementById("markerBtn");
+const downloadZipBtn = document.getElementById("downloadZipBtn");
+const downloadWebmBtn = document.getElementById("downloadWebmBtn");
+const webmHint = document.getElementById("webmHint");
+const exportHint = document.getElementById("exportHint");
 const markerInput = document.getElementById("markerInput");
 const markerText = document.getElementById("markerText");
 const markerSaveBtn = document.getElementById("markerSaveBtn");
@@ -67,22 +71,33 @@ function updateButtons(state) {
   const isIdle = state.sessionState === "idle";
   const isRecording = state.sessionState === "recording";
   const isPaused = state.sessionState === "paused";
+  const isActive = isRecording || isPaused;
   const mode = state.mode;
   const isScreenshotMode = mode === "screenshot";
+  const isNetworkMode = mode === "network";
+  const modeHasVideo = mode === "video" || mode === "all";
   const hasExportableData =
     state.counts.screenshots > 0 || state.counts.markers > 0;
 
   startBtn.disabled = !isIdle || isScreenshotMode;
-  pauseBtn.disabled = !isRecording || isScreenshotMode;
-  resumeBtn.disabled = !isPaused || isScreenshotMode;
-  stopBtn.disabled = isScreenshotMode ? !hasExportableData : isIdle;
-  screenshotBtn.disabled = isScreenshotMode
-    ? false
-    : !(mode === "all" && (isRecording || isPaused));
+  pauseBtn.disabled = !isRecording || isScreenshotMode || isNetworkMode;
+  resumeBtn.disabled = !isPaused || isScreenshotMode || isNetworkMode;
+  stopBtn.disabled = isIdle;
+  screenshotBtn.disabled = isScreenshotMode ? false : !isActive;
   markerBtn.disabled = isScreenshotMode ? false : isIdle;
+  downloadZipBtn.disabled = isActive || !state.hasData;
+  downloadWebmBtn.disabled =
+    isActive || !modeHasVideo || !state.capture?.video || !state.hasData;
 
-  stopBtn.textContent = isScreenshotMode ? "Export" : "Stop & Export";
+  stopBtn.textContent = "Stop Capture";
   modeSelect.disabled = !isIdle || state.hasData;
+
+  pauseBtn.classList.toggle("hidden", isNetworkMode || isScreenshotMode);
+  resumeBtn.classList.toggle("hidden", isNetworkMode || isScreenshotMode);
+
+  downloadWebmBtn.classList.toggle("hidden", !modeHasVideo);
+  webmHint.classList.toggle("hidden", !modeHasVideo);
+  exportHint.classList.toggle("hidden", !isActive);
 }
 
 function applyState(state) {
@@ -169,13 +184,13 @@ resumeBtn.addEventListener("click", async () => {
 });
 
 stopBtn.addEventListener("click", async () => {
-  const response = await sendMessage("STOP_AND_EXPORT");
+  const response = await sendMessage("STOP_CAPTURE");
   if (!response?.ok) {
-    setLocalMessage(response?.error || "Failed to export session.", "error", 6000);
+    setLocalMessage(response?.error || "Failed to stop capture.", "error", 6000);
     return;
   }
   applyState(response.data);
-  setLocalMessage("Export complete. Files saved to Downloads.", "info", 5000);
+  setLocalMessage("Capture stopped.", "info", 4000);
 });
 
 screenshotBtn.addEventListener("click", async () => {
@@ -213,6 +228,30 @@ markerSaveBtn.addEventListener("click", async () => {
 markerCancelBtn.addEventListener("click", () => {
   markerText.value = "";
   markerInput.classList.add("hidden");
+});
+
+downloadZipBtn.addEventListener("click", async () => {
+  const response = await sendMessage("EXPORT_EVIDENCE_ZIP");
+  if (!response?.ok) {
+    setLocalMessage(
+      response?.error || "Failed to download evidence ZIP.",
+      "error",
+      6000
+    );
+    return;
+  }
+  applyState(response.data);
+  setLocalMessage("Evidence ZIP downloaded.", "info", 4000);
+});
+
+downloadWebmBtn.addEventListener("click", async () => {
+  const response = await sendMessage("EXPORT_VIDEO_ONLY");
+  if (!response?.ok) {
+    setLocalMessage(response?.error || "Failed to download WebM.", "error", 6000);
+    return;
+  }
+  applyState(response.data);
+  setLocalMessage("WebM downloaded.", "info", 4000);
 });
 
 refreshStatus();

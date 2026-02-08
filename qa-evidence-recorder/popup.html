@@ -15,7 +15,7 @@
         <select id="modeSelect">
           <option value="screenshot">Screenshot Only</option>
           <option value="video">Video Only</option>
-          <option value="network">Network Only</option>
+          <option value="network">Network + Console</option>
           <option value="all" selected>
             All-in-One (Video + Network + Screenshots)
           </option>
@@ -38,9 +38,19 @@
         <button id="startBtn" class="primary">Start Session</button>
         <button id="pauseBtn">Pause</button>
         <button id="resumeBtn">Resume</button>
-        <button id="stopBtn" class="danger">Stop &amp; Export</button>
+        <button id="stopBtn" class="danger">Stop Capture</button>
         <button id="screenshotBtn">Capture Screenshot</button>
         <button id="markerBtn">Add Marker</button>
+        <button id="downloadZipBtn" class="primary">
+          Download Evidence ZIP
+        </button>
+        <button id="downloadWebmBtn">Download WebM</button>
+        <div id="webmHint" class="helper">
+          WebM includes video only. Use Evidence ZIP for logs + screenshots.
+        </div>
+        <div id="exportHint" class="helper warning hidden">
+          Stop capture before downloading.
+        </div>
       </div>
 
       <div id="markerInput" class="marker-input hidden">

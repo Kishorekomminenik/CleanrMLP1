@@ -4,6 +4,7 @@ import { sessionStore } from "./sessionStore.js";
 import {
   dataUrlToBlob,
   downloadBlob,
+  createZipBlob,
   formatDurationMs,
   formatTimestampForFilename,
   isRestrictedUrl,
@@ -172,8 +173,11 @@ async function pauseSession() {
   if (sessionStore.store.sessionState !== "recording") {
     throw new Error("No active session to pause.");
   }
-  if (sessionStore.store.mode === "screenshot") {
-    throw new Error("Pause is not available in Screenshot mode.");
+  if (
+    sessionStore.store.mode === "screenshot" ||
+    sessionStore.store.mode === "network"
+  ) {
+    throw new Error("Pause is not available in this mode.");
   }
   if (sessionStore.store.videoCaptureEnabled && recorder.state === "recording") {
     recorder.pause();
@@ -186,8 +190,11 @@ async function resumeSession() {
   if (sessionStore.store.sessionState !== "paused") {
     throw new Error("Session is not paused.");
   }
-  if (sessionStore.store.mode === "screenshot") {
-    throw new Error("Resume is not available in Screenshot mode.");
+  if (
+    sessionStore.store.mode === "screenshot" ||
+    sessionStore.store.mode === "network"
+  ) {
+    throw new Error("Resume is not available in this mode.");
   }
   if (sessionStore.store.videoCaptureEnabled && recorder.state === "paused") {
     recorder.resume();
@@ -198,10 +205,13 @@ async function resumeSession() {
 
 async function captureScreenshot() {
   const mode = sessionStore.store.mode;
-  if (!["screenshot", "all"].includes(mode)) {
+  if (!["screenshot", "all", "video", "network"].includes(mode)) {
     throw new Error("Screenshot capture is disabled in this mode.");
   }
-  if (mode === "all" && sessionStore.store.sessionState === "idle") {
+  if (
+    mode !== "screenshot" &&
+    !["recording", "paused"].includes(sessionStore.store.sessionState)
+  ) {
     throw new Error("Start a session before capturing screenshots.");
   }
   const tab = await getActiveTab();
@@ -482,6 +492,123 @@ async function stopAndExport() {
   return sessionStore.getSnapshot();
 }
 
+async function stopCapture() {
+  if (sessionStore.store.sessionState === "idle") {
+    throw new Error("No active capture to stop.");
+  }
+  await safeStopRecorder();
+  await safeDetachDebugger("stopped");
+  sessionStore.stopSession();
+  return sessionStore.getSnapshot();
+}
+
+async function exportEvidenceZip() {
+  if (sessionStore.store.sessionState !== "idle") {
+    throw new Error("Stop capture before downloading.");
+  }
+  if (!sessionStore.hasData()) {
+    throw new Error("There is no session data to export.");
+  }
+
+  const endedAtIso = new Date().toISOString();
+  const exportStamp = formatTimestampForFilename(endedAtIso);
+  const metadata = sessionStore.getSessionMetadata(endedAtIso);
+  const signals = buildSignals(sessionStore.store.networkLogs);
+
+  const rawScreenshots = sessionStore.store.screenshots.map((shot, index) => ({
+    index: index + 1,
+    timestampIso: shot.timestampIso,
+    t_ms: shot.t_ms,
+    fileName: shot.fileName
+  }));
+  const rawMarkers = sessionStore.store.markers.map((marker) => ({
+    timestampIso: marker.timestampIso,
+    t_ms: marker.t_ms,
+    note: marker.note
+  }));
+
+  const sessionLog = {
+    session: {
+      startedAt: metadata.startedAt,
+      endedAt: metadata.endedAt,
+      tabId: metadata.lockedTab?.id ?? null
+    },
+    raw: {
+      network: sessionStore.store.networkLogs,
+      markers: rawMarkers,
+      screenshots: rawScreenshots
+    },
+    normalizedEvents: [],
+    signals,
+    pipeline: {
+      version: "v1",
+      limits: {
+        maxRequests: 2000,
+        maxBodyBytes: 200 * 1024
+      }
+    }
+  };
+
+  const summaryText = buildSummaryText(
+    {
+      ...metadata,
+      durationLabel: formatDurationMs(sessionStore.getDurationMs())
+    },
+    sessionStore.store.networkLogs,
+    signals
+  );
+
+  const entries = [
+    {
+      path: `qa-session-log-${exportStamp}.json`,
+      blob: new Blob([JSON.stringify(sessionLog, null, 2)], {
+        type: "application/json"
+      })
+    },
+    {
+      path: `qa-summary-${exportStamp}.txt`,
+      blob: new Blob([summaryText], { type: "text/plain" })
+    }
+  ];
+
+  const videoBlob = sessionStore.getVideoBlob();
+  if (videoBlob) {
+    entries.push({
+      path: `qa-session-video-${exportStamp}.webm`,
+      blob: videoBlob
+    });
+  }
+
+  for (const [index, screenshot] of sessionStore.store.screenshots.entries()) {
+    const fileName =
+      screenshot.fileName ||
+      `qa-screenshot-${padNumber(index + 1)}-${exportStamp}.png`;
+    entries.push({
+      path: `screenshots/${fileName}`,
+      blob: screenshot.blob
+    });
+  }
+
+  const zipBlob = await createZipBlob(entries);
+  await downloadBlob(zipBlob, `qa-evidence-${exportStamp}.zip`);
+
+  sessionStore.clearData();
+  return sessionStore.getSnapshot();
+}
+
+async function exportVideoOnly() {
+  if (sessionStore.store.sessionState !== "idle") {
+    throw new Error("Stop capture before downloading.");
+  }
+  const videoBlob = sessionStore.getVideoBlob();
+  if (!videoBlob) {
+    throw new Error("No video recording available.");
+  }
+  const exportStamp = formatTimestampForFilename(new Date().toISOString());
+  await downloadBlob(videoBlob, `qa-session-video-${exportStamp}.webm`);
+  return sessionStore.getSnapshot();
+}
+
 async function setMode(mode) {
   sessionStore.setMode(mode);
   return sessionStore.getSnapshot();
@@ -510,6 +637,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     case "RESUME_SESSION":
       respond(resumeSession());
+      break;
+    case "STOP_CAPTURE":
+      respond(stopCapture());
+      break;
+    case "EXPORT_EVIDENCE_ZIP":
+      respond(exportEvidenceZip());
+      break;
+    case "EXPORT_VIDEO_ONLY":
+      respond(exportVideoOnly());
       break;
     case "STOP_AND_EXPORT":
       respond(stopAndExport());

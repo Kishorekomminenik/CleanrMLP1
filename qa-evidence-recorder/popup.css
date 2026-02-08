@@ -73,6 +73,16 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.helper {
+  font-size: 11px;
+  color: #475569;
+  margin-top: 2px;
+}
+
+.helper.warning {
+  color: #b45309;
+}
+
 .marker-input {
   margin-top: 8px;
   display: grid;
