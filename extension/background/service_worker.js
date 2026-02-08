@@ -74,6 +74,28 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function formatExportTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+}
+
+function computeSessionOffsetMs(timestampIso) {
+  if (!session || !session.created_at) {
+    return 0;
+  }
+  const startMs = new Date(session.created_at).getTime();
+  const eventMs = new Date(timestampIso).getTime();
+  if (Number.isNaN(startMs) || Number.isNaN(eventMs)) {
+    return 0;
+  }
+  return Math.max(0, eventMs - startMs);
+}
+
 function truncateToBytes(value, maxBytes) {
   if (typeof value !== "string") {
     return value;
@@ -310,6 +332,8 @@ function createSession(mode, tab) {
     state: "capturing",
     pause_started_at: null,
     total_paused_ms: 0,
+    screenshots: [],
+    markers: [],
     active_tab: {
       tab_id: tab && tab.id ? tab.id : null,
       url: tab && tab.url ? tab.url : "",
@@ -367,8 +391,10 @@ function markSessionStopped() {
 }
 
 function getArtifactsSnapshot() {
+  const screenshotCount =
+    session && Array.isArray(session.screenshots) ? session.screenshots.length : 0;
   return {
-    hasScreenshot: Boolean(state.screenshot.dataUrl),
+    hasScreenshot: Boolean(state.screenshot.dataUrl) || screenshotCount > 0,
     hasRecording: Boolean(state.recording.dataUrl) || Boolean(state.recording.hasData),
     hasNetworkLogs: Object.keys(state.network.requests).length > 0,
     hasConsoleLogs: state.console.logs.length > 0,
@@ -479,11 +505,16 @@ async function buildEnvironment(context) {
 async function buildEvidenceExportData(context) {
   updateSessionCounts();
   const environment = await buildEnvironment(context);
+  const exportTimestamp =
+    context && context.exportTimestamp
+      ? context.exportTimestamp
+      : formatExportTimestamp(new Date());
   const redactionResult = await chrome.storage.local.get({
     redactionEnabled: true,
   });
   const redactionEnabled = redactionResult.redactionEnabled !== false;
   const networkCapped = state.network.capped;
+  const rawNetworkCount = Object.keys(state.network.requests).length;
   const networkEntries = buildNetworkExportEntries();
   const consoleEntries = buildConsoleExportEntries();
   const redactedNetworkEntries =
@@ -498,15 +529,44 @@ async function buildEvidenceExportData(context) {
           globalThis.RedactUtils.redactConsoleEntry(entry)
         )
       : consoleEntries;
-  const screenshotList = state.screenshot.dataUrl
-    ? [
-        {
-          fileName: "screenshot.png",
-          timestamp: state.screenshot.capturedAt || nowIso(),
-        },
-      ]
-    : [];
-  const markerList = [];
+  const screenshotEntries =
+    session && Array.isArray(session.screenshots) ? session.screenshots : [];
+  const screenshotList = screenshotEntries.map((entry, index) => {
+    const displayIndex =
+      typeof entry.index === "number" && entry.index > 0 ? entry.index : index + 1;
+    const timestampIso = entry.timestampIso || entry.timestamp || nowIso();
+    return {
+      index: displayIndex,
+      timestampIso,
+      timestamp: timestampIso,
+      t_ms:
+        typeof entry.t_ms === "number"
+          ? entry.t_ms
+          : computeSessionOffsetMs(timestampIso),
+      fileName: `qa-screenshot-${String(displayIndex).padStart(
+        3,
+        "0"
+      )}-${exportTimestamp}.png`,
+    };
+  });
+  const markerEntries =
+    session && Array.isArray(session.markers) ? session.markers : [];
+  const markerList = markerEntries.map((entry) => {
+    const timestampIso = entry.timestampIso || entry.timestamp || nowIso();
+    return {
+      timestampIso,
+      timestamp: timestampIso,
+      t_ms:
+        typeof entry.t_ms === "number"
+          ? entry.t_ms
+          : computeSessionOffsetMs(timestampIso),
+      note: entry.note || "Marker",
+    };
+  });
+  const screenshotDownloads = screenshotList.map((meta, index) => ({
+    ...meta,
+    dataUrl: screenshotEntries[index] ? screenshotEntries[index].dataUrl : null,
+  }));
   const sessionExport = buildSessionExport();
   const pipelineConfig =
     globalThis.PipelineConfig && globalThis.PipelineConfig.DEFAULTS
@@ -556,7 +616,7 @@ async function buildEvidenceExportData(context) {
       grouped.normalizedEventsWithActionIds,
       pipelineConfig,
       {
-        rawNetworkCount: redactedNetworkEntries.length,
+        rawNetworkCount,
         networkCapped,
       }
     );
@@ -603,6 +663,7 @@ async function buildEvidenceExportData(context) {
     screenshotDataUrl: state.screenshot.dataUrl,
     recordingDataUrl: state.recording.dataUrl,
     recordingMimeType: state.recording.mimeType,
+    screenshots: screenshotDownloads,
     networkLogs: {
       version: "1.0",
       entries: redactedNetworkEntries,
@@ -615,6 +676,7 @@ async function buildEvidenceExportData(context) {
     environment,
     qaSessionLog,
     qaSummaryText,
+    exportTimestamp,
   };
 }
 
@@ -722,8 +784,19 @@ async function captureScreenshot() {
   ensureTabIsCapturable(tab);
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+    const timestampIso = nowIso();
     state.screenshot.dataUrl = dataUrl;
-    state.screenshot.capturedAt = nowIso();
+    state.screenshot.capturedAt = timestampIso;
+    if (session) {
+      const tMs = computeSessionOffsetMs(timestampIso);
+      const index = session.screenshots.length + 1;
+      session.screenshots.push({
+        index,
+        timestampIso,
+        t_ms: tMs,
+        dataUrl,
+      });
+    }
     clearStatusMessage();
     return dataUrl;
   } catch (error) {
@@ -732,6 +805,24 @@ async function captureScreenshot() {
     });
     throw error;
   }
+}
+
+function addMarker(note) {
+  if (!session) {
+    throw new Error("No active session.");
+  }
+  if (session.state !== "capturing" && session.state !== "paused") {
+    throw new Error("Session is not recording or paused.");
+  }
+  const timestampIso = nowIso();
+  const tMs = computeSessionOffsetMs(timestampIso);
+  const marker = {
+    timestampIso,
+    t_ms: tMs,
+    note: typeof note === "string" && note.trim() ? note.trim() : "Marker",
+  };
+  session.markers.push(marker);
+  return marker;
 }
 
 async function startRecording(streamId, tabId, mimeType) {
@@ -1587,6 +1678,17 @@ async function handleMessage(message, sender) {
       result = { ok: true, screenshotDataUrl: dataUrl };
       break;
     }
+    case "ADD_MARKER":
+      try {
+        const marker = addMarker(message.note);
+        result = { ok: true, marker };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Failed to add marker.",
+        };
+      }
+      break;
     case "RECORDING_START":
       try {
         const lock = checkStartMode("recording");

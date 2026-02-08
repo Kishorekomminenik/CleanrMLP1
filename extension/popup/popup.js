@@ -17,6 +17,7 @@ const buttons = {
   networkStart: document.getElementById("btn_start_capture"),
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
+  addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
   reset: document.getElementById("btn_reset_session"),
@@ -92,6 +93,7 @@ const MSG = {
   RECORDING_STOP: "RECORDING_STOP",
   RECORDING_EXPORT_WEBM: "RECORDING_EXPORT_WEBM",
   RECORDING_RESET: "RECORDING_RESET",
+  ADD_MARKER: "ADD_MARKER",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
   RESET_SESSION: "RESET_SESSION",
@@ -225,6 +227,36 @@ function formatZipTimestamp(date) {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function formatExportTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+}
+
+async function downloadBlob(blob, filename) {
+  if (!chrome.downloads?.download) {
+    throw new Error("Downloads API unavailable.");
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.downloads.download({ url, filename, saveAs: false }, (downloadId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(downloadId);
+      });
+    });
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 }
 
 function pickRecordingMimeType() {
@@ -1445,8 +1477,12 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+    const requestedExportTimestamp = formatExportTimestamp(new Date());
     const exportResponse = await Promise.race([
-      send("GET_EVIDENCE_EXPORT_DATA", { timezone }),
+      send("GET_EVIDENCE_EXPORT_DATA", {
+        timezone,
+        exportTimestamp: requestedExportTimestamp,
+      }),
       new Promise((resolve) =>
         setTimeout(
           () => resolve({ ok: false, error: "ZIP export timed out. Try again or reduce capture size." }),
@@ -1465,8 +1501,19 @@ async function handleDownload() {
     }
 
     const data = exportResponse.data;
+    const exportTimestamp = data.exportTimestamp || requestedExportTimestamp;
     const zip = new JSZip();
-    if (data.screenshotDataUrl) {
+    if (Array.isArray(data.screenshots)) {
+      for (const shot of data.screenshots) {
+        if (shot && shot.dataUrl) {
+          const screenshotBlob = await dataUrlToBlob(shot.dataUrl);
+          const name =
+            shot.fileName ||
+            `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
+          zip.file(name, screenshotBlob);
+        }
+      }
+    } else if (data.screenshotDataUrl) {
       const screenshotBlob = await dataUrlToBlob(data.screenshotDataUrl);
       zip.file("screenshot.png", screenshotBlob);
     }
@@ -1487,6 +1534,9 @@ async function handleDownload() {
     );
     if (data.qaSessionLog) {
       zip.file("qa-session-log.json", JSON.stringify(data.qaSessionLog, null, 2));
+    }
+    if (data.qaSummaryText) {
+      zip.file("qa-summary.txt", data.qaSummaryText);
     }
     zip.file("session.json", JSON.stringify(data.session || {}, null, 2));
     zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
@@ -1515,31 +1565,39 @@ async function handleDownload() {
         } finally {
           setTimeout(() => URL.revokeObjectURL(url), 2000);
         }
-        if (data.qaSummaryText && chrome.downloads?.download) {
-          const summaryBlob = new Blob([data.qaSummaryText], {
-            type: "text/plain",
-          });
-          const summaryUrl = URL.createObjectURL(summaryBlob);
-          try {
-            await new Promise((resolve, reject) => {
-              chrome.downloads.download(
-                { url: summaryUrl, filename: "qa-summary.txt", saveAs: false },
-                (downloadId) => {
-                  if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message));
-                    return;
-                  }
-                  resolve(downloadId);
-                }
-              );
-            });
-          } finally {
-            setTimeout(() => URL.revokeObjectURL(summaryUrl), 2000);
-          }
-        }
       })(),
       timeoutPromise,
     ]);
+
+    if (data.recordingDataUrl) {
+      const recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
+      await downloadBlob(
+        recordingBlob,
+        `qa-session-video-${exportTimestamp}.webm`
+      );
+    }
+    if (data.qaSessionLog) {
+      const logBlob = new Blob([JSON.stringify(data.qaSessionLog, null, 2)], {
+        type: "application/json",
+      });
+      await downloadBlob(logBlob, `qa-session-log-${exportTimestamp}.json`);
+    }
+    if (data.qaSummaryText) {
+      const summaryBlob = new Blob([data.qaSummaryText], { type: "text/plain" });
+      await downloadBlob(summaryBlob, `qa-summary-${exportTimestamp}.txt`);
+    }
+    if (Array.isArray(data.screenshots)) {
+      for (const shot of data.screenshots) {
+        if (!shot || !shot.dataUrl) {
+          continue;
+        }
+        const screenshotBlob = await dataUrlToBlob(shot.dataUrl);
+        const name =
+          shot.fileName ||
+          `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
+        await downloadBlob(screenshotBlob, name);
+      }
+    }
 
     setStatus(statusElements.download, "Download started.", "success");
   } catch (error) {
@@ -1580,11 +1638,12 @@ async function handleRecordingDownload() {
       setStatus(statusElements.download, "Downloads API unavailable.", "error");
       return;
     }
+    const exportTimestamp = formatExportTimestamp(new Date());
     await new Promise((resolve, reject) => {
       chrome.downloads.download(
         {
           url: res.blobUrl,
-          filename: res.filename || "repro_recording.webm",
+          filename: `qa-session-video-${exportTimestamp}.webm`,
           saveAs: false,
         },
         (downloadId) => {
@@ -1604,6 +1663,24 @@ async function handleRecordingDownload() {
       "error"
     );
   }
+}
+
+async function handleAddMarker() {
+  const note = window.prompt("Marker note (optional)");
+  if (note === null) {
+    return;
+  }
+  const response = await send(MSG.ADD_MARKER, { note });
+  if (!response.ok) {
+    setStatus(
+      statusElements.message,
+      response.error || "Failed to add marker.",
+      "error"
+    );
+    return;
+  }
+  setStatus(statusElements.message, "Marker added.", "success");
+  await refreshStatus();
 }
 
 async function handleResetSession() {
@@ -1738,6 +1815,9 @@ if (buttons.networkRefresh) {
 buttons.download.addEventListener("click", handleDownload);
 if (buttons.downloadRecording) {
   buttons.downloadRecording.addEventListener("click", handleRecordingDownload);
+}
+if (buttons.addMarker) {
+  buttons.addMarker.addEventListener("click", handleAddMarker);
 }
 buttons.reset.addEventListener("click", handleResetSession);
 

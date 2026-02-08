@@ -84,6 +84,9 @@
 
     const markers = events.filter((event) => event.kind === "marker");
     const screenshots = events.filter((event) => event.kind === "screenshot");
+    const totalRequests = events.filter(
+      (event) => event.source === "network" && event.kind === "request"
+    ).length;
 
     let bodySkipped = 0;
     let bodyTruncated = 0;
@@ -115,6 +118,9 @@
 
     lines.push("Capture Notes");
     lines.push(`- Total actionable signals: ${actionableSignals.length}`);
+    lines.push(`- Total requests: ${totalRequests}`);
+    lines.push(`- Markers: ${markers.length}`);
+    lines.push(`- Screenshots: ${screenshots.length}`);
     lines.push("");
 
     lines.push("Top 5 Failures");
