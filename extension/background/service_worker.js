@@ -21,6 +21,7 @@ const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRY_BYTES = 50000;
+const FULLPAGE_MAX_HEIGHT = 30000;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -114,6 +115,25 @@ function dataUrlToBlob(dataUrl) {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mimeType });
+}
+
+async function blobToDataUrl(blob) {
+  if (!blob) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlToImageBitmap(dataUrl) {
+  const blob = dataUrlToBlob(dataUrl);
+  if (!blob) {
+    throw new Error("Invalid screenshot data.");
+  }
+  return createImageBitmap(blob);
 }
 
 function truncateToBytes(value, maxBytes) {
@@ -555,6 +575,7 @@ async function buildEvidenceExportData(context) {
     const displayIndex =
       typeof entry.index === "number" && entry.index > 0 ? entry.index : index + 1;
     const timestampIso = entry.timestampIso || entry.timestamp || nowIso();
+    const isFullPage = Boolean(entry.fullPage);
     return {
       index: displayIndex,
       timestampIso,
@@ -563,10 +584,12 @@ async function buildEvidenceExportData(context) {
         typeof entry.t_ms === "number"
           ? entry.t_ms
           : computeSessionOffsetMs(timestampIso),
-      fileName: `qa-screenshot-${String(displayIndex).padStart(
-        3,
-        "0"
-      )}-${exportTimestamp}.png`,
+      fileName: isFullPage
+        ? `qa-screenshot-fullpage-${exportTimestamp}.png`
+        : `qa-screenshot-${String(displayIndex).padStart(
+            3,
+            "0"
+          )}-${exportTimestamp}.png`,
     };
   });
   const markerEntries =
@@ -709,6 +732,22 @@ function sendMessageToTab(tabId, message) {
   });
 }
 
+function sendMessageToTabWithResponse(tabId, message) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve({ ok: false, error: "No tab to message." });
+      return;
+    }
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response || { ok: false, error: "No response from tab." });
+    });
+  });
+}
+
 function attachDebugger(tabId) {
   return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION, () => {
@@ -828,6 +867,112 @@ async function captureScreenshot() {
     });
     throw error;
   }
+}
+
+async function captureFullPageScreenshot() {
+  if (!session || (session.state !== "capturing" && session.state !== "paused")) {
+    throw new Error("Start a session to capture a full page screenshot.");
+  }
+  const tab = await getActiveTab();
+  ensureTabIsCapturable(tab);
+  if (!chrome.scripting || !chrome.scripting.executeScript) {
+    throw new Error("Scripting API unavailable for full page capture.");
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["content/fullpage_capture.js"],
+  });
+
+  const prep = await sendMessageToTabWithResponse(tab.id, {
+    type: "FULLPAGE_PREPARE",
+  });
+  if (!prep.ok) {
+    throw new Error(prep.error || "Unable to prepare full page capture.");
+  }
+
+  const scrollPositions = Array.isArray(prep.scrollPositions)
+    ? prep.scrollPositions
+    : [0];
+  const viewportHeight = prep.viewportHeight || 0;
+  const scrollHeight = prep.scrollHeight || viewportHeight || 0;
+  if (!scrollHeight || !viewportHeight) {
+    throw new Error("Unable to read page dimensions.");
+  }
+
+  const captures = [];
+  try {
+    for (const y of scrollPositions) {
+      const scrolled = await sendMessageToTabWithResponse(tab.id, {
+        type: "FULLPAGE_SCROLL",
+        y,
+      });
+      if (!scrolled.ok) {
+        throw new Error(scrolled.error || "Failed to scroll for capture.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+      captures.push({ y, dataUrl });
+    }
+  } finally {
+    await sendMessageToTabWithResponse(tab.id, { type: "FULLPAGE_FINISH" });
+  }
+
+  if (!captures.length) {
+    throw new Error("No screenshots captured.");
+  }
+
+  const firstBitmap = await dataUrlToImageBitmap(captures[0].dataUrl);
+  const scale = viewportHeight ? firstBitmap.height / viewportHeight : 1;
+  const totalHeightPx = Math.round(scrollHeight * scale);
+  if (totalHeightPx > FULLPAGE_MAX_HEIGHT) {
+    throw new Error("Full page capture exceeds maximum height.");
+  }
+  const canvas = new OffscreenCanvas(firstBitmap.width, totalHeightPx);
+  const ctx = canvas.getContext("2d");
+
+  for (const capture of captures) {
+    const bitmap = await dataUrlToImageBitmap(capture.dataUrl);
+    const destY = Math.round(capture.y * scale);
+    if (destY >= totalHeightPx) {
+      continue;
+    }
+    const remaining = totalHeightPx - destY;
+    const drawHeight = Math.min(bitmap.height, remaining);
+    ctx.drawImage(
+      bitmap,
+      0,
+      0,
+      bitmap.width,
+      drawHeight,
+      0,
+      destY,
+      bitmap.width,
+      drawHeight
+    );
+  }
+
+  const blob = await canvas.convertToBlob({ type: "image/png" });
+  const dataUrl = await blobToDataUrl(blob);
+  const timestampIso = nowIso();
+  state.screenshot.dataUrl = dataUrl;
+  state.screenshot.capturedAt = timestampIso;
+  if (session) {
+    session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
+    const tMs = computeSessionOffsetMs(timestampIso);
+    const index = session.screenshots.length + 1;
+    session.screenshots.push({
+      index,
+      timestampIso,
+      t_ms: tMs,
+      blob,
+      dataUrl,
+      fullPage: true,
+      fileName: "qa-screenshot-fullpage.png",
+    });
+  }
+  clearStatusMessage();
+  return dataUrl;
 }
 
 function addMarker(note) {
@@ -1677,6 +1822,20 @@ async function handleMessage(message, sender) {
         ok: true,
         isTabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
       };
+      break;
+    case "FULLPAGE_SCREENSHOT":
+      try {
+        const dataUrl = await captureFullPageScreenshot();
+        result = { ok: true, screenshotDataUrl: dataUrl };
+      } catch (error) {
+        result = {
+          ok: false,
+          error:
+            error && error.message
+              ? error.message
+              : "Full page screenshot failed.",
+        };
+      }
       break;
     case "TAKE_SCREENSHOT":
       try {

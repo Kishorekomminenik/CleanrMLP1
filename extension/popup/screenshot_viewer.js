@@ -19,6 +19,10 @@ const controls = {
   highlightColor: document.getElementById("highlightColor"),
   highlightOpacity: document.getElementById("highlightOpacity"),
   textSize: document.getElementById("textSize"),
+  textFontFamily: document.getElementById("textFontFamily"),
+  textWeight: document.getElementById("textWeight"),
+  textColor: document.getElementById("textColor"),
+  textOpacity: document.getElementById("textOpacity"),
   textBold: document.getElementById("textBold"),
 };
 
@@ -57,6 +61,15 @@ let editingTextEl = null;
 
 let undoStack = [];
 let redoStack = [];
+
+const DEFAULT_TEXT_SETTINGS = {
+  fontFamily: "system-ui, Arial",
+  weight: "400",
+  size: 16,
+  color: "#111827",
+  opacity: 1,
+  bold: false,
+};
 
 function setCopyLabel(text) {
   const label = buttons.copy ? buttons.copy.querySelector(".btn-label") : null;
@@ -135,6 +148,70 @@ function setEditorEnabled(enabled) {
   updateHistoryButtons();
 }
 
+async function loadAnnotationSettings() {
+  const result = await chrome.storage.session.get({
+    annotationSettings: null,
+  });
+  const settings = result.annotationSettings || DEFAULT_TEXT_SETTINGS;
+  if (controls.textFontFamily) {
+    controls.textFontFamily.value = settings.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily;
+  }
+  if (controls.textWeight) {
+    controls.textWeight.value = settings.weight || DEFAULT_TEXT_SETTINGS.weight;
+  }
+  if (controls.textSize) {
+    controls.textSize.value = String(settings.size || DEFAULT_TEXT_SETTINGS.size);
+  }
+  if (controls.textColor) {
+    controls.textColor.value = settings.color || DEFAULT_TEXT_SETTINGS.color;
+  }
+  if (controls.textOpacity) {
+    controls.textOpacity.value = String(
+      typeof settings.opacity === "number" ? settings.opacity : DEFAULT_TEXT_SETTINGS.opacity
+    );
+  }
+  if (controls.textBold) {
+    controls.textBold.checked = Boolean(settings.bold);
+  }
+}
+
+function getAnnotationSettings() {
+  return {
+    fontFamily: controls.textFontFamily
+      ? controls.textFontFamily.value
+      : DEFAULT_TEXT_SETTINGS.fontFamily,
+    weight: controls.textWeight ? controls.textWeight.value : DEFAULT_TEXT_SETTINGS.weight,
+    size: controls.textSize
+      ? Number(controls.textSize.value)
+      : DEFAULT_TEXT_SETTINGS.size,
+    color: controls.textColor ? controls.textColor.value : DEFAULT_TEXT_SETTINGS.color,
+    opacity: controls.textOpacity
+      ? Number(controls.textOpacity.value)
+      : DEFAULT_TEXT_SETTINGS.opacity,
+    bold: controls.textBold ? controls.textBold.checked : DEFAULT_TEXT_SETTINGS.bold,
+  };
+}
+
+async function saveAnnotationSettings() {
+  const settings = getAnnotationSettings();
+  await chrome.storage.session.set({ annotationSettings: settings });
+}
+
+function applySettingsToEditingText() {
+  if (!editingTextEl) {
+    return;
+  }
+  const settings = getAnnotationSettings();
+  editingTextEl.dataset.color = settings.color;
+  editingTextEl.dataset.size = String(settings.size);
+  editingTextEl.dataset.bold = settings.bold ? "true" : "false";
+  editingTextEl.dataset.fontFamily = settings.fontFamily;
+  editingTextEl.dataset.weight = settings.weight;
+  editingTextEl.dataset.opacity = String(settings.opacity);
+  applyTextStyle(editingTextEl);
+  positionTextElement(editingTextEl);
+}
+
 function setTool(tool) {
   currentTool = tool;
   Object.entries(toolButtons).forEach(([key, button]) => {
@@ -204,9 +281,18 @@ function createId() {
 function applyTextStyle(el) {
   const size = Number(el.dataset.size) || 16;
   const bold = el.dataset.bold === "true";
-  el.style.color = el.dataset.color || "#111827";
+  const color = el.dataset.color || "#111827";
+  const opacity = Number(el.dataset.opacity);
+  const weight = bold ? "700" : el.dataset.weight || "400";
+  const fontFamily = el.dataset.fontFamily || "system-ui, Arial";
+  const colorValue =
+    !Number.isNaN(opacity) && opacity < 1
+      ? hexToRgba(color, opacity)
+      : color;
+  el.style.color = colorValue;
   el.style.fontSize = `${size * scale}px`;
-  el.style.fontWeight = bold ? "700" : "400";
+  el.style.fontWeight = weight;
+  el.style.fontFamily = fontFamily;
 }
 
 function positionTextElement(el) {
@@ -233,6 +319,12 @@ function getTextsSnapshot() {
     color: el.dataset.color || "#111827",
     size: Number(el.dataset.size) || 16,
     bold: el.dataset.bold === "true",
+    fontFamily: el.dataset.fontFamily || "system-ui, Arial",
+    weight: el.dataset.weight || (el.dataset.bold === "true" ? "700" : "400"),
+    opacity:
+      typeof el.dataset.opacity !== "undefined"
+        ? Number(el.dataset.opacity)
+        : 1,
   }));
 }
 
@@ -300,6 +392,12 @@ function buildTextElement(data) {
   el.dataset.color = data.color;
   el.dataset.size = data.size;
   el.dataset.bold = data.bold ? "true" : "false";
+  el.dataset.fontFamily = data.fontFamily || "system-ui, Arial";
+  el.dataset.weight = data.weight || (data.bold ? "700" : "400");
+  el.dataset.opacity =
+    typeof data.opacity === "number" && !Number.isNaN(data.opacity)
+      ? String(data.opacity)
+      : "1";
   el.textContent = data.text || "";
   el.tabIndex = 0;
   applyTextStyle(el);
@@ -580,9 +678,16 @@ async function exportAnnotatedBlob() {
   ctx.drawImage(drawCanvas, 0, 0);
   const texts = getTextsSnapshot();
   texts.forEach((text) => {
-    const weight = text.bold ? "700" : "400";
-    ctx.font = `${weight} ${text.size}px system-ui, Arial`;
-    ctx.fillStyle = text.color;
+    const weight = text.bold ? "700" : text.weight || "400";
+    const fontFamily = text.fontFamily || "system-ui, Arial";
+    const opacity =
+      typeof text.opacity === "number" && !Number.isNaN(text.opacity)
+        ? text.opacity
+        : 1;
+    const colorValue =
+      opacity < 1 ? hexToRgba(text.color, opacity) : text.color;
+    ctx.font = `${weight} ${text.size}px ${fontFamily}`;
+    ctx.fillStyle = colorValue;
     ctx.textBaseline = "top";
     const lines = text.text.split("\n");
     const lineHeight = text.size * 1.2;
@@ -663,9 +768,16 @@ textLayer.addEventListener("pointerdown", (event) => {
     x: point.x,
     y: point.y,
     text: "",
-    color: controls.mainColor.value,
+    color: controls.textColor ? controls.textColor.value : controls.mainColor.value,
     size: Number(controls.textSize.value),
     bold: controls.textBold.checked,
+    fontFamily: controls.textFontFamily
+      ? controls.textFontFamily.value
+      : "system-ui, Arial",
+    weight: controls.textWeight ? controls.textWeight.value : "400",
+    opacity: controls.textOpacity
+      ? Number(controls.textOpacity.value)
+      : 1,
   };
   const el = buildTextElement(newText);
   textLayer.appendChild(el);
@@ -757,13 +869,31 @@ Object.entries(toolButtons).forEach(([tool, button]) => {
   button.addEventListener("click", () => setTool(tool));
 });
 
+function bindTextControl(control, eventName = "change") {
+  if (!control) {
+    return;
+  }
+  control.addEventListener(eventName, () => {
+    applySettingsToEditingText();
+    saveAnnotationSettings();
+  });
+}
+
+bindTextControl(controls.textFontFamily);
+bindTextControl(controls.textWeight);
+bindTextControl(controls.textColor);
+bindTextControl(controls.textSize);
+bindTextControl(controls.textBold);
+bindTextControl(controls.textOpacity, "input");
+
 window.addEventListener("resize", () => {
   updateScale();
 });
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   setTool(currentTool);
   setEditorEnabled(false);
+  await loadAnnotationSettings();
   loadScreenshot();
 });
 

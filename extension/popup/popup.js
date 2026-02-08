@@ -18,6 +18,7 @@ const buttons = {
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
   screenshotInline: document.getElementById("btn_take_screenshot_inline"),
+  fullPageScreenshot: document.getElementById("btn_fullpage_screenshot"),
   addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
@@ -96,6 +97,7 @@ const MSG = {
   RECORDING_EXPORT_WEBM: "RECORDING_EXPORT_WEBM",
   RECORDING_RESET: "RECORDING_RESET",
   ADD_MARKER: "ADD_MARKER",
+  FULLPAGE_SCREENSHOT: "FULLPAGE_SCREENSHOT",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
   RESET_SESSION: "RESET_SESSION",
@@ -1097,6 +1099,9 @@ function updateStatusUI(state) {
   if (buttons.screenshotInline) {
     buttons.screenshotInline.disabled = !allowMarkers;
   }
+  if (buttons.fullPageScreenshot) {
+    buttons.fullPageScreenshot.disabled = !allowMarkers;
+  }
   if (buttons.addMarker) {
     buttons.addMarker.disabled = !allowMarkers;
   }
@@ -1224,6 +1229,22 @@ async function handleScreenshot() {
   await refreshStatus();
 }
 
+async function handleFullPageScreenshot() {
+  setStatus(statusElements.message, "Capturing full page...");
+  const response = await send(MSG.FULLPAGE_SCREENSHOT);
+  if (!response.ok) {
+    setStatus(
+      statusElements.message,
+      response.error || "Full page screenshot failed.",
+      "error"
+    );
+    await refreshStatus();
+    return;
+  }
+  setStatus(statusElements.message, "Full page screenshot captured.", "success");
+  await refreshStatus();
+}
+
 async function handleRecordingStart() {
   clearStatusError();
   if (recordingBlockedReason === "invalid_tab") {
@@ -1245,7 +1266,7 @@ async function handleRecordingStart() {
   console.log("[REC][popup] start clicked");
   setStatus(statusElements.download, "Starting recording...");
   recordingStatusMessage = null;
-  chrome.storage.session.remove(["recordingStatusMessage"]);
+  chrome.storage.session.remove(["recordingStatusMessage", "annotationSettings"]);
   const tab = await getActiveTab();
   if (!tab || !tab.id) {
     setStatus(statusElements.message, "No active tab.", "error");
@@ -1840,6 +1861,9 @@ async function initCapabilities() {
 buttons.screenshot.addEventListener("click", handleScreenshot);
 if (buttons.screenshotInline) {
   buttons.screenshotInline.addEventListener("click", handleScreenshot);
+}
+if (buttons.fullPageScreenshot) {
+  buttons.fullPageScreenshot.addEventListener("click", handleFullPageScreenshot);
 }
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
