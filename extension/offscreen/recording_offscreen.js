@@ -609,7 +609,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     "RECORDING_RESET",
   ]);
   if (!handledTypes.has(message.type)) {
-    console.warn("[OFFSCREEN] Unknown message type:", message.type);
+    if (
+      typeof message.type === "string" &&
+      (message.type.startsWith("RECORDING_") ||
+        message.type.startsWith("OFFSCREEN_"))
+    ) {
+      console.warn("[OFFSCREEN] Unknown message type:", message.type);
+    }
     return false;
   }
   (async () => {
