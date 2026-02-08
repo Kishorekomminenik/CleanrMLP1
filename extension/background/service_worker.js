@@ -53,6 +53,7 @@ const MODE_LABELS = {
 let session = null;
 let statusMessage = null;
 let offscreenReady = false;
+let offscreenCreating = null;
 let recordingPanelWindowId = null;
 let exportPhase = null;
 
@@ -351,12 +352,13 @@ function markSessionStopped() {
 function getArtifactsSnapshot() {
   return {
     hasScreenshot: Boolean(state.screenshot.dataUrl),
-    hasRecording: Boolean(state.recording.dataUrl),
+    hasRecording: Boolean(state.recording.dataUrl) || Boolean(state.recording.hasData),
     hasNetworkLogs: Object.keys(state.network.requests).length > 0,
     hasConsoleLogs: state.console.logs.length > 0,
     hasAnyArtifacts:
       Boolean(state.screenshot.dataUrl) ||
       Boolean(state.recording.dataUrl) ||
+      Boolean(state.recording.hasData) ||
       Object.keys(state.network.requests).length > 0 ||
       state.console.logs.length > 0,
   };
@@ -377,6 +379,31 @@ function getStatusSnapshot() {
     hasArtifacts: artifacts.hasAnyArtifacts,
     statusMessage,
   };
+}
+
+function syncRecordingState(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+  const nextState = snapshot.state || "idle";
+  state.recording.status = nextState;
+  state.recording.hasData = Boolean(snapshot.hasData);
+  if (snapshot.mimeType) {
+    state.recording.mimeType = snapshot.mimeType;
+  }
+  if (snapshot.lastError) {
+    state.recording.error = snapshot.lastError;
+  }
+  if (nextState === "recording") {
+    setSessionState("capturing");
+  } else if (nextState === "paused") {
+    setSessionState("paused");
+  } else if (nextState === "idle" && session && session.mode === "recording") {
+    if (state.recording.hasData && !state.recording.capturedAt) {
+      state.recording.capturedAt = nowIso();
+    }
+    markSessionStopped();
+  }
 }
 
 function normalizeHeaders(headers) {
@@ -528,13 +555,23 @@ function sendMessageToOffscreen(message) {
 }
 
 async function ensureOffscreenDocument() {
+  if (offscreenCreating) {
+    await offscreenCreating;
+    return;
+  }
   const hasDocument = await chrome.offscreen.hasDocument();
-  if (!hasDocument) {
-    await chrome.offscreen.createDocument({
-      url: "background/offscreen.html",
-      reasons: ["USER_MEDIA"],
-      justification: "Record active tab video for QA evidence.",
-    });
+  if (hasDocument) {
+    return;
+  }
+  offscreenCreating = chrome.offscreen.createDocument({
+    url: chrome.runtime.getURL("offscreen/recording_offscreen.html"),
+    reasons: ["USER_MEDIA"],
+    justification: "Record active tab video while popup is closed.",
+  });
+  try {
+    await offscreenCreating;
+  } finally {
+    offscreenCreating = null;
   }
 }
 
@@ -544,8 +581,17 @@ async function ensureOffscreenReady() {
     return;
   }
   const response = await sendMessageToOffscreen({ type: "OFFSCREEN_PING" });
-  if (!response.ok) {
-    throw new Error(response.error || "Offscreen document not ready.");
+  if (!response.ok || response.owner !== "recording_offscreen") {
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch (error) {
+      // Ignore close failures and retry creation.
+    }
+    await ensureOffscreenDocument();
+    const retry = await sendMessageToOffscreen({ type: "OFFSCREEN_PING" });
+    if (!retry.ok || retry.owner !== "recording_offscreen") {
+      throw new Error(retry.error || "Offscreen document not ready.");
+    }
   }
   offscreenReady = true;
 }
@@ -587,13 +633,14 @@ async function startRecording() {
       throw new Error(errorMessage);
     }
 
-    state.recording.status = "recording";
+    syncRecordingState(response);
     state.recording.dataUrl = null;
     state.recording.capturedAt = null;
     state.recording.mimeType = null;
     state.recording.error = null;
     state.recording.hasData = false;
     clearStatusMessage();
+    return response;
   } catch (error) {
     setStatusMessage(error.message || "Failed to start recording.", "error");
     addDiagnostic("error", "Recording start failed.", {
@@ -611,9 +658,12 @@ async function pauseRecording() {
   if (!response.ok) {
     throw new Error(response.error || "Failed to pause recording.");
   }
-  state.recording.status = "paused";
-  setSessionState("paused");
+  syncRecordingState(response);
+  if (state.recording.status === "paused") {
+    setSessionState("paused");
+  }
   clearStatusMessage();
+  return response;
 }
 
 async function resumeRecording() {
@@ -624,15 +674,15 @@ async function resumeRecording() {
   if (!response.ok) {
     throw new Error(response.error || "Failed to resume recording.");
   }
-  state.recording.status = "recording";
-  setSessionState("capturing");
+  syncRecordingState(response);
+  if (state.recording.status === "recording") {
+    setSessionState("capturing");
+  }
   clearStatusMessage();
+  return response;
 }
 
 async function stopRecording() {
-  if (state.recording.status === "idle") {
-    throw new Error("No recording to stop.");
-  }
   const response = await sendMessageToOffscreen({ type: "RECORDING_STOP" });
   if (!response.ok) {
     addDiagnostic("error", "Recording stop failed.", {
@@ -640,10 +690,13 @@ async function stopRecording() {
     });
     throw new Error(response.error || "Failed to stop recording.");
   }
-  state.recording.status = "stopping";
-  markSessionStopped();
+  syncRecordingState(response);
+  if (state.recording.status === "idle") {
+    markSessionStopped();
+  }
   clearStatusMessage();
   closeRecordingPanelWindowIfOpen();
+  return response;
 }
 
 async function startNetworkCapture() {
@@ -989,6 +1042,11 @@ async function resetSession() {
       console.warn("Failed to stop recording on reset:", error);
     }
   }
+  try {
+    await sendMessageToOffscreen({ type: "RECORDING_RESET" });
+  } catch (error) {
+    console.warn("Failed to reset recording on reset:", error);
+  }
 
   state.screenshot.dataUrl = null;
   state.screenshot.capturedAt = null;
@@ -998,6 +1056,7 @@ async function resetSession() {
   state.recording.mimeType = null;
   state.recording.capturedAt = null;
   state.recording.error = null;
+  state.recording.hasData = false;
 
   state.network.active = false;
   state.network.tabId = null;
@@ -1388,12 +1447,12 @@ async function handleMessage(message, sender) {
           };
           break;
         }
-        await startRecording();
+        const response = await startRecording();
         if (session) {
           session.state = "capturing";
         }
         await openRecordingPanelWindow();
-        result = { ok: true, state: getStatusSnapshot() };
+        result = response || { ok: true };
       } catch (error) {
         if (session) {
           session.state = "error";
@@ -1409,71 +1468,37 @@ async function handleMessage(message, sender) {
         };
       }
       break;
-    case "RECORDING_SESSION_START": {
-      const tab = await getActiveTab();
-      ensureTabIsCapturable(tab);
+    case "RECORDING_GET_STATE": {
       try {
-        ensureSessionForMode("recording", tab);
+        await ensureOffscreenReady();
+        const response = await sendMessageToOffscreen({
+          type: "RECORDING_GET_STATE",
+        });
+        if (response && response.ok) {
+          syncRecordingState(response);
+        }
+        result = response || { ok: false, error: "No response from offscreen." };
       } catch (error) {
         result = {
           ok: false,
-          error: error.message || "A session already exists.",
-          state: getStatusSnapshot(),
+          error: error && error.message ? error.message : "Failed to get state.",
         };
-        break;
       }
-      state.recording.status = "recording";
-      state.recording.dataUrl = null;
-      state.recording.capturedAt = null;
-      state.recording.mimeType = null;
-      state.recording.error = null;
-      state.recording.hasData = false;
-      setSessionState("capturing");
-      clearStatusMessage();
-      result = { ok: true, state: getStatusSnapshot() };
       break;
     }
-    case "RECORDING_SESSION_PAUSE":
-      if (session && !session.pause_started_at) {
-        session.pause_started_at = nowIso();
+    case "RECORDING_EXPORT_WEBM": {
+      try {
+        await ensureOffscreenReady();
+        const response = await sendMessageToOffscreen({
+          type: "RECORDING_EXPORT_WEBM",
+        });
+        result = response || { ok: false, error: "No response from offscreen." };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Export failed.",
+        };
       }
-      state.recording.status = "paused";
-      setSessionState("paused");
-      clearStatusMessage();
-      result = { ok: true };
-      break;
-    case "RECORDING_SESSION_RESUME":
-      if (session && session.pause_started_at) {
-        const pausedAt = new Date(session.pause_started_at).getTime();
-        if (!Number.isNaN(pausedAt)) {
-          session.total_paused_ms =
-            (session.total_paused_ms || 0) + (Date.now() - pausedAt);
-        }
-        session.pause_started_at = null;
-      }
-      state.recording.status = "recording";
-      setSessionState("capturing");
-      clearStatusMessage();
-      result = { ok: true };
-      break;
-    case "RECORDING_SESSION_STOPPING":
-      state.recording.status = "stopping";
-      result = { ok: true };
-      break;
-    case "RECORDING_PAUSE":
-    case "RECORDING_RESUME":
-    case "RECORDING_STOP": {
-      const sessionState =
-        session && session.mode === "recording" ? session.state : "idle";
-      const currentState =
-        state.recording.status === "idle" && sessionState === "idle"
-          ? "idle"
-          : state.recording.status;
-      result = {
-        ok: true,
-        state: currentState,
-        alreadyStopped: message.type === "RECORDING_STOP" && currentState === "idle",
-      };
       break;
     }
     case "RECORDING_DATA_AVAILABLE":
@@ -1481,16 +1506,13 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "RECORDING_PAUSE":
-      await pauseRecording();
-      result = { ok: true };
+      result = await pauseRecording();
       break;
     case "RECORDING_RESUME":
-      await resumeRecording();
-      result = { ok: true };
+      result = await resumeRecording();
       break;
     case "RECORDING_STOP":
-      await stopRecording();
-      result = { ok: true };
+      result = await stopRecording();
       break;
     case "NETWORK_START":
       {
@@ -1578,6 +1600,12 @@ async function handleMessage(message, sender) {
       updateSessionCounts();
       result = { ok: true };
       break;
+    case "RECORDING_STATE_CHANGED":
+      if (message && message.state) {
+        syncRecordingState(message.state);
+      }
+      result = { ok: true };
+      break;
     case "RECORDING_ERROR":
       state.recording.status = "idle";
       state.recording.error = message.error || "Recording failed.";
@@ -1600,22 +1628,6 @@ async function handleMessage(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (
-    sender &&
-    sender.url &&
-    (sender.url.includes("popup/popup.html") ||
-      sender.url.includes("popup/recording_panel.html"))
-  ) {
-    if (
-      msg.type === "RECORDING_GET_STATE" ||
-      msg.type === "RECORDING_PAUSE" ||
-      msg.type === "RECORDING_RESUME" ||
-      msg.type === "RECORDING_STOP" ||
-      msg.type === "RECORDING_EXPORT_WEBM"
-    ) {
-      return false;
-    }
-  }
   (async () => {
     try {
       const result = await handleMessage(msg, sender);

@@ -10,7 +10,7 @@ async function send(type, payload = {}) {
   try {
     const res = await chrome.runtime.sendMessage({ type, ...payload });
     if (!res) {
-      return { ok: false, error: "No response from popup." };
+      return { ok: false, error: "No response from service worker." };
     }
     return res;
   } catch (error) {
