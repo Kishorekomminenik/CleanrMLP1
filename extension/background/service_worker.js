@@ -364,6 +364,7 @@ function checkStartMode(mode) {
 }
 
 function createSession(mode, tab) {
+  chrome.storage.session.remove(["annotationSettings"]);
   session = {
     session_id: createSessionId(),
     created_at: nowIso(),
@@ -873,83 +874,98 @@ async function captureFullPageScreenshot() {
   if (!session || (session.state !== "capturing" && session.state !== "paused")) {
     throw new Error("Start a session to capture a full page screenshot.");
   }
-  const tab = await getActiveTab();
+  const tabId =
+    session && session.active_tab ? session.active_tab.tab_id : null;
+  if (!tabId) {
+    throw new Error("No active tab locked for this session.");
+  }
+  const tab = await chrome.tabs.get(tabId);
   ensureTabIsCapturable(tab);
   if (!chrome.scripting || !chrome.scripting.executeScript) {
     throw new Error("Scripting API unavailable for full page capture.");
   }
 
   await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+    target: { tabId },
     files: ["content/fullpage_capture.js"],
   });
 
-  const prep = await sendMessageToTabWithResponse(tab.id, {
-    type: "FULLPAGE_PREPARE",
+  const plan = await sendMessageToTabWithResponse(tabId, {
+    type: "FP_GET_PLAN",
   });
-  if (!prep.ok) {
-    throw new Error(prep.error || "Unable to prepare full page capture.");
+  if (!plan.ok) {
+    throw new Error(plan.error || "Unable to prepare full page capture.");
   }
-
-  const scrollPositions = Array.isArray(prep.scrollPositions)
-    ? prep.scrollPositions
-    : [0];
-  const viewportHeight = prep.viewportHeight || 0;
-  const scrollHeight = prep.scrollHeight || viewportHeight || 0;
-  if (!scrollHeight || !viewportHeight) {
+  if (!plan.pageH || !plan.viewportH) {
     throw new Error("Unable to read page dimensions.");
   }
+  if (plan.pageH * (plan.devicePixelRatio || 1) > FULLPAGE_MAX_HEIGHT) {
+    throw new Error("Page too tall for full page capture.");
+  }
+
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  if (!steps.length) {
+    throw new Error("No scroll steps generated.");
+  }
+
+  await sendMessageToTabWithResponse(tabId, {
+    type: "FP_FREEZE_UI",
+    freeze: true,
+  });
 
   const captures = [];
   try {
-    for (const y of scrollPositions) {
-      const scrolled = await sendMessageToTabWithResponse(tab.id, {
-        type: "FULLPAGE_SCROLL",
-        y,
+    for (const step of steps) {
+      await sendMessageToTabWithResponse(tabId, {
+        type: "FP_SCROLL_TO",
+        y: step.y,
       });
-      if (!scrolled.ok) {
-        throw new Error(scrolled.error || "Failed to scroll for capture.");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
-      captures.push({ y, dataUrl });
+      await new Promise((resolve) => setTimeout(resolve, 240));
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: "png",
+      });
+      const bitmap = await dataUrlToImageBitmap(dataUrl);
+      captures.push({ bitmap, y: step.y });
     }
   } finally {
-    await sendMessageToTabWithResponse(tab.id, { type: "FULLPAGE_FINISH" });
+    await sendMessageToTabWithResponse(tabId, {
+      type: "FP_FREEZE_UI",
+      freeze: false,
+    });
+    await sendMessageToTabWithResponse(tabId, { type: "FP_RESTORE_SCROLL" });
   }
 
-  if (!captures.length) {
-    throw new Error("No screenshots captured.");
-  }
-
-  const firstBitmap = await dataUrlToImageBitmap(captures[0].dataUrl);
-  const scale = viewportHeight ? firstBitmap.height / viewportHeight : 1;
-  const totalHeightPx = Math.round(scrollHeight * scale);
-  if (totalHeightPx > FULLPAGE_MAX_HEIGHT) {
-    throw new Error("Full page capture exceeds maximum height.");
-  }
-  const canvas = new OffscreenCanvas(firstBitmap.width, totalHeightPx);
+  const dpr = plan.devicePixelRatio || 1;
+  const canvasW = Math.round(plan.pageW * dpr);
+  const canvasH = Math.round(plan.pageH * dpr);
+  const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvasW, canvasH);
 
-  for (const capture of captures) {
-    const bitmap = await dataUrlToImageBitmap(capture.dataUrl);
-    const destY = Math.round(capture.y * scale);
-    if (destY >= totalHeightPx) {
-      continue;
+  captures.forEach((tile, index) => {
+    const drawY = Math.round(tile.y * dpr);
+    if (index === captures.length - 1) {
+      const lastVisibleH = Math.round((plan.pageH - tile.y) * dpr);
+      const sourceY = Math.max(0, tile.bitmap.height - lastVisibleH);
+      ctx.drawImage(
+        tile.bitmap,
+        0,
+        sourceY,
+        tile.bitmap.width,
+        lastVisibleH,
+        0,
+        drawY,
+        tile.bitmap.width,
+        lastVisibleH
+      );
+    } else {
+      ctx.drawImage(tile.bitmap, 0, drawY);
     }
-    const remaining = totalHeightPx - destY;
-    const drawHeight = Math.min(bitmap.height, remaining);
-    ctx.drawImage(
-      bitmap,
-      0,
-      0,
-      bitmap.width,
-      drawHeight,
-      0,
-      destY,
-      bitmap.width,
-      drawHeight
-    );
+  });
+
+  if (session.annotations && Array.isArray(session.annotations)) {
+    applyTextAnnotations(ctx, session.annotations, dpr);
   }
 
   const blob = await canvas.convertToBlob({ type: "image/png" });
@@ -957,20 +973,18 @@ async function captureFullPageScreenshot() {
   const timestampIso = nowIso();
   state.screenshot.dataUrl = dataUrl;
   state.screenshot.capturedAt = timestampIso;
-  if (session) {
-    session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
-    const tMs = computeSessionOffsetMs(timestampIso);
-    const index = session.screenshots.length + 1;
-    session.screenshots.push({
-      index,
-      timestampIso,
-      t_ms: tMs,
-      blob,
-      dataUrl,
-      fullPage: true,
-      fileName: "qa-screenshot-fullpage.png",
-    });
-  }
+  session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
+  const tMs = computeSessionOffsetMs(timestampIso);
+  const index = session.screenshots.length + 1;
+  session.screenshots.push({
+    index,
+    timestampIso,
+    t_ms: tMs,
+    blob,
+    dataUrl,
+    fullPage: true,
+    fileName: "qa-screenshot-fullpage.png",
+  });
   clearStatusMessage();
   return dataUrl;
 }
@@ -991,6 +1005,24 @@ function addMarker(note) {
   };
   session.markers.push(marker);
   return marker;
+}
+
+function applyTextAnnotations(ctx, annotations, dpr) {
+  annotations.forEach((annotation) => {
+    ctx.save();
+    const opacity =
+      typeof annotation.opacity === "number" ? annotation.opacity : 1;
+    ctx.globalAlpha = opacity;
+    const weight = annotation.weight === "Bold" ? "700" : annotation.weight || "400";
+    const fontSize = typeof annotation.fontSize === "number" ? annotation.fontSize : 14;
+    ctx.font = `${weight} ${fontSize * dpr}px ${annotation.fontFamily || "system-ui, Arial"}`;
+    ctx.fillStyle = annotation.color || "#111827";
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeText(annotation.text || "", annotation.x * dpr, annotation.y * dpr);
+    ctx.fillText(annotation.text || "", annotation.x * dpr, annotation.y * dpr);
+    ctx.restore();
+  });
 }
 
 async function startRecording(streamId, tabId, mimeType) {
@@ -1823,7 +1855,7 @@ async function handleMessage(message, sender) {
         isTabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
       };
       break;
-    case "FULLPAGE_SCREENSHOT":
+    case "CAPTURE_FULLPAGE":
       try {
         const dataUrl = await captureFullPageScreenshot();
         result = { ok: true, screenshotDataUrl: dataUrl };

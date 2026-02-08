@@ -97,7 +97,7 @@ const MSG = {
   RECORDING_EXPORT_WEBM: "RECORDING_EXPORT_WEBM",
   RECORDING_RESET: "RECORDING_RESET",
   ADD_MARKER: "ADD_MARKER",
-  FULLPAGE_SCREENSHOT: "FULLPAGE_SCREENSHOT",
+  CAPTURE_FULLPAGE: "CAPTURE_FULLPAGE",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
   RESET_SESSION: "RESET_SESSION",
@@ -1230,8 +1230,27 @@ async function handleScreenshot() {
 }
 
 async function handleFullPageScreenshot() {
+  const statusResponse = await send(MSG.GET_STATUS);
+  const sessionState =
+    statusResponse && statusResponse.state && statusResponse.state.session
+      ? statusResponse.state.session.state
+      : null;
+  const recordingState = recordingLiveState ? recordingLiveState.state : null;
+  const captureActive =
+    sessionState === "capturing" ||
+    sessionState === "paused" ||
+    recordingState === "recording" ||
+    recordingState === "paused";
+  if (!captureActive) {
+    setStatus(
+      statusElements.message,
+      "Start a session first.",
+      "error"
+    );
+    return;
+  }
   setStatus(statusElements.message, "Capturing full page...");
-  const response = await send(MSG.FULLPAGE_SCREENSHOT);
+  const response = await send(MSG.CAPTURE_FULLPAGE);
   if (!response.ok) {
     setStatus(
       statusElements.message,
