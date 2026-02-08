@@ -28,6 +28,7 @@ const state = {
   },
   network: {
     active: false,
+    captureEnabled: false,
     tabId: null,
     requests: {},
     order: [],
@@ -329,6 +330,10 @@ function setSessionState(stateValue) {
     return;
   }
   session.state = stateValue;
+}
+
+function setNetworkCaptureEnabled(enabled) {
+  state.network.captureEnabled = Boolean(enabled);
 }
 
 function markSessionStopped() {
@@ -668,6 +673,7 @@ async function pauseRecording() {
   if (!response.ok) {
     throw new Error(response.error || "Failed to pause recording.");
   }
+  setNetworkCaptureEnabled(false);
   syncRecordingState(response);
   if (state.recording.status === "paused") {
     setSessionState("paused");
@@ -684,6 +690,7 @@ async function resumeRecording() {
   if (!response.ok) {
     throw new Error(response.error || "Failed to resume recording.");
   }
+  setNetworkCaptureEnabled(true);
   syncRecordingState(response);
   if (state.recording.status === "recording") {
     setSessionState("capturing");
@@ -789,6 +796,7 @@ async function startNetworkCapture() {
   );
 
   state.network.active = true;
+  setNetworkCaptureEnabled(true);
   state.network.tabId = tab.id;
   state.network.requests = {};
   state.network.order = [];
@@ -811,6 +819,7 @@ async function stopNetworkCapture() {
   const tabId = state.network.tabId;
 
   state.network.active = false;
+  setNetworkCaptureEnabled(false);
   state.network.stoppedAt = nowIso();
 
   state.console.active = false;
@@ -932,6 +941,11 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     return;
   }
 
+  const isNetworkEvent = typeof method === "string" && method.startsWith("Network.");
+  if (isNetworkEvent && !state.network.captureEnabled) {
+    return;
+  }
+
   if (method === "Network.requestWillBeSent") {
     updateRequestEntry(params.requestId, {
       url: params.request.url,
@@ -1028,6 +1042,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     return;
   }
   state.network.active = false;
+  setNetworkCaptureEnabled(false);
   state.network.stoppedAt = nowIso();
   state.network.detachReason = reason;
 
@@ -1077,6 +1092,7 @@ async function resetNetworkState() {
   }
 
   state.network.active = false;
+  setNetworkCaptureEnabled(false);
   state.network.tabId = null;
   state.network.requests = {};
   state.network.order = [];
