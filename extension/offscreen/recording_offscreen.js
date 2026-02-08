@@ -13,6 +13,8 @@ let recordingStopPromise = null;
 let recordingStopResolver = null;
 let recordingStopReason = null;
 let recordingSegmentMode = false;
+let recordingObjectUrl = null;
+let recordingObjectUrlBytes = 0;
 
 chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
 
@@ -32,6 +34,172 @@ function formatZipTimestamp(date) {
 
 function sumChunkBytes(chunks) {
   return chunks.reduce((total, chunk) => total + (chunk && chunk.size ? chunk.size : 0), 0);
+}
+
+function readVintSize(view, offset) {
+  const first = view.getUint8(offset);
+  let mask = 0x80;
+  let length = 1;
+  while (length <= 8 && (first & mask) === 0) {
+    mask >>= 1;
+    length += 1;
+  }
+  if (length > 8) {
+    throw new Error("Invalid VINT length");
+  }
+  let value = first & (mask - 1);
+  for (let i = 1; i < length; i += 1) {
+    value = (value << 8) | view.getUint8(offset + i);
+  }
+  const max = Math.pow(2, 7 * length) - 1;
+  const unknown = value === max;
+  return { length, value, unknown };
+}
+
+function readVintId(view, offset) {
+  const first = view.getUint8(offset);
+  let mask = 0x80;
+  let length = 1;
+  while (length <= 4 && (first & mask) === 0) {
+    mask >>= 1;
+    length += 1;
+  }
+  if (length > 4) {
+    throw new Error("Invalid EBML ID length");
+  }
+  let value = 0;
+  for (let i = 0; i < length; i += 1) {
+    value = (value << 8) | view.getUint8(offset + i);
+  }
+  return { length, value };
+}
+
+function encodeVintSize(value, length) {
+  const max = Math.pow(2, 7 * length) - 1;
+  if (value < 0 || value >= max) {
+    throw new Error("Value does not fit in VINT length");
+  }
+  const bytes = new Uint8Array(length);
+  let remaining = value;
+  for (let i = length - 1; i >= 0; i -= 1) {
+    bytes[i] = remaining & 0xff;
+    remaining = remaining >> 8;
+  }
+  bytes[0] |= 1 << (8 - length);
+  return bytes;
+}
+
+function findElement(buffer, start, end, targetId) {
+  const view = new DataView(buffer);
+  let offset = start;
+  while (offset < end) {
+    const id = readVintId(view, offset);
+    offset += id.length;
+    const size = readVintSize(view, offset);
+    offset += size.length;
+    const dataStart = offset;
+    const dataEnd = size.unknown ? end : offset + size.value;
+    const element = {
+      id: id.value,
+      idLength: id.length,
+      size: size.value,
+      sizeLength: size.length,
+      sizeUnknown: size.unknown,
+      headerStart: offset - id.length - size.length,
+      dataStart,
+      dataEnd,
+    };
+    if (element.id === targetId) {
+      return element;
+    }
+    if (size.unknown) {
+      break;
+    }
+    offset = dataEnd;
+  }
+  return null;
+}
+
+async function fixWebmDuration(blob, durationMs) {
+  if (!durationMs || durationMs <= 0) {
+    return blob;
+  }
+  const buffer = await blob.arrayBuffer();
+  const view = new DataView(buffer);
+  const segment = findElement(buffer, 0, buffer.byteLength, 0x18538067);
+  if (!segment) {
+    return blob;
+  }
+  const segmentEnd = segment.sizeUnknown ? buffer.byteLength : segment.dataEnd;
+  const info = findElement(buffer, segment.dataStart, segmentEnd, 0x1549a966);
+  if (!info) {
+    return blob;
+  }
+  const durationElement = findElement(
+    buffer,
+    info.dataStart,
+    info.dataEnd,
+    0x4489
+  );
+  const durationSeconds = durationMs / 1000;
+  if (durationElement) {
+    if (durationElement.size === 4) {
+      view.setFloat32(durationElement.dataStart, durationSeconds);
+      return new Blob([buffer], { type: blob.type });
+    }
+    if (durationElement.size === 8) {
+      view.setFloat64(durationElement.dataStart, durationSeconds);
+      return new Blob([buffer], { type: blob.type });
+    }
+  }
+
+  const durationPayload = new ArrayBuffer(8);
+  const durationView = new DataView(durationPayload);
+  durationView.setFloat64(0, durationSeconds);
+  const durationSizeBytes = encodeVintSize(8, 1);
+  const durationBytes = new Uint8Array(2 + durationSizeBytes.length + 8);
+  durationBytes[0] = 0x44;
+  durationBytes[1] = 0x89;
+  durationBytes.set(durationSizeBytes, 2);
+  durationBytes.set(new Uint8Array(durationPayload), 2 + durationSizeBytes.length);
+
+  const newInfoSize = info.size + durationBytes.length;
+  let newInfoSizeBytes;
+  try {
+    newInfoSizeBytes = encodeVintSize(newInfoSize, info.sizeLength);
+  } catch (error) {
+    return blob;
+  }
+
+  const newSegmentSize = segment.sizeUnknown
+    ? null
+    : segment.size + durationBytes.length;
+  let newSegmentSizeBytes = null;
+  if (newSegmentSize !== null) {
+    try {
+      newSegmentSizeBytes = encodeVintSize(newSegmentSize, segment.sizeLength);
+    } catch (error) {
+      newSegmentSizeBytes = null;
+    }
+  }
+
+  const inserted = new Uint8Array(buffer.byteLength + durationBytes.length);
+  const infoSizeOffset = info.headerStart + info.idLength;
+  inserted.set(new Uint8Array(buffer.slice(0, info.headerStart)), 0);
+  inserted.set(new Uint8Array(buffer.slice(info.headerStart, info.dataStart)), info.headerStart);
+  inserted.set(newInfoSizeBytes, infoSizeOffset);
+
+  if (newSegmentSizeBytes) {
+    const segmentSizeOffset = segment.headerStart + segment.idLength;
+    inserted.set(newSegmentSizeBytes, segmentSizeOffset);
+  }
+
+  inserted.set(durationBytes, info.dataStart);
+  inserted.set(
+    new Uint8Array(buffer.slice(info.dataStart)),
+    info.dataStart + durationBytes.length
+  );
+  return new Blob([inserted], { type: blob.type });
 }
 
 function pickRecordingMimeType() {
@@ -76,6 +244,14 @@ function stopStreamTracks() {
   }
 }
 
+function revokeRecordingUrl() {
+  if (recordingObjectUrl) {
+    URL.revokeObjectURL(recordingObjectUrl);
+  }
+  recordingObjectUrl = null;
+  recordingObjectUrlBytes = 0;
+}
+
 function resetRecordingState() {
   recordedChunks = [];
   recordingMimeType = "video/webm";
@@ -87,6 +263,8 @@ function resetRecordingState() {
   recordingDurationMsSnapshot = null;
   recordingStopReason = null;
   recordingSegmentMode = false;
+  recordingHasData = false;
+  revokeRecordingUrl();
 }
 
 function computeElapsedMs() {
@@ -251,6 +429,7 @@ async function startRecording() {
   mediaRecorder = null;
   stopStreamTracks();
   resetRecordingState();
+  revokeRecordingUrl();
   currentStream = await captureTabStream();
   currentStream.getTracks().forEach((track) => {
     track.onended = () => {
@@ -366,10 +545,32 @@ async function exportRecordingWebm() {
     `totalBytes=${totalBytes}`,
     `mimeType=${recordingMimeType || "video/webm"}`
   );
-  const blob = new Blob(recordedChunks, {
+  let blob = new Blob(recordedChunks, {
     type: recordingMimeType || "video/webm",
   });
-  const url = URL.createObjectURL(blob);
+  const durationMs =
+    typeof recordingDurationMsSnapshot === "number"
+      ? recordingDurationMsSnapshot
+      : computeElapsedMs();
+  try {
+    const fixed = await fixWebmDuration(blob, durationMs);
+    if (fixed instanceof Blob) {
+      blob = fixed;
+    }
+  } catch (error) {
+    console.log(
+      "[REC] duration fix failed",
+      error && error.message ? error.message : String(error)
+    );
+  }
+  if (recordingObjectUrl && recordingObjectUrlBytes !== totalBytes) {
+    revokeRecordingUrl();
+  }
+  if (!recordingObjectUrl) {
+    recordingObjectUrl = URL.createObjectURL(blob);
+    recordingObjectUrlBytes = totalBytes;
+  }
+  const url = recordingObjectUrl;
   const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
   try {
     await new Promise((resolve, reject) => {
@@ -382,7 +583,7 @@ async function exportRecordingWebm() {
       });
     });
   } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    // Keep object URL for replay/download until reset/new recording.
   }
   return { ok: true };
 }
@@ -392,6 +593,7 @@ function resetRecording() {
   mediaRecorder = null;
   stopStreamTracks();
   resetRecordingState();
+  revokeRecordingUrl();
   notifyStateChanged("reset");
 }
 
