@@ -19,6 +19,7 @@ const buttons = {
   networkRefresh: document.getElementById("refreshTabBtn"),
   screenshotInline: document.getElementById("btn_take_screenshot_inline"),
   fullPageScreenshot: document.getElementById("btn_fullpage_screenshot"),
+  fullPageScreenshotMode: document.getElementById("btn_fullpage_screenshot_mode"),
   addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
@@ -51,6 +52,11 @@ const recordingRadio = document.getElementById("mode_recording");
 const recordingLabel = document.getElementById("label_recording");
 const networkRadio = document.getElementById("mode_network");
 const networkLabel = document.getElementById("label_network");
+const annotationFontFamily = document.getElementById("annotationFontFamily");
+const annotationFontSize = document.getElementById("annotationFontSize");
+const annotationFontWeight = document.getElementById("annotationFontWeight");
+const annotationFontColor = document.getElementById("annotationFontColor");
+const annotationFontOpacity = document.getElementById("annotationFontOpacity");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -84,6 +90,14 @@ const STATUS_COLORS = {
   success: "#166534",
 };
 
+const ANNOTATION_DEFAULTS = {
+  fontFamily: "Inter",
+  fontSize: 14,
+  fontWeight: "Regular",
+  color: "Red",
+  opacity: 1,
+};
+
 const APP_VERSION = "v0.1";
 const JSZIP_LOAD_ERROR =
   "Export unavailable: JSZip failed to load. Check popup.html script path.";
@@ -98,6 +112,8 @@ const MSG = {
   RECORDING_RESET: "RECORDING_RESET",
   ADD_MARKER: "ADD_MARKER",
   CAPTURE_FULLPAGE: "CAPTURE_FULLPAGE",
+  SET_ANNOTATION_STYLE: "SET_ANNOTATION_STYLE",
+  GET_ANNOTATION_STYLE: "GET_ANNOTATION_STYLE",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
   RESET_SESSION: "RESET_SESSION",
@@ -691,6 +707,90 @@ function setRecordingButtons(state) {
   buttons.recordStop.classList.toggle("btn-disabled", stopDisabled);
 }
 
+function mapAnnotationStyleToStorage(style) {
+  const fontFamilyMap = {
+    Inter: "Inter, system-ui, Arial",
+    Roboto: "Roboto, system-ui, Arial",
+    Arial: "Arial, Helvetica",
+    Monospace: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  };
+  const colorMap = {
+    Red: "#ef4444",
+    Blue: "#2563eb",
+    Yellow: "#facc15",
+    Black: "#111827",
+    White: "#ffffff",
+  };
+  return {
+    fontFamily: fontFamilyMap[style.fontFamily] || fontFamilyMap.Inter,
+    weight: style.fontWeight === "Bold" ? "700" : "400",
+    size: style.fontSize,
+    color: colorMap[style.color] || colorMap.Red,
+    opacity: style.opacity,
+    bold: style.fontWeight === "Bold",
+  };
+}
+
+function mapAnnotationStyleToUi(style) {
+  const fontFamily = style.fontFamily || "";
+  let fontChoice = "Inter";
+  if (/roboto/i.test(fontFamily)) {
+    fontChoice = "Roboto";
+  } else if (/mono/i.test(fontFamily)) {
+    fontChoice = "Monospace";
+  } else if (/arial/i.test(fontFamily)) {
+    fontChoice = "Arial";
+  }
+  let weightChoice = "Regular";
+  if (style.weight && String(style.weight).startsWith("7")) {
+    weightChoice = "Bold";
+  }
+  const colorMap = {
+    "#ef4444": "Red",
+    "#2563eb": "Blue",
+    "#facc15": "Yellow",
+    "#111827": "Black",
+    "#ffffff": "White",
+  };
+  const colorChoice = colorMap[(style.color || "").toLowerCase()] || "Red";
+  return {
+    fontFamily: fontChoice,
+    fontSize: style.size || ANNOTATION_DEFAULTS.fontSize,
+    fontWeight: weightChoice,
+    color: colorChoice,
+    opacity:
+      typeof style.opacity === "number" ? style.opacity : ANNOTATION_DEFAULTS.opacity,
+  };
+}
+
+function getAnnotationStyleFromUi() {
+  return {
+    fontFamily: annotationFontFamily
+      ? annotationFontFamily.value
+      : ANNOTATION_DEFAULTS.fontFamily,
+    fontSize: annotationFontSize
+      ? Number(annotationFontSize.value)
+      : ANNOTATION_DEFAULTS.fontSize,
+    fontWeight: annotationFontWeight
+      ? annotationFontWeight.value
+      : ANNOTATION_DEFAULTS.fontWeight,
+    color: annotationFontColor
+      ? annotationFontColor.value
+      : ANNOTATION_DEFAULTS.color,
+    opacity: annotationFontOpacity
+      ? Number(annotationFontOpacity.value)
+      : ANNOTATION_DEFAULTS.opacity,
+  };
+}
+
+async function sendAnnotationStyle() {
+  const style = getAnnotationStyleFromUi();
+  await send(MSG.SET_ANNOTATION_STYLE, {
+    style,
+    mapped: mapAnnotationStyleToStorage(style),
+  });
+}
+
 function disableRecordingUI() {
   recordingAvailable = false;
   recordingBlockedReason = "policy";
@@ -1102,6 +1202,9 @@ function updateStatusUI(state) {
   if (buttons.fullPageScreenshot) {
     buttons.fullPageScreenshot.disabled = !allowMarkers;
   }
+  if (buttons.fullPageScreenshotMode) {
+    buttons.fullPageScreenshotMode.disabled = !allowMarkers;
+  }
   if (buttons.addMarker) {
     buttons.addMarker.disabled = !allowMarkers;
   }
@@ -1187,9 +1290,33 @@ async function refreshStatus() {
   }
 }
 
+async function loadAnnotationStyle() {
+  let current = ANNOTATION_DEFAULTS;
+  const response = await send(MSG.GET_ANNOTATION_STYLE);
+  if (response && response.ok && response.style) {
+    current = mapAnnotationStyleToUi(response.style);
+  }
+  if (annotationFontFamily) {
+    annotationFontFamily.value = current.fontFamily;
+  }
+  if (annotationFontSize) {
+    annotationFontSize.value = String(current.fontSize);
+  }
+  if (annotationFontWeight) {
+    annotationFontWeight.value = current.fontWeight;
+  }
+  if (annotationFontColor) {
+    annotationFontColor.value = current.color;
+  }
+  if (annotationFontOpacity) {
+    annotationFontOpacity.value = String(current.opacity);
+  }
+  await sendAnnotationStyle();
+}
+
 async function handleScreenshot() {
   setStatus(statusElements.message, "Capturing screenshot...");
-  const response = await send("TAKE_SCREENSHOT");
+  const response = await send("CAPTURE_SCREENSHOT");
   if (
     !response.ok ||
     typeof response.screenshotDataUrl !== "string" ||
@@ -1216,7 +1343,7 @@ async function handleScreenshot() {
     });
     setStatus(
       statusElements.message,
-      "Opened screenshot viewer in new tab.",
+      "Screenshot saved to evidence pack.",
       "success"
     );
   } catch (error) {
@@ -1249,12 +1376,25 @@ async function handleFullPageScreenshot() {
     );
     return;
   }
-  setStatus(statusElements.message, "Capturing full page...");
+  setStatus(
+    statusElements.message,
+    "Capturing full page… please don’t scroll.",
+    "default"
+  );
   const response = await send(MSG.CAPTURE_FULLPAGE);
   if (!response.ok) {
+    const errorText = response.error || "";
+    let message = "Screenshot capture failed. Try again, or refresh the tab and retry.";
+    if (/restricted|not supported|Capture not supported/i.test(errorText)) {
+      message =
+        "Full-page capture isn’t available on this page (restricted URL). Open a regular webpage and try again.";
+    } else if (/too tall|maximum height|exceeds/i.test(errorText)) {
+      message =
+        "This page is too tall to capture in one image. Try a shorter page or capture multiple viewport screenshots.";
+    }
     setStatus(
       statusElements.message,
-      response.error || "Full page screenshot failed.",
+      message,
       "error"
     );
     await refreshStatus();
@@ -1884,6 +2024,12 @@ if (buttons.screenshotInline) {
 if (buttons.fullPageScreenshot) {
   buttons.fullPageScreenshot.addEventListener("click", handleFullPageScreenshot);
 }
+if (buttons.fullPageScreenshotMode) {
+  buttons.fullPageScreenshotMode.addEventListener(
+    "click",
+    handleFullPageScreenshot
+  );
+}
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
 buttons.recordResume.addEventListener("click", handleRecordingResume);
@@ -1929,6 +2075,22 @@ if (buttons.addMarker) {
 }
 buttons.reset.addEventListener("click", handleResetSession);
 
+[annotationFontFamily, annotationFontSize, annotationFontWeight, annotationFontColor].forEach(
+  (control) => {
+    if (!control) {
+      return;
+    }
+    control.addEventListener("change", () => {
+      void sendAnnotationStyle();
+    });
+  }
+);
+if (annotationFontOpacity) {
+  annotationFontOpacity.addEventListener("change", () => {
+    void sendAnnotationStyle();
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "RECORDING_STATE_CHANGED") {
     (async () => {
@@ -1962,6 +2124,7 @@ modeRadios.forEach((radio) => {
 assertJsZipAvailable();
 setMode(currentMode);
 loadRedactionSetting();
+loadAnnotationStyle();
 initCapabilities();
 refreshStatus();
 setInterval(refreshStatus, 1000);

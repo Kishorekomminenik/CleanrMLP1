@@ -73,8 +73,16 @@
       <section class="card">
         <h2>Controls</h2>
         <div class="mode-controls" data-mode="screenshot">
-          <button id="btn_take_screenshot" class="primary">Capture</button>
+          <div class="button-row">
+            <button id="btn_take_screenshot" class="primary">Capture Screenshot</button>
+            <button id="btn_fullpage_screenshot_mode" class="secondary" disabled>
+              Full Page Screenshot
+            </button>
+          </div>
           <p id="screenshotHint" class="hint">Downloads PNG directly.</p>
+          <p id="fullPageHint" class="hint">
+            Captures the entire page by scrolling and stitching.
+          </p>
         </div>
         <div class="mode-controls" data-mode="recording">
           <div class="button-row">
@@ -109,6 +117,55 @@
             Full Page Screenshot
           </button>
           <button id="btn_add_marker" class="secondary">Add Marker</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Annotations</h2>
+        <div class="annotation-grid">
+          <label>
+            Font
+            <select id="annotationFontFamily">
+              <option value="Inter" selected>Inter</option>
+              <option value="Roboto">Roboto</option>
+              <option value="Arial">Arial</option>
+              <option value="Monospace">Monospace</option>
+            </select>
+          </label>
+          <label>
+            Size
+            <select id="annotationFontSize">
+              <option value="12">12</option>
+              <option value="14" selected>14</option>
+              <option value="16">16</option>
+              <option value="18">18</option>
+              <option value="24">24</option>
+            </select>
+          </label>
+          <label>
+            Weight
+            <select id="annotationFontWeight">
+              <option value="Regular" selected>Regular</option>
+              <option value="Bold">Bold</option>
+            </select>
+          </label>
+          <label>
+            Color
+            <select id="annotationFontColor">
+              <option value="Red" selected>Red</option>
+              <option value="Blue">Blue</option>
+              <option value="Yellow">Yellow</option>
+              <option value="Black">Black</option>
+              <option value="White">White</option>
+            </select>
+          </label>
+          <label>
+            Opacity
+            <select id="annotationFontOpacity">
+              <option value="1" selected>100%</option>
+              <option value="0.7">70%</option>
+            </select>
+          </label>
         </div>
       </section>
 

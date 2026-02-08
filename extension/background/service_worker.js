@@ -1903,6 +1903,21 @@ async function handleMessage(message, sender) {
         };
       }
       break;
+    case "SET_ANNOTATION_STYLE":
+      if (message && message.mapped) {
+        await chrome.storage.session.set({
+          annotationSettings: message.mapped,
+        });
+      }
+      result = { ok: true };
+      break;
+    case "GET_ANNOTATION_STYLE": {
+      const resultData = await chrome.storage.session.get({
+        annotationSettings: null,
+      });
+      result = { ok: true, style: resultData.annotationSettings };
+      break;
+    }
     case "RECORDING_START":
       try {
         const lock = checkStartMode("recording");
