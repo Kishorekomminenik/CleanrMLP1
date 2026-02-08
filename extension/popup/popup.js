@@ -1436,14 +1436,6 @@ async function buildEnvironmentFallback() {
 
 async function handleDownload() {
   let hadError = false;
-  if (currentMode === "recording") {
-    setStatus(
-      statusElements.download,
-      "Use Download Recording for video captures.",
-      "error"
-    );
-    return;
-  }
   buttons.download.disabled = true;
   setStatus(statusElements.download, "Preparing ZIP...");
   try {
@@ -1569,7 +1561,28 @@ async function handleDownload() {
       timeoutPromise,
     ]);
 
-    if (data.recordingDataUrl) {
+    const recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
+    if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
+      if (!chrome.downloads?.download) {
+        throw new Error("Downloads API unavailable.");
+      }
+      await new Promise((resolve, reject) => {
+        chrome.downloads.download(
+          {
+            url: recordingExport.blobUrl,
+            filename: `qa-session-video-${exportTimestamp}.webm`,
+            saveAs: false,
+          },
+          (downloadId) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(downloadId);
+          }
+        );
+      });
+    } else if (data.recordingDataUrl) {
       const recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
       await downloadBlob(
         recordingBlob,

@@ -96,6 +96,26 @@ function computeSessionOffsetMs(timestampIso) {
   return Math.max(0, eventMs - startMs);
 }
 
+function dataUrlToBlob(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== "string") {
+    return null;
+  }
+  const parts = dataUrl.split(",");
+  if (parts.length < 2) {
+    return null;
+  }
+  const header = parts[0];
+  const base64 = parts[1];
+  const mimeMatch = header.match(/data:(.*);base64/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
 function truncateToBytes(value, maxBytes) {
   if (typeof value !== "string") {
     return value;
@@ -790,10 +810,13 @@ async function captureScreenshot() {
     if (session) {
       const tMs = computeSessionOffsetMs(timestampIso);
       const index = session.screenshots.length + 1;
+      const blob = dataUrlToBlob(dataUrl);
       session.screenshots.push({
         index,
         timestampIso,
         t_ms: tMs,
+        blob,
+        fileName: `qa-screenshot-${String(index).padStart(3, "0")}.png`,
         dataUrl,
       });
     }
