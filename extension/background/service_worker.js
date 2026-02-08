@@ -613,12 +613,12 @@ async function captureScreenshot() {
   }
 }
 
-async function startRecording(streamId, tabId) {
+async function startRecording(streamId, tabId, mimeType) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
-
-  ensureSessionForMode("recording", tab);
-  setSessionState("capturing");
+  if (session) {
+    throw new Error("A session already exists. Reset to start a new capture.");
+  }
 
   try {
     await ensureOffscreenReady();
@@ -632,6 +632,7 @@ async function startRecording(streamId, tabId) {
       type: "RECORDING_START",
       tabId: tab.id,
       streamId,
+      mimeType,
     });
 
     if (!response.ok) {
@@ -640,6 +641,8 @@ async function startRecording(streamId, tabId) {
       throw new Error(errorMessage);
     }
 
+    ensureSessionForMode("recording", tab);
+    setSessionState("capturing");
     syncRecordingState(response);
     state.recording.dataUrl = null;
     state.recording.capturedAt = null;
@@ -1034,13 +1037,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 });
 
 async function resetSession() {
-  if (state.network.tabId) {
-    try {
-      await detachDebugger(state.network.tabId);
-    } catch (error) {
-      console.warn("Failed to detach debugger on reset:", error);
-    }
-  }
+  await resetNetworkState();
 
   try {
     await ensureOffscreenReady();
@@ -1066,6 +1063,19 @@ async function resetSession() {
   state.recording.error = null;
   state.recording.hasData = false;
 
+  session = null;
+  clearStatusMessage();
+}
+
+async function resetNetworkState() {
+  if (state.network.tabId) {
+    try {
+      await detachDebugger(state.network.tabId);
+    } catch (error) {
+      console.warn("Failed to detach debugger on reset:", error);
+    }
+  }
+
   state.network.active = false;
   state.network.tabId = null;
   state.network.requests = {};
@@ -1079,9 +1089,6 @@ async function resetSession() {
   state.console.logs = [];
   state.console.startedAt = null;
   state.console.stoppedAt = null;
-
-  session = null;
-  clearStatusMessage();
 }
 
 function getByteLength(value) {
@@ -1470,7 +1477,11 @@ async function handleMessage(message, sender) {
           };
           break;
         }
-        const response = await startRecording(message.streamId, message.tabId);
+        const response = await startRecording(
+          message.streamId,
+          message.tabId,
+          message.mimeType
+        );
         if (session) {
           session.state = "capturing";
         }
@@ -1537,6 +1548,31 @@ async function handleMessage(message, sender) {
     case "RECORDING_STOP":
       result = await stopRecording();
       break;
+    case "RECORDING_RESET": {
+      try {
+        await ensureOffscreenReady();
+        const response = await sendMessageToOffscreen({
+          type: "RECORDING_RESET",
+        });
+        syncRecordingState(response);
+        state.recording.dataUrl = null;
+        state.recording.mimeType = null;
+        state.recording.capturedAt = null;
+        state.recording.error = null;
+        state.recording.hasData = false;
+        if (session && session.mode === "recording") {
+          session = null;
+        }
+        clearStatusMessage();
+        result = response || { ok: true };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Failed to reset recording.",
+        };
+      }
+      break;
+    }
     case "NETWORK_START":
       {
         const lock = checkStartMode("network_console");
@@ -1637,6 +1673,10 @@ async function handleMessage(message, sender) {
         error: message.error || "Recording failed.",
       });
       result = { ok: true };
+      break;
+    case "NETWORK_RESET":
+      await resetNetworkState();
+      result = { ok: true, state: getStatusSnapshot() };
       break;
     case "RESET_SESSION":
       await resetSession();

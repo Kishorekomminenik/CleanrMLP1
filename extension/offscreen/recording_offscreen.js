@@ -2,7 +2,7 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let currentStream = null;
 let recordingState = "idle";
-let recordingMimeType = "video/webm";
+let recordingMimeType = null;
 let recordingStartedAt = null;
 let recordingPausedAt = null;
 let recordingTotalPausedMs = 0;
@@ -202,17 +202,21 @@ async function fixWebmDuration(blob, durationMs) {
   return new Blob([inserted], { type: blob.type });
 }
 
-function pickRecordingMimeType() {
+function pickRecordingMimeType(requested) {
   if (!window.MediaRecorder || typeof MediaRecorder.isTypeSupported !== "function") {
     return "";
   }
-  const candidates = [
+  const candidates = [];
+  if (requested) {
+    candidates.push(requested);
+  }
+  candidates.push(
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
-    "video/webm",
-  ];
+    "video/webm"
+  );
   for (const candidate of candidates) {
-    if (MediaRecorder.isTypeSupported(candidate)) {
+    if (candidate && MediaRecorder.isTypeSupported(candidate)) {
       return candidate;
     }
   }
@@ -254,7 +258,7 @@ function revokeRecordingUrl() {
 
 function resetRecordingState() {
   recordedChunks = [];
-  recordingMimeType = "video/webm";
+  recordingMimeType = null;
   recordingStartedAt = null;
   recordingPausedAt = null;
   recordingTotalPausedMs = 0;
@@ -296,7 +300,7 @@ function getRecordingStateSnapshot() {
     pausedAt: recordingPausedAt,
     totalPausedMs: recordingTotalPausedMs,
     hasData: recordingHasData,
-    mimeType: recordingMimeType || "video/webm",
+    mimeType: recordingMimeType || null,
     lastError: recordingLastError,
     elapsedMs,
     elapsedText: formatElapsed(elapsedMs),
@@ -418,6 +422,7 @@ function attachRecorderHandlers(recorder) {
       `durationMs=${durationMs}`
     );
     recordingState = "idle";
+    recordingPausedAt = null;
     mediaRecorder = null;
     stopStreamTracks();
     notifyStateChanged("stop");
@@ -425,17 +430,27 @@ function attachRecorderHandlers(recorder) {
   };
 }
 
-async function startRecording(streamId, tabId) {
+async function startRecording(streamId, tabId, requestedMime) {
   if (recordingState === "recording" || recordingState === "paused") {
-    throw new Error("Recording already in progress.");
+    return { ok: true, alreadyRecording: true, ...getRecordingStateSnapshot() };
   }
   mediaRecorder = null;
   stopStreamTracks();
   resetRecordingState();
   revokeRecordingUrl();
   console.log("[REC][offscreen] start ->", { tabId });
-  currentStream = await captureTabStream(streamId);
-  console.log("[REC][offscreen] getUserMedia ok");
+  try {
+    currentStream = await captureTabStream(streamId);
+    console.log("[REC][offscreen] getUserMedia ok");
+  } catch (error) {
+    recordingLastError =
+      "getUserMedia failed: " + (error && error.message ? error.message : String(error));
+    recordingState = "idle";
+    recordingStartedAt = null;
+    recordingPausedAt = null;
+    recordingTotalPausedMs = 0;
+    return { ok: false, error: recordingLastError };
+  }
   currentStream.getTracks().forEach((track) => {
     track.onended = () => {
       recordingLastError = "Track ended";
@@ -448,55 +463,83 @@ async function startRecording(streamId, tabId) {
   });
 
   const options = {};
-  const mimeType = pickRecordingMimeType();
+  const mimeType = pickRecordingMimeType(requestedMime);
   if (mimeType) {
     options.mimeType = mimeType;
   }
-  mediaRecorder = new MediaRecorder(currentStream, options);
+  try {
+    mediaRecorder = new MediaRecorder(currentStream, options);
+  } catch (error) {
+    recordingLastError =
+      "MediaRecorder init failed: " +
+      (error && error.message ? error.message : String(error));
+    stopStreamTracks();
+    currentStream = null;
+    mediaRecorder = null;
+    recordingState = "idle";
+    return { ok: false, error: recordingLastError };
+  }
   recordingMimeType = mimeType || mediaRecorder.mimeType || "video/webm";
-  console.log("[REC] mimeType chosen=", recordingMimeType);
+  console.log("[REC][offscreen] mimeType chosen=", recordingMimeType);
   attachRecorderHandlers(mediaRecorder);
-  mediaRecorder.start(250);
+  recordingStartedAt = nowMs();
+  recordingPausedAt = null;
+  recordingTotalPausedMs = 0;
+  recordingState = "recording";
+  try {
+    mediaRecorder.start(250);
+  } catch (error) {
+    recordingLastError =
+      "Recorder start failed: " +
+      (error && error.message ? error.message : String(error));
+    recordingState = "idle";
+    recordingStartedAt = null;
+    recordingPausedAt = null;
+    recordingTotalPausedMs = 0;
+    stopStreamTracks();
+    currentStream = null;
+    mediaRecorder = null;
+    return { ok: false, error: recordingLastError };
+  }
+  notifyStateChanged("start");
   return { ok: true, ...getRecordingStateSnapshot() };
 }
 
 async function pauseRecording() {
-  if (!mediaRecorder || recordingState !== "recording") {
-    throw new Error("Recording is not active.");
+  if (
+    !mediaRecorder ||
+    recordingState !== "recording" ||
+    mediaRecorder.state !== "recording"
+  ) {
+    throw new Error("Not recording.");
   }
-  recordingState = "paused";
-  recordingPausedAt = nowMs();
-  if (typeof mediaRecorder.pause === "function") {
+  try {
     mediaRecorder.pause();
-    notifyStateChanged("pause");
-    return { ok: true, ...getRecordingStateSnapshot() };
+  } catch (error) {
+    throw new Error(
+      "Pause failed: " + (error && error.message ? error.message : String(error))
+    );
   }
-  recordingSegmentMode = true;
-  recordingStopReason = "pause";
-  const stopPromise = createStopPromise();
-  mediaRecorder.stop();
-  await stopPromise;
+  recordingPausedAt = nowMs();
+  recordingState = "paused";
   notifyStateChanged("pause");
   return { ok: true, ...getRecordingStateSnapshot() };
 }
 
 async function resumeRecording() {
-  if (recordingState !== "paused") {
-    throw new Error("Recording is not paused.");
+  if (
+    !mediaRecorder ||
+    recordingState !== "paused" ||
+    mediaRecorder.state !== "paused"
+  ) {
+    throw new Error("Not paused.");
   }
-  if (mediaRecorder && mediaRecorder.state === "paused") {
+  try {
     mediaRecorder.resume();
-  } else if (recordingSegmentMode && currentStream) {
-    const options = {};
-    const mimeType = recordingMimeType || pickRecordingMimeType();
-    if (mimeType) {
-      options.mimeType = mimeType;
-    }
-    mediaRecorder = new MediaRecorder(currentStream, options);
-    attachRecorderHandlers(mediaRecorder);
-    mediaRecorder.start(250);
-  } else {
-    throw new Error("Recording is not paused.");
+  } catch (error) {
+    throw new Error(
+      "Resume failed: " + (error && error.message ? error.message : String(error))
+    );
   }
   if (recordingPausedAt) {
     recordingTotalPausedMs += nowMs() - recordingPausedAt;
@@ -508,7 +551,14 @@ async function resumeRecording() {
 }
 
 async function stopRecording() {
-  if (!mediaRecorder || recordingState === "idle") {
+  if (recordingState === "idle" || !mediaRecorder) {
+    return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
+  }
+  if (mediaRecorder.state === "inactive") {
+    recordingState = "idle";
+    recordingPausedAt = null;
+    mediaRecorder = null;
+    stopStreamTracks();
     return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
   }
   if (recordingState === "stopping") {
@@ -517,17 +567,19 @@ async function stopRecording() {
   recordingStopReason = "stop";
   recordingState = "stopping";
   const stopPromise = createStopPromise();
-  if (typeof mediaRecorder.requestData === "function" && mediaRecorder.state !== "inactive") {
-    try {
-      mediaRecorder.requestData();
-    } catch (error) {
-      console.log(
-        "[REC] requestData failed",
-        error && error.message ? error.message : String(error)
-      );
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    if (typeof mediaRecorder.requestData === "function") {
+      try {
+        mediaRecorder.requestData();
+      } catch (error) {
+        console.log(
+          "[REC][offscreen] requestData failed",
+          error && error.message ? error.message : String(error)
+        );
+      }
     }
+    mediaRecorder.stop();
   }
-  mediaRecorder.stop();
   notifyStateChanged("stopping");
   await stopPromise;
   return { ok: true, ...getRecordingStateSnapshot() };
@@ -568,36 +620,46 @@ async function exportRecordingWebm() {
       error && error.message ? error.message : String(error)
     );
   }
-  if (recordingObjectUrl && recordingObjectUrlBytes !== totalBytes) {
+  if (recordingObjectUrl && recordingObjectUrlBytes !== blob.size) {
     revokeRecordingUrl();
   }
   if (!recordingObjectUrl) {
     recordingObjectUrl = URL.createObjectURL(blob);
-    recordingObjectUrlBytes = totalBytes;
+    recordingObjectUrlBytes = blob.size;
   }
-  const url = recordingObjectUrl;
   const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
-  try {
-    await new Promise((resolve, reject) => {
-      chrome.downloads.download({ url, filename }, (downloadId) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(downloadId);
-      });
-    });
-  } finally {
-    // Keep object URL for replay/download until reset/new recording.
-  }
-  return { ok: true };
+  return {
+    ok: true,
+    blobUrl: recordingObjectUrl,
+    filename,
+    mimeType: recordingMimeType || "video/webm",
+    size: blob.size,
+    durationMs,
+  };
 }
 
 function resetRecording() {
-  recordingState = "idle";
-  mediaRecorder = null;
+  try {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+  } catch (error) {
+    // ignore reset stop errors
+  }
   stopStreamTracks();
-  resetRecordingState();
+  currentStream = null;
+  mediaRecorder = null;
+  recordedChunks = [];
+  recordingHasData = false;
+  recordingStartedAt = null;
+  recordingPausedAt = null;
+  recordingTotalPausedMs = 0;
+  recordingDurationMsSnapshot = null;
+  recordingStopReason = null;
+  recordingSegmentMode = false;
+  recordingMimeType = null;
+  recordingState = "idle";
+  recordingLastError = null;
   revokeRecordingUrl();
   notifyStateChanged("reset");
 }
@@ -634,7 +696,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           result = { ok: true, ...getRecordingStateSnapshot() };
           break;
         case "RECORDING_START":
-          result = await startRecording(message.streamId, message.tabId);
+          result = await startRecording(
+            message.streamId,
+            message.tabId,
+            message.mimeType
+          );
           break;
         case "RECORDING_PAUSE":
           result = await pauseRecording();
