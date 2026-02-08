@@ -228,21 +228,25 @@ async function captureScreenshot() {
   });
 
   const nowIso = new Date().toISOString();
+  const index = sessionStore.store.screenshots.length + 1;
+  const shotStamp = formatTimestampForFilename(nowIso);
+  const fileName = `qa-screenshot-${padNumber(index)}-${shotStamp}.png`;
   const blob = dataUrlToBlob(dataUrl);
   sessionStore.addScreenshot({
-    timestamp: nowIso,
-    offsetMs: sessionStore.getElapsedMsNow(),
-    blob
+    timestampIso: nowIso,
+    t_ms: sessionStore.getElapsedMsNow(),
+    blob,
+    fileName
   });
   return sessionStore.getSnapshot();
 }
 
 async function addMarker(note = "") {
   const mode = sessionStore.store.mode;
-  if (sessionStore.store.sessionState === "idle" && mode !== "screenshot") {
-    throw new Error("Start a session before adding markers.");
-  }
-  if (mode === "screenshot") {
+  if (sessionStore.store.sessionState === "idle") {
+    if (mode !== "screenshot") {
+      throw new Error("Start a session before adding markers.");
+    }
     const tab = await getActiveTab();
     if (tab?.url && !isRestrictedUrl(tab.url)) {
       ensureLockedTabMatches(tab);
@@ -250,18 +254,37 @@ async function addMarker(note = "") {
       sessionStore.ensureSessionStarted(tab);
     }
   }
+  if (!["recording", "paused"].includes(sessionStore.store.sessionState)) {
+    throw new Error("Markers can only be added while recording or paused.");
+  }
   const nowIso = new Date().toISOString();
   sessionStore.addMarker({
-    timestamp: nowIso,
-    offsetMs: sessionStore.getElapsedMsNow(),
-    note: String(note || ""),
-    mode: sessionStore.store.mode,
-    sessionState: sessionStore.store.sessionState
+    timestampIso: nowIso,
+    t_ms: sessionStore.getElapsedMsNow(),
+    note: String(note || "")
   });
   return sessionStore.getSnapshot();
 }
 
-function buildSummaryText(metadata, logs) {
+function buildSignals(logs) {
+  const failures = logs.filter((entry) => entry.status >= 400);
+  const topFailures = failures
+    .slice()
+    .sort((a, b) => (b.durationMs || 0) - (a.durationMs || 0))
+    .slice(0, 10)
+    .map((entry) => ({
+      url: entry.url,
+      method: entry.method,
+      status: entry.status,
+      durationMs: entry.durationMs ?? null
+    }));
+
+  return {
+    topFailures
+  };
+}
+
+function buildSummaryText(metadata, logs, signals) {
   const totalRequests = logs.length;
   const count4xx = logs.filter(
     (entry) => entry.status >= 400 && entry.status < 500
@@ -316,6 +339,19 @@ function buildSummaryText(metadata, logs) {
   lines.push(`Screenshots captured: ${sessionStore.store.screenshots.length}`);
   lines.push(`Markers captured: ${sessionStore.store.markers.length}`);
   lines.push("");
+  lines.push("Top failures:");
+  if (!signals?.topFailures?.length) {
+    lines.push("  (none)");
+  } else {
+    for (const entry of signals.topFailures) {
+      lines.push(
+        `  ${entry.method} ${entry.status} | ${
+          entry.durationMs != null ? Math.round(entry.durationMs) : "-"
+        } ms | ${entry.url}`
+      );
+    }
+  }
+  lines.push("");
   lines.push("Notes:");
   lines.push(
     `  Response bodies truncated: ${truncatedBodies} (limit 200KB)`
@@ -354,39 +390,57 @@ async function stopAndExport() {
 
     const metadata = sessionStore.getSessionMetadata(endedAtIso);
     const downloads = [];
+    const signals = buildSignals(sessionStore.store.networkLogs);
+
+    const rawScreenshots = sessionStore.store.screenshots.map(
+      (shot, index) => ({
+        index: index + 1,
+        timestampIso: shot.timestampIso,
+        t_ms: shot.t_ms,
+        fileName: shot.fileName
+      })
+    );
+    const rawMarkers = sessionStore.store.markers.map((marker) => ({
+      timestampIso: marker.timestampIso,
+      t_ms: marker.t_ms,
+      note: marker.note
+    }));
+
+    const sessionLog = {
+      session: {
+        startedAt: metadata.startedAt,
+        endedAt: metadata.endedAt,
+        tabId: metadata.lockedTab?.id ?? null
+      },
+      raw: {
+        network: sessionStore.store.networkLogs,
+        markers: rawMarkers,
+        screenshots: rawScreenshots
+      },
+      normalizedEvents: [],
+      signals,
+      pipeline: {
+        version: "v1",
+        limits: {
+          maxRequests: 2000,
+          maxBodyBytes: 200 * 1024
+        }
+      }
+    };
 
     const videoBlob = sessionStore.getVideoBlob();
     if (videoBlob && ["video", "all"].includes(mode)) {
       downloads.push(
-        downloadBlob(videoBlob, `qa-video-${exportStamp}.webm`)
+        downloadBlob(videoBlob, `qa-session-video-${exportStamp}.webm`)
       );
     }
 
-    if (["network", "all"].includes(mode)) {
-      const networkPayload = {
-        session: metadata,
-        requests: sessionStore.store.networkLogs
-      };
-      downloads.push(
-        downloadBlob(
-          new Blob([JSON.stringify(networkPayload, null, 2)], {
-            type: "application/json"
-          }),
-          `qa-network-${exportStamp}.json`
-        )
-      );
-    }
-
-    const markersPayload = {
-      session: metadata,
-      markers: sessionStore.store.markers
-    };
     downloads.push(
       downloadBlob(
-        new Blob([JSON.stringify(markersPayload, null, 2)], {
+        new Blob([JSON.stringify(sessionLog, null, 2)], {
           type: "application/json"
         }),
-        `qa-markers-${exportStamp}.json`
+        `qa-session-log-${exportStamp}.json`
       )
     );
 
@@ -395,7 +449,8 @@ async function stopAndExport() {
         ...metadata,
         durationLabel: formatDurationMs(sessionStore.getDurationMs())
       },
-      sessionStore.store.networkLogs
+      sessionStore.store.networkLogs,
+      signals
     );
     downloads.push(
       downloadBlob(
@@ -405,10 +460,9 @@ async function stopAndExport() {
     );
 
     for (const [index, screenshot] of sessionStore.store.screenshots.entries()) {
-      const shotStamp = formatTimestampForFilename(screenshot.timestamp);
-      const fileName = `qa-screenshot-${padNumber(
-        index + 1
-      )}-${shotStamp}.png`;
+      const fileName =
+        screenshot.fileName ||
+        `qa-screenshot-${padNumber(index + 1)}-${exportStamp}.png`;
       downloads.push(downloadBlob(screenshot.blob, fileName));
     }
 
