@@ -1485,6 +1485,9 @@ async function handleDownload() {
       "console_logs.json",
       JSON.stringify(data.consoleLogs || { version: "1.0", entries: [] }, null, 2)
     );
+    if (data.qaSessionLog) {
+      zip.file("qa-session-log.json", JSON.stringify(data.qaSessionLog, null, 2));
+    }
     zip.file("session.json", JSON.stringify(data.session || {}, null, 2));
     zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
 
@@ -1511,6 +1514,28 @@ async function handleDownload() {
           });
         } finally {
           setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+        if (data.qaSummaryText && chrome.downloads?.download) {
+          const summaryBlob = new Blob([data.qaSummaryText], {
+            type: "text/plain",
+          });
+          const summaryUrl = URL.createObjectURL(summaryBlob);
+          try {
+            await new Promise((resolve, reject) => {
+              chrome.downloads.download(
+                { url: summaryUrl, filename: "qa-summary.txt", saveAs: false },
+                (downloadId) => {
+                  if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                  }
+                  resolve(downloadId);
+                }
+              );
+            });
+          } finally {
+            setTimeout(() => URL.revokeObjectURL(summaryUrl), 2000);
+          }
         }
       })(),
       timeoutPromise,

@@ -4,6 +4,18 @@ try {
   // Redaction helper is optional; export will fall back to raw values.
 }
 
+try {
+  importScripts(
+    chrome.runtime.getURL("pipeline/pipelineConfig.js"),
+    chrome.runtime.getURL("pipeline/normalizer.js"),
+    chrome.runtime.getURL("pipeline/actionGrouper.js"),
+    chrome.runtime.getURL("pipeline/signalReducer.js"),
+    chrome.runtime.getURL("pipeline/summaryBuilder.js")
+  );
+} catch (error) {
+  console.warn("Pipeline modules unavailable:", error);
+}
+
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
@@ -471,6 +483,7 @@ async function buildEvidenceExportData(context) {
     redactionEnabled: true,
   });
   const redactionEnabled = redactionResult.redactionEnabled !== false;
+  const networkCapped = state.network.capped;
   const networkEntries = buildNetworkExportEntries();
   const consoleEntries = buildConsoleExportEntries();
   const redactedNetworkEntries =
@@ -485,6 +498,107 @@ async function buildEvidenceExportData(context) {
           globalThis.RedactUtils.redactConsoleEntry(entry)
         )
       : consoleEntries;
+  const screenshotList = state.screenshot.dataUrl
+    ? [
+        {
+          fileName: "screenshot.png",
+          timestamp: state.screenshot.capturedAt || nowIso(),
+        },
+      ]
+    : [];
+  const markerList = [];
+  const sessionExport = buildSessionExport();
+  const pipelineConfig =
+    globalThis.PipelineConfig && globalThis.PipelineConfig.DEFAULTS
+      ? globalThis.PipelineConfig.DEFAULTS
+      : {
+          actionWindowMs: { pre: 250, post: 3000 },
+          dedupeWindowMs: 1000,
+          slowThresholdMs: 2000,
+          maxRequestsStored: 2000,
+          maxBodyBytes: 204800,
+          burstCollapse: { windowMs: 5000, minCount: 10 },
+          topSlowRequestsLimit: 10,
+        };
+  let normalizedEvents = [];
+  let signals = [];
+  let qaSummaryText = null;
+  if (
+    globalThis.PipelineNormalizer &&
+    globalThis.PipelineActionGrouper &&
+    globalThis.PipelineSignalReducer
+  ) {
+    const normalized = globalThis.PipelineNormalizer.normalizeSession(
+      {
+        session: {
+          sessionId: sessionExport ? sessionExport.session_id : null,
+          startedAt: sessionExport ? sessionExport.created_at : null,
+          endedAt: sessionExport ? sessionExport.ended_at : null,
+          tabId:
+            sessionExport && sessionExport.active_tab
+              ? sessionExport.active_tab.tab_id
+              : null,
+          mode: sessionExport ? sessionExport.mode : null,
+        },
+        rawNetwork: redactedNetworkEntries,
+        markers: markerList,
+        screenshots: screenshotList,
+        consoleEvents: redactedConsoleEntries,
+        uiActions: [],
+      },
+      pipelineConfig
+    );
+    const grouped = globalThis.PipelineActionGrouper.groupByActions(
+      normalized.normalizedEvents,
+      pipelineConfig
+    );
+    const reduced = globalThis.PipelineSignalReducer.reduceToSignals(
+      grouped.normalizedEventsWithActionIds,
+      pipelineConfig,
+      {
+        rawNetworkCount: redactedNetworkEntries.length,
+        networkCapped,
+      }
+    );
+    normalizedEvents = grouped.normalizedEventsWithActionIds;
+    signals = reduced.signals || [];
+    if (globalThis.PipelineSummaryBuilder) {
+      qaSummaryText = globalThis.PipelineSummaryBuilder.buildSummaryText({
+        session: {
+          startedAt: sessionExport ? sessionExport.created_at : null,
+          endedAt: sessionExport ? sessionExport.ended_at : null,
+          tabId:
+            sessionExport && sessionExport.active_tab
+              ? sessionExport.active_tab.tab_id
+              : null,
+          mode: sessionExport ? sessionExport.mode : null,
+        },
+        signals,
+        normalizedEvents,
+        config: pipelineConfig,
+      });
+    }
+  }
+  const qaSessionLog = {
+    session: {
+      startedAt: sessionExport ? sessionExport.created_at : null,
+      endedAt: sessionExport ? sessionExport.ended_at : null,
+      tabId:
+        sessionExport && sessionExport.active_tab
+          ? sessionExport.active_tab.tab_id
+          : null,
+      mode: sessionExport ? sessionExport.mode : null,
+    },
+    raw: {
+      network: redactedNetworkEntries,
+      console: redactedConsoleEntries,
+      markers: markerList,
+      screenshots: screenshotList,
+    },
+    normalizedEvents,
+    signals,
+    config: pipelineConfig,
+  };
   return {
     screenshotDataUrl: state.screenshot.dataUrl,
     recordingDataUrl: state.recording.dataUrl,
@@ -497,8 +611,10 @@ async function buildEvidenceExportData(context) {
       version: "1.0",
       entries: redactedConsoleEntries,
     },
-    session: buildSessionExport(),
+    session: sessionExport,
     environment,
+    qaSessionLog,
+    qaSummaryText,
   };
 }
 
