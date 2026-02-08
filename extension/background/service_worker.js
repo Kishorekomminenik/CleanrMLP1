@@ -1317,9 +1317,23 @@ function buildSessionExport() {
 }
 
 async function handleMessage(message, sender) {
-  console.log("[SW] msg", message.type);
+  const legacyTypeMap = {
+    START_SCREENSHOT: "TAKE_SCREENSHOT",
+    CAPTURE_SCREENSHOT: "TAKE_SCREENSHOT",
+    START_RECORDING: "RECORDING_START",
+    PAUSE_RECORDING: "RECORDING_PAUSE",
+    RESUME_RECORDING: "RECORDING_RESUME",
+    STOP_RECORDING: "RECORDING_STOP",
+    DOWNLOAD_ZIP: "DOWNLOAD_EVIDENCE_ZIP",
+    DOWNLOAD_EVIDENCE_ZIP: "DOWNLOAD_EVIDENCE_ZIP",
+    GET_ZIP_DATA: "GET_EVIDENCE_EXPORT_DATA",
+  };
+  const normalizedType = legacyTypeMap[message.type] || message.type;
+  const normalizedMessage =
+    normalizedType === message.type ? message : { ...message, type: normalizedType };
+  console.log("[SW] msg", normalizedMessage.type);
   let result;
-  switch (message.type) {
+  switch (normalizedMessage.type) {
     case "OPEN_RECORDING_PANEL":
       await openRecordingPanelWindow();
       result = { ok: true };
@@ -1419,12 +1433,11 @@ async function handleMessage(message, sender) {
         };
       }
       break;
-    case "CAPTURE_SCREENSHOT":
-      {
-        const dataUrl = await captureScreenshot();
-        result = { ok: true, screenshotDataUrl: dataUrl };
-      }
+    case "CAPTURE_SCREENSHOT": {
+      const dataUrl = await captureScreenshot();
+      result = { ok: true, screenshotDataUrl: dataUrl };
       break;
+    }
     case "RECORDING_START":
       try {
         const lock = checkStartMode("recording");
@@ -1561,14 +1574,14 @@ async function handleMessage(message, sender) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
-      result = { ok: true, data: await buildEvidenceExportData(message) };
+      result = { ok: true, data: await buildEvidenceExportData(normalizedMessage) };
       break;
     case "GET_EVIDENCE_EXPORT_DATA":
       if (!session) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
-      result = { ok: true, data: await buildEvidenceExportData(message) };
+      result = { ok: true, data: await buildEvidenceExportData(normalizedMessage) };
       break;
     case "DOWNLOAD_EVIDENCE_ZIP":
       result = {
@@ -1620,7 +1633,11 @@ async function handleMessage(message, sender) {
       result = { ok: true, state: getStatusSnapshot() };
       break;
     default:
-      result = { ok: false, error: "Unknown message type." };
+      console.warn("[SW] Unknown message type:", normalizedMessage.type);
+      result = {
+        ok: false,
+        error: `Unknown message type: ${normalizedMessage.type}`,
+      };
       break;
   }
   console.log("[SW] reply", result);

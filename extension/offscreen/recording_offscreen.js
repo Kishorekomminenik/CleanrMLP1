@@ -598,6 +598,20 @@ function resetRecording() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const handledTypes = new Set([
+    "OFFSCREEN_PING",
+    "RECORDING_GET_STATE",
+    "RECORDING_START",
+    "RECORDING_PAUSE",
+    "RECORDING_RESUME",
+    "RECORDING_STOP",
+    "RECORDING_EXPORT_WEBM",
+    "RECORDING_RESET",
+  ]);
+  if (!handledTypes.has(message.type)) {
+    console.warn("[OFFSCREEN] Unknown message type:", message.type);
+    return false;
+  }
   (async () => {
     let result;
     try {
