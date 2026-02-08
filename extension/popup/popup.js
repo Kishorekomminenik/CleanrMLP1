@@ -17,6 +17,7 @@ const buttons = {
   networkStart: document.getElementById("btn_start_capture"),
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
+  screenshotInline: document.getElementById("btn_take_screenshot_inline"),
   addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
@@ -31,6 +32,7 @@ let currentMode = "screenshot";
 const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
 const screenshotHint = document.getElementById("screenshotHint");
+const recordingDownloadHint = document.getElementById("recordingDownloadHint");
 const statusTimerRow = document.getElementById("status_timer_row");
 const statusCountsRow = document.getElementById("status_counts_row");
 const downloadControls = document.getElementById("download_controls");
@@ -837,9 +839,6 @@ function applySessionLock(state) {
     return;
   }
   const mode = state.session.mode;
-  if (mode !== "screenshot") {
-    buttons.screenshot.disabled = true;
-  }
   if (mode !== "recording") {
     buttons.recordStart.disabled = true;
   }
@@ -1039,6 +1038,12 @@ function updateStatusUI(state) {
       ? recordingLiveState.state
       : null;
   const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
+  const captureActive =
+    sessionState === "capturing" ||
+    sessionState === "paused" ||
+    sessionState === "recording" ||
+    sessionState === "stopping";
+  const allowMarkers = Boolean(state.session) && captureActive;
   const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
@@ -1089,6 +1094,12 @@ function updateStatusUI(state) {
     buttons.networkRefresh.disabled =
       currentMode !== "network_console" || !networkAvailable || !hasActiveTab;
   }
+  if (buttons.screenshotInline) {
+    buttons.screenshotInline.disabled = !allowMarkers;
+  }
+  if (buttons.addMarker) {
+    buttons.addMarker.disabled = !allowMarkers;
+  }
 
   if (liveRecordingState && liveRecordingState.ok) {
     state.recordingStatus = liveRecordingState.state;
@@ -1103,24 +1114,34 @@ function updateStatusUI(state) {
 
   const isRecordingMode = currentMode === "recording";
   if (buttons.download) {
-    buttons.download.classList.toggle("is-hidden", isRecordingMode);
+    buttons.download.classList.toggle("is-hidden", false);
   }
   if (buttons.downloadRecording) {
     buttons.downloadRecording.classList.toggle("is-hidden", !isRecordingMode);
   }
-  if (!isRecordingMode) {
+  if (recordingDownloadHint) {
+    recordingDownloadHint.classList.toggle("is-hidden", !isRecordingMode);
+  }
+  if (buttons.download) {
     if (state.artifacts) {
       buttons.download.disabled =
-        currentMode === "screenshot" || !state.artifacts.hasAnyArtifacts;
+        currentMode === "screenshot" ||
+        !state.artifacts.hasAnyArtifacts ||
+        captureActive;
     } else if (typeof state.hasArtifacts === "boolean") {
-      buttons.download.disabled = currentMode === "screenshot" || !state.hasArtifacts;
+      buttons.download.disabled =
+        currentMode === "screenshot" || !state.hasArtifacts || captureActive;
+    } else {
+      buttons.download.disabled = captureActive;
     }
-  } else if (buttons.downloadRecording) {
+  }
+  if (buttons.downloadRecording) {
     const hasRecording = state.artifacts ? state.artifacts.hasRecording : false;
     const recordingReady =
       hasRecording &&
       state.recordingStatus !== "recording" &&
-      state.recordingStatus !== "paused";
+      state.recordingStatus !== "paused" &&
+      !captureActive;
     buttons.downloadRecording.disabled = !recordingReady;
   }
 
@@ -1466,6 +1487,19 @@ async function handleDownload() {
       hadError = true;
       return;
     }
+    if (
+      statusResponse.state.session &&
+      (statusResponse.state.session.state === "capturing" ||
+        statusResponse.state.session.state === "paused")
+    ) {
+      setStatus(
+        statusElements.download,
+        "Stop capture before downloading.",
+        "error"
+      );
+      hadError = true;
+      return;
+    }
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
@@ -1494,6 +1528,18 @@ async function handleDownload() {
 
     const data = exportResponse.data;
     const exportTimestamp = data.exportTimestamp || requestedExportTimestamp;
+    let recordingExport = null;
+    let recordingBlob = null;
+    try {
+      recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
+      if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
+        const response = await fetch(recordingExport.blobUrl);
+        recordingBlob = await response.blob();
+      }
+    } catch (error) {
+      recordingExport = null;
+      recordingBlob = null;
+    }
     const zip = new JSZip();
     if (Array.isArray(data.screenshots)) {
       for (const shot of data.screenshots) {
@@ -1502,19 +1548,18 @@ async function handleDownload() {
           const name =
             shot.fileName ||
             `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
-          zip.file(name, screenshotBlob);
+          zip.file(`screenshots/${name}`, screenshotBlob);
         }
       }
     } else if (data.screenshotDataUrl) {
       const screenshotBlob = await dataUrlToBlob(data.screenshotDataUrl);
-      zip.file("screenshot.png", screenshotBlob);
+      zip.file("screenshots/screenshot.png", screenshotBlob);
     }
-    if (data.recordingDataUrl) {
-      const recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
-      const recordingName = data.recordingMimeType
-        ? "recording.webm"
-        : "recording.webm";
-      zip.file(recordingName, recordingBlob);
+    if (recordingBlob) {
+      zip.file(`qa-session-video-${exportTimestamp}.webm`, recordingBlob);
+    } else if (data.recordingDataUrl) {
+      const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
+      zip.file(`qa-session-video-${exportTimestamp}.webm`, recordingDataBlob);
     }
     zip.file(
       "network_logs.json",
@@ -1561,8 +1606,12 @@ async function handleDownload() {
       timeoutPromise,
     ]);
 
-    const recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
-    if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
+    if (recordingBlob) {
+      await downloadBlob(
+        recordingBlob,
+        `qa-session-video-${exportTimestamp}.webm`
+      );
+    } else if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
       if (!chrome.downloads?.download) {
         throw new Error("Downloads API unavailable.");
       }
@@ -1583,9 +1632,9 @@ async function handleDownload() {
         );
       });
     } else if (data.recordingDataUrl) {
-      const recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
+      const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
       await downloadBlob(
-        recordingBlob,
+        recordingDataBlob,
         `qa-session-video-${exportTimestamp}.webm`
       );
     }
@@ -1789,6 +1838,9 @@ async function initCapabilities() {
 }
 
 buttons.screenshot.addEventListener("click", handleScreenshot);
+if (buttons.screenshotInline) {
+  buttons.screenshotInline.addEventListener("click", handleScreenshot);
+}
 buttons.recordStart.addEventListener("click", handleRecordingStart);
 buttons.recordPause.addEventListener("click", handleRecordingPause);
 buttons.recordResume.addEventListener("click", handleRecordingResume);
