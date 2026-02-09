@@ -1,14 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "QA Evidence Recorder",
+  "name": "Repro",
+  "short_name": "Repro",
   "version": "0.1.0",
-  "description": "Capture screenshots, tab recordings, and network/console logs for QA evidence bundles.",
+  "description": "Capture evidence for bug reports.",
   "action": {
-    "default_title": "QA Evidence Recorder",
-    "default_popup": "popup/popup.html"
+    "default_title": "Repro — QA evidence recorder",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
   },
   "icons": {
     "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
     "48": "assets/icon48.png",
     "128": "assets/icon128.png"
   },

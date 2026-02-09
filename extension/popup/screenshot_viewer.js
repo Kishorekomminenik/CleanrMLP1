@@ -10,6 +10,11 @@ import {
   resolveFontWeight,
 } from "../shared/annotationConfig.js";
 
+const APP_TAGLINE = "QA evidence recorder";
+const manifest = chrome.runtime.getManifest();
+const appName = manifest && manifest.name ? manifest.name : "Repro";
+document.title = `${appName} — ${APP_TAGLINE}`;
+
 const baseCanvas = document.getElementById("baseCanvas");
 const drawCanvas = document.getElementById("drawCanvas");
 const textLayer = document.getElementById("textLayer");

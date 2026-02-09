@@ -1,6 +1,6 @@
-# QA Evidence Recorder Extension
+# Repro Extension
 
-QA Evidence Recorder is a Manifest V3 browser extension for Chrome/Edge that
+Repro is a Manifest V3 browser extension for Chrome/Edge that
 captures screenshots, tab recordings, and network + console logs from the active
 tab and exports a single ZIP evidence bundle.
 

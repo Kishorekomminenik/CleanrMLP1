@@ -52,8 +52,17 @@ header {
 }
 
 .app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
+}
+
+.app-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .status-pill {

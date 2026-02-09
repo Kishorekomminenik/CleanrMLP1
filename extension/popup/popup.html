@@ -3,14 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>QA Evidence Recorder</title>
+    <title>Repro</title>
+    <link rel="icon" href="../assets/icon32.png" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <div class="container">
       <header class="app-header">
         <div class="header-row">
-          <div class="app-title">Evidence</div>
+          <div class="app-title">
+            <img id="app_icon" class="app-icon" alt="" />
+            <span id="app_title"></span>
+          </div>
           <span id="session_pill" class="status-pill">Idle</span>
         </div>
         <div id="session_meta" class="meta-line">Shot • 0 req • 0 err</div>
@@ -228,7 +232,7 @@
           <button id="btn_reset_session" data-action="session:reset">Reset</button>
         </div>
         <p id="recordingDownloadHint" class="hint is-hidden">
-          WebM includes video only. Use Evidence ZIP for logs + screenshots.
+          WebM includes video only. Use ZIP for logs + screenshots.
         </p>
         <p id="exportHint" class="hint is-hidden">Stop to export.</p>
         <p id="downloadStatus" class="status">Ready.</p>

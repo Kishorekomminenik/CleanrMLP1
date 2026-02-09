@@ -17,6 +17,9 @@ const statusElements = {
   download: document.getElementById("downloadStatus"),
 };
 
+const appTitleEl = document.getElementById("app_title");
+const appIconEl = document.getElementById("app_icon");
+
 const buttons = {
   screenshot: document.getElementById("btn_take_screenshot"),
   recordStart: document.getElementById("btn_start_recording"),
@@ -105,6 +108,7 @@ const ANNOTATION_DEFAULTS = { ...DEFAULT_ANNOTATION_STYLE };
 const CLICK_DEBUG = false;
 
 const APP_VERSION = "v0.1";
+const APP_TAGLINE = "QA evidence recorder";
 const JSZIP_LOAD_ERROR =
   "Export unavailable: JSZip failed to load. Check popup.html script path.";
 let jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
@@ -2310,6 +2314,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function initPopup() {
+  const manifest = chrome.runtime.getManifest();
+  const appName = manifest && manifest.name ? manifest.name : "Repro";
+  const headerText = `${appName} — ${APP_TAGLINE}`;
+  if (appTitleEl) {
+    appTitleEl.textContent = headerText;
+  }
+  if (appIconEl) {
+    appIconEl.src = chrome.runtime.getURL("assets/icon32.png");
+    appIconEl.alt = appName;
+  }
+  document.title = headerText;
   assertJsZipAvailable();
   const lastMode = await loadLastSelectedMode();
   currentMode = lastMode;
