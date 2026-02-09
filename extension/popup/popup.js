@@ -1721,15 +1721,31 @@ async function handleDownload() {
     const exportTimestamp = data.exportTimestamp || requestedExportTimestamp;
     let recordingExport = null;
     let recordingBlob = null;
-    try {
-      recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
-      if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
-        const response = await fetch(recordingExport.blobUrl);
+    let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
+    if (data.video && data.video.blobUrl) {
+      try {
+        const response = await fetch(data.video.blobUrl);
         recordingBlob = await response.blob();
+        if (data.video.fileName) {
+          recordingFileName = data.video.fileName;
+        }
+      } catch (error) {
+        recordingBlob = null;
       }
-    } catch (error) {
-      recordingExport = null;
-      recordingBlob = null;
+    }
+    if (!recordingBlob && (data.recordingDataUrl || data.recordingMimeType)) {
+      try {
+        recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
+        if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
+          const response = await fetch(recordingExport.blobUrl);
+          recordingBlob = await response.blob();
+        } else if (data.recordingDataUrl) {
+          recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
+        }
+      } catch (error) {
+        recordingExport = null;
+        recordingBlob = null;
+      }
     }
     const zip = new JSZip();
     if (Array.isArray(data.screenshots)) {
@@ -1748,10 +1764,10 @@ async function handleDownload() {
       zip.file("screenshots/screenshot.png", screenshotBlob);
     }
     if (recordingBlob) {
-      zip.file(`qa-session-video-${exportTimestamp}.webm`, recordingBlob);
+      zip.file(recordingFileName, recordingBlob);
     } else if (data.recordingDataUrl) {
       const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
-      zip.file(`qa-session-video-${exportTimestamp}.webm`, recordingDataBlob);
+      zip.file(recordingFileName, recordingDataBlob);
     }
     zip.file(
       "network_logs.json",
@@ -1803,10 +1819,7 @@ async function handleDownload() {
     ]);
 
     if (recordingBlob) {
-      await downloadBlob(
-        recordingBlob,
-        `qa-session-video-${exportTimestamp}.webm`
-      );
+      await downloadBlob(recordingBlob, recordingFileName);
     } else if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
       if (!chrome.downloads?.download) {
         throw new Error("Downloads API unavailable.");
@@ -1815,7 +1828,7 @@ async function handleDownload() {
         chrome.downloads.download(
           {
             url: recordingExport.blobUrl,
-            filename: `qa-session-video-${exportTimestamp}.webm`,
+            filename: recordingFileName,
             saveAs: false,
           },
           (downloadId) => {

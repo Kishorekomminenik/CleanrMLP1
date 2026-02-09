@@ -38,6 +38,9 @@ const state = {
     capturedAt: null,
     error: null,
     hasData: false,
+    videoBlobUrl: null,
+    videoMime: null,
+    videoByteLength: null,
   },
   network: {
     active: false,
@@ -660,6 +663,33 @@ async function buildEvidenceExportData(context) {
       diagnostics: [],
     };
   }
+  let videoReference = null;
+  if (state.recording.hasData) {
+    if (!state.recording.videoBlobUrl) {
+      try {
+        await ensureOffscreenReady();
+        const exportResponse = await sendMessageToOffscreen({
+          type: "RECORDING_EXPORT_WEBM",
+        });
+        if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+          state.recording.videoBlobUrl = exportResponse.blobUrl;
+          state.recording.videoMime = exportResponse.mimeType || null;
+          state.recording.videoByteLength =
+            typeof exportResponse.size === "number" ? exportResponse.size : null;
+        }
+      } catch (error) {
+        console.warn("Recording export reference unavailable:", error);
+      }
+    }
+    if (state.recording.videoBlobUrl) {
+      videoReference = {
+        blobUrl: state.recording.videoBlobUrl,
+        mime: state.recording.videoMime,
+        fileName: `qa-session-video-${exportTimestamp}.webm`,
+        byteLength: state.recording.videoByteLength,
+      };
+    }
+  }
   const pipelineConfig =
     globalThis.PipelineConfig && globalThis.PipelineConfig.DEFAULTS
       ? globalThis.PipelineConfig.DEFAULTS
@@ -756,6 +786,7 @@ async function buildEvidenceExportData(context) {
     recordingDataUrl: state.recording.dataUrl,
     recordingMimeType: state.recording.mimeType,
     screenshots: screenshotDownloads,
+    video: videoReference,
     networkLogs: {
       version: "1.0",
       entries: redactedNetworkEntries,
@@ -921,6 +952,8 @@ async function captureScreenshot() {
 async function captureFullPageScreenshot() {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
+  const triggerTimestampIso = nowIso();
+  const triggerTms = computeSessionOffsetMs(triggerTimestampIso);
   const tabId = sessionActive && session.active_tab ? session.active_tab.tab_id : null;
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -1013,17 +1046,15 @@ async function captureFullPageScreenshot() {
 
   const blob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(blob);
-  const timestampIso = nowIso();
   state.screenshot.dataUrl = dataUrl;
-  state.screenshot.capturedAt = timestampIso;
+  state.screenshot.capturedAt = triggerTimestampIso;
   if (session) {
     session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
-    const tMs = computeSessionOffsetMs(timestampIso);
     const index = session.screenshots.length + 1;
     session.screenshots.push({
       index,
-      timestampIso,
-      t_ms: tMs,
+      timestampIso: triggerTimestampIso,
+      t_ms: triggerTms,
       blob,
       dataUrl,
       fullPage: true,
@@ -1111,6 +1142,9 @@ async function startRecording(streamId, tabId, mimeType) {
     state.recording.mimeType = null;
     state.recording.error = null;
     state.recording.hasData = false;
+    state.recording.videoBlobUrl = null;
+    state.recording.videoMime = null;
+    state.recording.videoByteLength = null;
     clearStatusMessage();
     return response;
   } catch (error) {
@@ -1167,6 +1201,22 @@ async function stopRecording() {
   syncRecordingState(response);
   if (state.recording.status === "idle") {
     markSessionStopped();
+  }
+  if (state.recording.hasData && !state.recording.videoBlobUrl) {
+    try {
+      await ensureOffscreenReady();
+      const exportResponse = await sendMessageToOffscreen({
+        type: "RECORDING_EXPORT_WEBM",
+      });
+      if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+        state.recording.videoBlobUrl = exportResponse.blobUrl;
+        state.recording.videoMime = exportResponse.mimeType || null;
+        state.recording.videoByteLength =
+          typeof exportResponse.size === "number" ? exportResponse.size : null;
+      }
+    } catch (error) {
+      console.warn("Failed to cache recording export reference:", error);
+    }
   }
   clearStatusMessage();
   closeRecordingPanelWindowIfOpen();
@@ -1534,6 +1584,9 @@ async function resetSession() {
   state.recording.capturedAt = null;
   state.recording.error = null;
   state.recording.hasData = false;
+  state.recording.videoBlobUrl = null;
+  state.recording.videoMime = null;
+  state.recording.videoByteLength = null;
 
   session = null;
   clearStatusMessage();
@@ -2073,6 +2126,9 @@ async function handleMessage(message, sender) {
         state.recording.capturedAt = null;
         state.recording.error = null;
         state.recording.hasData = false;
+        state.recording.videoBlobUrl = null;
+        state.recording.videoMime = null;
+        state.recording.videoByteLength = null;
         if (session && session.mode === "recording") {
           session = null;
         }
