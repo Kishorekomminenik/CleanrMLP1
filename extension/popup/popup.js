@@ -1922,7 +1922,8 @@ async function handleAddMarker() {
   if (note === null) {
     return;
   }
-  const response = await send(MSG.ADD_MARKER, { note });
+  const trimmed = typeof note === "string" ? note.trim().slice(0, 200) : "";
+  const response = await send(MSG.ADD_MARKER, { note: trimmed });
   if (!response.ok) {
     setStatus(
       statusElements.message,

@@ -214,7 +214,10 @@
     const events = [];
     entries.forEach((entry) => {
       const tsIso = entry.timestamp || entry.ts_iso || sessionMeta.startedAtIso;
-      const note = entry.note || entry.message || "Marker";
+      const note =
+        typeof entry.note === "string"
+          ? entry.note
+          : entry.message || "Marker";
       events.push({
         t_ms: computeTms(tsIso, sessionMeta.startedAtMs),
         ts_iso: tsIso,

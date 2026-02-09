@@ -625,7 +625,7 @@ async function buildEvidenceExportData(context) {
         typeof entry.t_ms === "number"
           ? entry.t_ms
           : computeSessionOffsetMs(timestampIso),
-      note: entry.note || "Marker",
+      note: typeof entry.note === "string" ? entry.note : "Marker",
     };
   });
   const screenshotDownloads = screenshotList.map((meta, index) => ({
@@ -1038,15 +1038,20 @@ function addMarker(note) {
   if (!session) {
     throw new Error("No active session.");
   }
+  if (session.mode === "screenshot") {
+    throw new Error("Markers are unavailable in screenshot mode.");
+  }
   if (session.state !== "capturing" && session.state !== "paused") {
     throw new Error("Session is not recording or paused.");
   }
   const timestampIso = nowIso();
   const tMs = computeSessionOffsetMs(timestampIso);
+  const rawNote = typeof note === "string" ? note.trim() : "";
+  const trimmedNote = rawNote.slice(0, 200);
   const marker = {
     timestampIso,
     t_ms: tMs,
-    note: typeof note === "string" && note.trim() ? note.trim() : "Marker",
+    note: trimmedNote,
   };
   session.markers.push(marker);
   return marker;

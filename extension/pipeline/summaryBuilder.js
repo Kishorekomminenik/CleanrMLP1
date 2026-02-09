@@ -152,12 +152,19 @@
     }
     lines.push("");
 
-    lines.push("Markers");
+    lines.push(`Markers (${markers.length})`);
     if (markers.length === 0) {
       lines.push("- None");
     } else {
       markers.forEach((event) => {
-        lines.push(`- [${event.t_ms}ms] ${event.msg}`);
+        const minutes = String(Math.floor(event.t_ms / 60000)).padStart(2, "0");
+        const seconds = String(Math.floor((event.t_ms % 60000) / 1000)).padStart(
+          2,
+          "0"
+        );
+        const tenths = Math.floor((event.t_ms % 1000) / 100);
+        const note = event.msg && String(event.msg).trim() ? event.msg : "(no note)";
+        lines.push(`- ${minutes}:${seconds}.${tenths} — ${note}`);
       });
     }
     lines.push("");
