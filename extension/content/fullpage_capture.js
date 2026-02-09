@@ -1,124 +1,56 @@
-(() => {
-  let originalScrollY = 0;
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
-  function getDocumentElement() {
-    return document.scrollingElement || document.documentElement || document.body;
+async function captureViewport() {
+  const response = await chrome.runtime.sendMessage({ type: "FP_CAPTURE_VIEWPORT" });
+  if (typeof response === "string") {
+    return response;
+  }
+  if (response && response.dataUrl) {
+    return response.dataUrl;
+  }
+  throw new Error(response && response.error ? response.error : "CAPTURE_DENIED");
+}
+
+async function captureAll() {
+  const height = document.documentElement.scrollHeight;
+  const width = document.documentElement.clientWidth;
+  const vh = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  const frames = [];
+  const originalY = window.scrollY;
+
+  if (!height || !width || !vh) {
+    return { ok: false, code: "PLAN_FAILED", error: "Unable to read page size." };
   }
 
-  function getPageMetrics() {
-    const element = getDocumentElement();
-    const scrollHeight = Math.max(
-      element.scrollHeight,
-      document.body ? document.body.scrollHeight : 0
-    );
-    const viewportHeight = window.innerHeight || element.clientHeight || 0;
-    const viewportWidth = window.innerWidth || element.clientWidth || 0;
+  try {
+    for (let y = 0; y < height; y += vh) {
+      window.scrollTo(0, y);
+      await sleep(120);
+      frames.push(await captureViewport());
+    }
+  } catch (error) {
     return {
-      scrollHeight,
-      viewportHeight,
-      viewportWidth,
-      devicePixelRatio: window.devicePixelRatio || 1,
+      ok: false,
+      code: "CAPTURE_DENIED",
+      error: error && error.message ? error.message : String(error),
     };
   }
 
-  function buildScrollPositions(scrollHeight, viewportHeight) {
-    const positions = [];
-    if (!scrollHeight || !viewportHeight) {
-      return positions;
-    }
-    const maxScrollY = Math.max(0, scrollHeight - viewportHeight);
-    let current = 0;
-    while (current < maxScrollY) {
-      positions.push(current);
-      current += viewportHeight;
-    }
-    positions.push(maxScrollY);
-    return positions;
+  window.scrollTo(0, originalY);
+  return { ok: true, frames, width, totalHeight: height, devicePixelRatio: dpr };
+}
+
+chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+  if (msg?.type === "FP_CAPTURE_ALL") {
+    captureAll()
+      .then(sendResponse)
+      .catch((e) =>
+        sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
+      );
+    return true;
   }
-
-  const freezeStyleId = "repro-fullpage-freeze-style";
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || !message.type) {
-      return false;
-    }
-    if (message.type === "FP_GET_PLAN") {
-      originalScrollY = window.scrollY || 0;
-      const doc = document.documentElement;
-      const body = document.body;
-      const pageW = Math.max(
-        doc.scrollWidth,
-        body ? body.scrollWidth : 0,
-        doc.clientWidth
-      );
-      const pageH = Math.max(
-        doc.scrollHeight,
-        body ? body.scrollHeight : 0,
-        doc.clientHeight
-      );
-      const viewportW = window.innerWidth || doc.clientWidth || 0;
-      const viewportH = window.innerHeight || doc.clientHeight || 0;
-      const dpr = window.devicePixelRatio || 1;
-
-      const steps = [];
-      let y = 0;
-      while (y < pageH) {
-        steps.push({ y });
-        y += viewportH;
-      }
-      if (steps.length > 0) {
-        const lastIndex = steps.length - 1;
-        const maxScrollY = Math.max(0, pageH - viewportH);
-        if (steps[lastIndex].y > maxScrollY) {
-          steps[lastIndex].y = maxScrollY;
-        } else if (steps[lastIndex].y < maxScrollY) {
-          steps.push({ y: maxScrollY });
-        }
-      }
-
-      sendResponse({
-        ok: true,
-        plan: {
-          viewportW,
-          viewportH,
-          pageW,
-          pageH,
-          devicePixelRatio: dpr,
-          scrollY0: originalScrollY,
-          steps,
-        },
-      });
-      return false;
-    }
-    if (message.type === "FP_SCROLL_TO") {
-      const targetY = typeof message.y === "number" ? message.y : 0;
-      window.scrollTo(0, targetY);
-      sendResponse({ ok: true });
-      return false;
-    }
-    if (message.type === "FP_RESTORE_SCROLL") {
-      window.scrollTo(0, originalScrollY || 0);
-      sendResponse({ ok: true });
-      return false;
-    }
-    if (message.type === "FP_FREEZE_UI") {
-      const freeze = Boolean(message.freeze);
-      if (freeze) {
-        if (!document.getElementById(freezeStyleId)) {
-          const style = document.createElement("style");
-          style.id = freezeStyleId;
-          style.textContent =
-            "*{scroll-behavior:auto !important;animation:none !important;transition:none !important;caret-color:transparent !important;}";
-          document.documentElement.appendChild(style);
-        }
-      } else {
-        const style = document.getElementById(freezeStyleId);
-        if (style && style.parentNode) {
-          style.parentNode.removeChild(style);
-        }
-      }
-      sendResponse({ ok: true });
-      return false;
-    }
-    return false;
-  });
-})();
+  return false;
+});

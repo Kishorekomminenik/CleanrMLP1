@@ -994,126 +994,59 @@ async function captureFullPageScreenshot() {
   }
   console.log("[FULL][SW]", { step: "inject_ok" });
 
-  const plan = await sendMessageToTabWithResponse(tabId, {
-    type: "FP_GET_PLAN",
+  const captureResult = await sendMessageToTabWithResponse(tabId, {
+    type: "FP_CAPTURE_ALL",
   });
-  if (!plan.ok) {
-    const message = plan.error || "Unable to prepare full page capture.";
+  if (!captureResult || captureResult.ok === false) {
+    const message =
+      captureResult && captureResult.error
+        ? captureResult.error
+        : "Unable to prepare full page capture.";
+    const code =
+      captureResult && captureResult.code ? captureResult.code : "PLAN_FAILED";
     console.log("[FULL][SW]", { step: "plan_failed", error: message });
     const err = new Error(message);
-    err.code = /receiving end does not exist|no tab to message|port closed/i.test(
-      message
-    )
-      ? "INJECT_FAILED"
-      : "PLAN_FAILED";
+    err.code = code;
     throw err;
   }
-  const planData = plan.plan || plan;
-  if (!planData.pageH || !planData.viewportH) {
-    const err = new Error("Unable to read page dimensions.");
+  const frames = Array.isArray(captureResult.frames) ? captureResult.frames : [];
+  const totalHeight =
+    typeof captureResult.totalHeight === "number" ? captureResult.totalHeight : 0;
+  const width = typeof captureResult.width === "number" ? captureResult.width : 0;
+  const dpr =
+    typeof captureResult.devicePixelRatio === "number"
+      ? captureResult.devicePixelRatio
+      : 1;
+  if (!frames.length || !width || !totalHeight) {
+    const err = new Error("No frames to stitch.");
     err.code = "PLAN_FAILED";
     throw err;
   }
-  if (planData.pageH * (planData.devicePixelRatio || 1) > FULLPAGE_MAX_HEIGHT) {
+  console.log("[FULL][SW]", { step: "plan_ok", frames: frames.length });
+  if (totalHeight * dpr > FULLPAGE_MAX_HEIGHT) {
     const err = new Error("Page too tall for full page capture.");
     err.code = "PAGE_TOO_LARGE";
     throw err;
   }
 
-  const steps = Array.isArray(planData.steps) ? planData.steps : [];
-  if (!steps.length) {
-    const err = new Error("No scroll steps generated.");
-    err.code = "PLAN_FAILED";
+  let blob;
+  try {
+    const { stitchVerticalPng } = await import("./fullpage_stitch.js");
+    blob = await stitchVerticalPng({
+      frames,
+      width: Math.round(width * dpr),
+      totalHeight: Math.round(totalHeight * dpr),
+    });
+  } catch (error) {
+    console.log("[FULL][SW]", {
+      step: "stitch_failed",
+      error: error && error.message ? error.message : String(error),
+    });
+    const err = new Error("Full page screenshot failed.");
+    err.code = "UNKNOWN";
+    err.details = error && error.message ? error.message : String(error);
     throw err;
   }
-
-  await sendMessageToTabWithResponse(tabId, {
-    type: "FP_FREEZE_UI",
-    freeze: true,
-  });
-
-  const captures = [];
-  try {
-    for (const step of steps) {
-      console.log("[FULL][SW]", { step: "capture_step", y: step.y });
-      await sendMessageToTabWithResponse(tabId, {
-        type: "FP_SCROLL_TO",
-        y: step.y,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 240));
-      let dataUrl;
-      try {
-        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-          format: "png",
-        });
-      } catch (error) {
-        const message = error && error.message ? error.message : String(error);
-        console.log("[FULL][SW]", { step: "capture_failed", error: message });
-        if (
-          /capture|denied|not allowed|not permitted|blocked|protected|permission/i.test(
-            message
-          )
-        ) {
-          const err = new Error("Not supported on this page.");
-          err.code = "CAPTURE_DENIED";
-          err.details = message;
-          throw err;
-        }
-        const err = new Error(message || "Full page capture failed.");
-        err.code = "CAPTURE_DENIED";
-        err.details = message;
-        throw err;
-      }
-      if (!dataUrl) {
-        const err = new Error("Full page capture failed.");
-        err.code = "CAPTURE_DENIED";
-        throw err;
-      }
-      const bitmap = await dataUrlToImageBitmap(dataUrl);
-      captures.push({ bitmap, y: step.y });
-    }
-  } finally {
-    await sendMessageToTabWithResponse(tabId, {
-      type: "FP_FREEZE_UI",
-      freeze: false,
-    });
-    await sendMessageToTabWithResponse(tabId, { type: "FP_RESTORE_SCROLL" });
-  }
-
-  const dpr = planData.devicePixelRatio || 1;
-  const canvasW = Math.round(planData.pageW * dpr);
-  const canvasH = Math.round(planData.pageH * dpr);
-  const canvas = new OffscreenCanvas(canvasW, canvasH);
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvasW, canvasH);
-
-  captures.forEach((tile, index) => {
-    const drawY = Math.round(tile.y * dpr);
-    if (index === captures.length - 1) {
-      const lastVisibleH = Math.round((planData.pageH - tile.y) * dpr);
-      const sourceY = Math.max(0, tile.bitmap.height - lastVisibleH);
-      ctx.drawImage(
-        tile.bitmap,
-        0,
-        sourceY,
-        tile.bitmap.width,
-        lastVisibleH,
-        0,
-        drawY,
-        tile.bitmap.width,
-        lastVisibleH
-      );
-    } else {
-      ctx.drawImage(tile.bitmap, 0, drawY);
-    }
-  });
-
-  if (session.annotations && Array.isArray(session.annotations)) {
-    applyTextAnnotations(ctx, session.annotations, dpr);
-  }
-
-  const blob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(blob);
   console.log("[FULL][SW]", { step: "stitch_ok" });
   state.screenshot.dataUrl = dataUrl;
@@ -2028,6 +1961,21 @@ async function handleMessage(message, sender) {
         isTabCaptureAvailable: Boolean(chrome?.tabCapture?.capture),
       };
       break;
+    case "FP_CAPTURE_VIEWPORT": {
+      try {
+        const windowId = sender && sender.tab ? sender.tab.windowId : null;
+        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
+          format: "png",
+        });
+        result = dataUrl;
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Capture failed.",
+        };
+      }
+      break;
+    }
     case "CAPTURE_FULLPAGE":
       try {
         const dataUrl = await captureFullPageScreenshot();
