@@ -942,17 +942,26 @@ function setNetworkButtons(state) {
 }
 
 function applySessionLock(state) {
+  const sessionState = state.session ? state.session.state : null;
   const isLocked =
-    state.session &&
-    (state.session.state === "capturing" ||
-      state.session.state === "paused" ||
-      state.recordingStatus === "recording" ||
-      state.recordingStatus === "paused" ||
-      state.networkActive);
+    sessionState === "capturing" ||
+    sessionState === "paused" ||
+    state.recordingStatus === "recording" ||
+    state.recordingStatus === "paused" ||
+    state.networkActive;
   if (!isLocked) {
     return;
   }
-  const mode = state.session.mode;
+  const mode =
+    (state.session && state.session.mode) ||
+    (state.recordingStatus === "recording" || state.recordingStatus === "paused"
+      ? "recording"
+      : state.networkActive
+        ? "network_console"
+        : null);
+  if (!mode) {
+    return;
+  }
   if (mode !== "recording") {
     buttons.recordStart.disabled = true;
   }
@@ -1147,16 +1156,28 @@ function updateStatusUI(state) {
     button.disabled = false;
   });
 
-  if (state.session && state.session.mode && state.session.mode !== currentMode) {
+  const hasLiveRecording =
+    recordingLiveState &&
+    (recordingLiveState.state === "recording" ||
+      recordingLiveState.state === "paused");
+  const hasLiveNetwork = Boolean(state.networkActive);
+  const sessionStateRaw = state.session ? state.session.state : null;
+  const isSessionActive =
+    sessionStateRaw === "capturing" || sessionStateRaw === "paused";
+  if (hasLiveRecording) {
+    setMode("recording");
+  } else if (hasLiveNetwork) {
+    setMode("network_console");
+  } else if (isSessionActive && state.session && state.session.mode) {
     setMode(state.session.mode);
   }
 
-  const sessionMode = state.session ? state.session.mode : null;
-  const liveRecordingState =
-    sessionMode === "recording" && recordingLiveState
-      ? recordingLiveState.state
-      : null;
-  const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
+  const sessionMode =
+    (state.session && state.session.mode) ||
+    (hasLiveRecording ? "recording" : hasLiveNetwork ? "network_console" : null);
+  const sessionState = hasLiveRecording
+    ? recordingLiveState.state
+    : sessionStateRaw || (hasLiveNetwork ? "capturing" : "idle");
   const sessionActive =
     sessionState === "capturing" ||
     sessionState === "paused" ||
@@ -1265,10 +1286,14 @@ function updateStatusUI(state) {
     quickActions.classList.toggle("is-hidden", !showQuickActions);
   }
 
-  if (liveRecordingState && liveRecordingState.ok) {
-    state.recordingStatus = liveRecordingState.state;
+  const captureActive = sessionActive;
+  if (recordingLiveState && recordingLiveState.ok) {
+    state.recordingStatus = recordingLiveState.state;
     if (state.artifacts) {
-      state.artifacts.hasRecording = Boolean(liveRecordingState.hasData);
+      state.artifacts.hasRecording = Boolean(recordingLiveState.hasData);
+      if (recordingLiveState.hasData) {
+        state.artifacts.hasAnyArtifacts = true;
+      }
     }
   }
   setRecordingButtons(state);
@@ -1431,6 +1456,7 @@ async function handleFullPageScreenshot() {
       "Start a session first.",
       "error"
     );
+    showToast("Start a session", "error");
     return;
   }
   setStatus(
@@ -1454,6 +1480,7 @@ async function handleFullPageScreenshot() {
       message,
       "error"
     );
+    showToast("Full capture failed", "error");
     await refreshStatus();
     return;
   }
@@ -2061,6 +2088,7 @@ function routeAction(action) {
   }
   if (action.startsWith("mode:")) {
     const mode = action.split(":")[1];
+    void persistLastSelectedMode(mode);
     setMode(mode);
     return;
   }
@@ -2135,6 +2163,17 @@ function routeChange(action, el) {
     default:
       break;
   }
+}
+
+async function persistLastSelectedMode(mode) {
+  await chrome.storage.local.set({ lastSelectedMode: mode });
+}
+
+async function loadLastSelectedMode() {
+  const result = await chrome.storage.local.get({
+    lastSelectedMode: "screenshot",
+  });
+  return result.lastSelectedMode || "screenshot";
 }
 
 document.addEventListener("click", (event) => {
@@ -2270,16 +2309,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-assertJsZipAvailable();
-setMode(currentMode);
-loadRedactionSetting();
-loadAnnotationStyle();
-initCapabilities();
-refreshStatus();
-setInterval(refreshStatus, 1000);
-
-if (versionBadge) {
-  versionBadge.textContent = APP_VERSION;
+async function initPopup() {
+  assertJsZipAvailable();
+  const lastMode = await loadLastSelectedMode();
+  currentMode = lastMode;
+  setMode(currentMode);
+  await loadRedactionSetting();
+  await loadAnnotationStyle();
+  await initCapabilities();
+  await refreshStatus();
+  setInterval(refreshStatus, 1000);
+  if (versionBadge) {
+    versionBadge.textContent = APP_VERSION;
+  }
+  await loadRecordingDownloadData();
 }
 
-loadRecordingDownloadData();
+initPopup();
