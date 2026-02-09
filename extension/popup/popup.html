@@ -9,99 +9,73 @@
   <body>
     <div class="container">
       <header class="app-header">
-        <div class="brand-row">
-          <h1>Repro</h1>
-          <span id="versionBadge" class="badge">v0.1</span>
+        <div class="header-row">
+          <div class="app-title">Evidence</div>
+          <span id="session_pill" class="status-pill">Idle</span>
         </div>
-        <p class="subtitle">Capture evidence for bug reports.</p>
+        <div id="session_meta" class="meta-line">Shot • 0 req • 0 err</div>
         <p class="warning">
           Captures active tab only. Starts only when you press Start.
         </p>
       </header>
 
-      <section class="card">
-        <h2>Mode</h2>
-        <div class="radio-group">
-          <div class="radio-option">
-            <input
-              type="radio"
-              name="captureMode"
-              id="mode_screenshot"
-              value="screenshot"
-              checked
-            />
-            <label for="mode_screenshot" class="mode-label">
-              <span class="mode-icon" aria-hidden="true">&#128247;</span>
-              <span class="mode-text">Screenshot</span>
-            </label>
-          </div>
-          <div class="radio-option">
-            <input
-              type="radio"
-              name="captureMode"
-              id="mode_recording"
-              value="recording"
-            />
-            <label id="label_recording" for="mode_recording" class="mode-label">
-              <span class="mode-icon" aria-hidden="true">&#127909;</span>
-              <span class="mode-text">Recording</span>
-            </label>
-          </div>
-          <div class="radio-option">
-            <input
-              type="radio"
-              name="captureMode"
-              id="mode_network"
-              value="network_console"
-            />
-            <label id="label_network" for="mode_network" class="mode-label">
-              <span class="mode-icon" aria-hidden="true">&#128225;</span>
-              <span class="mode-text">Network + Console</span>
-            </label>
-          </div>
-        </div>
-        <div id="capability-messages" class="capability-messages">
-          <div id="recording-disabled-msg" class="capability-msg hidden">
-            Recording unavailable due to browser/enterprise policy. Use Screenshot or Network+Console.
-          </div>
-          <div id="network-disabled-msg" class="capability-msg hidden">
-            Network+Console blocked by enterprise policy.
-          </div>
-        </div>
+      <section class="segmented" id="mode_segment">
+        <input
+          type="radio"
+          name="captureMode"
+          id="mode_recording"
+          value="recording"
+        />
+        <label id="label_recording" for="mode_recording">Record</label>
+        <input
+          type="radio"
+          name="captureMode"
+          id="mode_network"
+          value="network_console"
+        />
+        <label id="label_network" for="mode_network">Net</label>
+        <input
+          type="radio"
+          name="captureMode"
+          id="mode_screenshot"
+          value="screenshot"
+          checked
+        />
+        <label for="mode_screenshot">Shot</label>
       </section>
+
+      <div id="capability-messages" class="capability-messages">
+        <div id="recording-disabled-msg" class="capability-msg hidden">
+          Recording unavailable due to browser/enterprise policy. Use Shot or Net.
+        </div>
+        <div id="network-disabled-msg" class="capability-msg hidden">
+          Net blocked by enterprise policy.
+        </div>
+      </div>
 
       <section class="card">
         <h2>Controls</h2>
         <div class="mode-controls" data-mode="screenshot">
-          <div class="button-row">
-            <button id="btn_take_screenshot" class="primary">Capture Screenshot</button>
-            <button id="btn_fullpage_screenshot_mode" class="secondary">
-              Full Page Screenshot
-            </button>
-          </div>
-          <p id="screenshotHint" class="hint">Downloads PNG directly.</p>
-          <p id="fullPageHint" class="hint">
-            Captures the entire page by scrolling and stitching.
+          <p id="screenshotHint" class="hint">
+            Use Snap or Full below to capture.
           </p>
         </div>
         <div class="mode-controls" data-mode="recording">
-          <div class="button-row">
+          <div class="button-row control-grid">
             <button id="btn_start_recording" class="primary">Start</button>
             <button id="btn_pause_recording" disabled>Pause</button>
             <button id="btn_resume_recording" disabled>Resume</button>
             <button id="btn_stop_recording" class="danger" disabled>Stop</button>
-            <button id="btn_open_recording_panel">Open Recording Panel</button>
+            <button id="btn_open_recording_panel" class="ghost">Panel</button>
           </div>
           <p id="controlsStatus" class="status-strip">-</p>
         </div>
         <div class="mode-controls" data-mode="network_console">
-          <div class="button-row">
+          <div class="button-row control-grid">
             <button id="btn_start_capture" class="primary">Start</button>
             <button id="btn_stop_capture" class="danger" disabled>Stop</button>
-          </div>
-          <div class="button-row">
             <button id="refreshTabBtn" class="secondary" disabled>
-              Refresh Tab
+              Refresh
             </button>
           </div>
           <p id="networkGuidance" class="hint is-hidden">
@@ -109,15 +83,23 @@
           </p>
           <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
         </div>
-        <div class="button-row is-hidden" id="session_capture_row">
-          <button id="btn_take_screenshot_inline" class="secondary" disabled>
-            Capture Screenshot
+      </section>
+
+      <section class="card">
+        <div class="action-row" id="quick_actions">
+          <button id="btn_take_screenshot" class="secondary">
+            &#128247; Snap
           </button>
-          <button id="btn_fullpage_screenshot" class="secondary" disabled>
-            Full Page Screenshot
+          <button id="btn_fullpage_screenshot_mode" class="secondary">
+            &#128470; Full
           </button>
-          <button id="btn_add_marker" class="secondary">Add Marker</button>
+          <button id="btn_add_marker" class="secondary">
+            &#128204; Mark
+          </button>
         </div>
+        <p id="fullPageHint" class="hint">
+          Captures the entire page by scrolling and stitching.
+        </p>
       </section>
 
       <section class="card">
@@ -217,18 +199,21 @@
         </div>
         <div class="button-row" id="download_controls">
           <button id="btn_download_zip" class="primary">
-            Download Evidence ZIP
+            Export ZIP
           </button>
           <button id="btn_download_recording" class="primary is-hidden">
-            Download WebM
+            WebM
           </button>
           <button id="btn_reset_session">Reset Session</button>
         </div>
         <p id="recordingDownloadHint" class="hint is-hidden">
           WebM includes video only. Use Evidence ZIP for logs + screenshots.
         </p>
+        <p id="exportHint" class="hint is-hidden">Stop to export.</p>
         <p id="downloadStatus" class="status">Ready.</p>
       </section>
+
+      <div id="toast" class="toast hidden">Saved</div>
     </div>
 
     <script src="../lib/jszip.min.js"></script>

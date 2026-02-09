@@ -22,40 +22,44 @@ body {
     Helvetica, Arial;
   background: var(--panel-alt);
   color: var(--text);
+  max-height: 560px;
 }
 
 .container {
   width: 360px;
   max-width: 100%;
   padding: 16px;
+  max-height: 560px;
+  overflow-y: auto;
 }
 
 header {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
-.app-header .brand-row {
+.header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-h1 {
-  font-size: 16px;
-  margin: 0;
+.app-title {
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.badge {
+.status-pill {
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: #e2e8f0;
+  border: 1px solid var(--border);
+  background: #f1f5f9;
   color: #334155;
 }
 
-.subtitle {
-  margin: 4px 0 0;
+.meta-line {
+  margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -102,6 +106,11 @@ h2 {
 
 .chevron {
   font-size: 14px;
+  transition: transform 0.15s ease;
+}
+
+.section-toggle.open .chevron {
+  transform: rotate(90deg);
 }
 
 .status-body.collapsed {
@@ -112,56 +121,43 @@ h2 {
   display: none;
 }
 
-.radio-group {
+.segmented {
   display: grid;
-  gap: 8px;
-  font-size: 12px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 6px;
+  margin-bottom: 12px;
 }
 
-.radio-option {
-  position: relative;
-  display: block;
-}
-
-.radio-option input[type="radio"] {
+.segmented input[type="radio"] {
   position: absolute;
   opacity: 0;
+  pointer-events: none;
 }
 
-.mode-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--panel);
+.segmented label {
+  text-align: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #0f172a;
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
 }
 
-.mode-label:hover {
-  border-color: rgba(37, 99, 235, 0.4);
-  background: #f1f5ff;
+.segmented input[type="radio"]:checked + label {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
 }
 
-.mode-icon {
-  font-size: 14px;
-}
-
-input[type="radio"]:checked + .mode-label {
-  border-color: rgba(37, 99, 235, 0.5);
-  background: #eef2ff;
-}
-
-input[type="radio"]:focus-visible + .mode-label {
+.segmented input[type="radio"]:focus-visible + label {
   outline: 2px solid rgba(37, 99, 235, 0.5);
   outline-offset: 2px;
-}
-
-input[type="radio"]:disabled + .mode-label {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .capability-messages {
@@ -192,6 +188,24 @@ input[type="radio"]:disabled + .mode-label {
   margin-top: 6px;
 }
 
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 340px) {
+  .action-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .annotation-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -214,6 +228,29 @@ input[type="radio"]:disabled + .mode-label {
   background: #fff;
 }
 
+.toast {
+  position: sticky;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 5;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 #download_controls .primary {
   flex: 1 1 100%;
 }
@@ -224,13 +261,13 @@ input[type="radio"]:disabled + .mode-label {
 
 button {
   font-size: 12px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid #cbd5f5;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
   background: #f8fafc;
   color: #1f2937;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
 }
 
 button:focus-visible {
@@ -254,6 +291,16 @@ button.danger {
   background: #ffffff;
   border-color: rgba(220, 38, 38, 0.4);
   color: var(--danger);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 button:disabled {

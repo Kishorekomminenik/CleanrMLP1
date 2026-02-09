@@ -17,8 +17,6 @@ const buttons = {
   networkStart: document.getElementById("btn_start_capture"),
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
-  screenshotInline: document.getElementById("btn_take_screenshot_inline"),
-  fullPageScreenshot: document.getElementById("btn_fullpage_screenshot"),
   fullPageScreenshotMode: document.getElementById("btn_fullpage_screenshot_mode"),
   addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
@@ -46,13 +44,14 @@ const networkGuidance = document.getElementById("networkGuidance");
 const controlsStatus = document.getElementById("controlsStatus");
 const networkStatusStrip = document.getElementById("networkStatusStrip");
 const versionBadge = document.getElementById("versionBadge");
+const sessionPill = document.getElementById("session_pill");
+const sessionMeta = document.getElementById("session_meta");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const recordingRadio = document.getElementById("mode_recording");
 const recordingLabel = document.getElementById("label_recording");
 const networkRadio = document.getElementById("mode_network");
 const networkLabel = document.getElementById("label_network");
-const sessionCaptureRow = document.getElementById("session_capture_row");
 const annotationToggle = document.getElementById("annotation_toggle");
 const annotationChevron = document.getElementById("annotation_chevron");
 const annotationBody = document.getElementById("annotation_body");
@@ -61,6 +60,9 @@ const annotationFontSize = document.getElementById("annotationFontSize");
 const annotationFontWeight = document.getElementById("annotationFontWeight");
 const annotationFontColor = document.getElementById("annotationFontColor");
 const annotationFontOpacity = document.getElementById("annotationFontOpacity");
+const exportHint = document.getElementById("exportHint");
+const toastEl = document.getElementById("toast");
+const quickActions = document.getElementById("quick_actions");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -88,6 +90,7 @@ let recordingStopResolver = null;
 let recordingStopRequestedAt = null;
 let recordingDurationMsSnapshot = null;
 let annotationCollapsed = true;
+let toastTimer = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -133,6 +136,25 @@ function setStatus(element, message, type = "default") {
     element.classList.add("status--error");
   } else if (type === "success") {
     element.classList.add("status--success");
+  }
+}
+
+function showToast(message, type = "info") {
+  if (!toastEl) {
+    return;
+  }
+  toastEl.textContent = message;
+  toastEl.classList.add("show");
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+  }
+  toastTimer = setTimeout(() => {
+    toastEl.classList.remove("show");
+  }, 2200);
+  if (type === "error") {
+    toastEl.style.background = "#b91c1c";
+  } else {
+    toastEl.style.background = "#0f172a";
   }
 }
 
@@ -1145,7 +1167,6 @@ function updateStatusUI(state) {
       ? recordingLiveState.state
       : null;
   const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
-  const sessionMode = state.session ? state.session.mode : null;
   const sessionActive =
     sessionState === "capturing" ||
     sessionState === "paused" ||
@@ -1154,7 +1175,12 @@ function updateStatusUI(state) {
     sessionMode === "recording" || sessionMode === "network_console";
   const allowMarkers = sessionActive && markerModeAllowed;
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
-  const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
+  const modeLabelMap = {
+    recording: "Record",
+    network_console: "Net",
+    screenshot: "Shot",
+  };
+  const modeLabel = sessionMode ? modeLabelMap[sessionMode] || sessionMode : "-";
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
 
@@ -1168,6 +1194,36 @@ function updateStatusUI(state) {
   const logCount = counts ? counts.console_entries : 0;
   const errorCount = counts ? counts.errors : 0;
   statusElements.counts.textContent = `${requestCount} requests, ${logCount} logs, ${errorCount} errors`;
+  if (sessionMeta) {
+    const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
+    sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
+  }
+  if (sessionPill) {
+    let pillText = "Idle";
+    if (sessionState === "capturing" || sessionState === "recording") {
+      pillText = "Live";
+    } else if (sessionState === "paused") {
+      pillText = "Paused";
+    } else if (state.artifacts && state.artifacts.hasAnyArtifacts) {
+      pillText = "Ready";
+    }
+    sessionPill.textContent = pillText;
+  }
+  if (sessionMeta) {
+    const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
+    sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
+  }
+  if (sessionPill) {
+    let pillText = "Idle";
+    if (sessionState === "capturing" || sessionState === "recording") {
+      pillText = "Live";
+    } else if (sessionState === "paused") {
+      pillText = "Paused";
+    } else if (state.artifacts && state.artifacts.hasAnyArtifacts) {
+      pillText = "Ready";
+    }
+    sessionPill.textContent = pillText;
+  }
 
   if (networkTip) {
     let showTip = false;
@@ -1204,20 +1260,19 @@ function updateStatusUI(state) {
     buttons.networkRefresh.disabled =
       currentMode !== "network_console" || !networkAvailable || !hasActiveTab;
   }
-  if (buttons.screenshotInline) {
-    buttons.screenshotInline.disabled = !allowScreenshots;
-  }
-  if (buttons.fullPageScreenshot) {
-    buttons.fullPageScreenshot.disabled = !allowScreenshots;
+  if (buttons.screenshot) {
+    buttons.screenshot.disabled = !allowScreenshots;
   }
   if (buttons.fullPageScreenshotMode) {
     buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
   }
   if (buttons.addMarker) {
     buttons.addMarker.disabled = !allowMarkers;
+    buttons.addMarker.classList.toggle("is-hidden", currentMode === "screenshot");
   }
-  if (sessionCaptureRow) {
-    sessionCaptureRow.classList.toggle("is-hidden", currentMode === "screenshot");
+  if (quickActions) {
+    const showQuickActions = currentMode === "screenshot" || sessionActive;
+    quickActions.classList.toggle("is-hidden", !showQuickActions);
   }
 
   if (liveRecordingState && liveRecordingState.ok) {
@@ -1253,6 +1308,9 @@ function updateStatusUI(state) {
     } else {
       buttons.download.disabled = captureActive;
     }
+  }
+  if (exportHint) {
+    exportHint.classList.toggle("is-hidden", !captureActive);
   }
   if (buttons.downloadRecording) {
     const hasRecording = state.artifacts ? state.artifacts.hasRecording : false;
@@ -1352,11 +1410,8 @@ async function handleScreenshot() {
     await chrome.tabs.create({
       url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
     });
-    setStatus(
-      statusElements.message,
-      "Screenshot saved to evidence pack.",
-      "success"
-    );
+    setStatus(statusElements.message, "Saved.", "success");
+    showToast("Saved");
   } catch (error) {
     setStatus(
       statusElements.message,
@@ -1412,6 +1467,7 @@ async function handleFullPageScreenshot() {
     return;
   }
   setStatus(statusElements.message, "Full page screenshot captured.", "success");
+  showToast("Full captured");
   await refreshStatus();
 }
 
@@ -1870,7 +1926,8 @@ async function handleDownload() {
       }
     }
 
-    setStatus(statusElements.download, "Download started.", "success");
+    setStatus(statusElements.download, "Exported.", "success");
+    showToast("Exported");
   } catch (error) {
     hadError = true;
     setStatus(
@@ -1926,7 +1983,8 @@ async function handleRecordingDownload() {
         }
       );
     });
-    setStatus(statusElements.download, "Download started.", "success");
+    setStatus(statusElements.download, "Saved.", "success");
+    showToast("Saved");
   } catch (error) {
     setStatus(
       statusElements.download,
@@ -1952,6 +2010,7 @@ async function handleAddMarker() {
     return;
   }
   setStatus(statusElements.message, "Marker added.", "success");
+  showToast("Marked");
   await refreshStatus();
 }
 
@@ -2048,12 +2107,6 @@ async function initCapabilities() {
 }
 
 buttons.screenshot.addEventListener("click", handleScreenshot);
-if (buttons.screenshotInline) {
-  buttons.screenshotInline.addEventListener("click", handleScreenshot);
-}
-if (buttons.fullPageScreenshot) {
-  buttons.fullPageScreenshot.addEventListener("click", handleFullPageScreenshot);
-}
 if (buttons.fullPageScreenshotMode) {
   buttons.fullPageScreenshotMode.addEventListener(
     "click",
@@ -2143,6 +2196,7 @@ if (annotationToggle && annotationBody && annotationChevron) {
     annotationCollapsed = !annotationCollapsed;
     annotationBody.classList.toggle("collapsed", annotationCollapsed);
     annotationChevron.textContent = annotationCollapsed ? "▸" : "▾";
+    annotationToggle.classList.toggle("open", !annotationCollapsed);
   });
 }
 redactionToggle.addEventListener("change", async (event) => {
