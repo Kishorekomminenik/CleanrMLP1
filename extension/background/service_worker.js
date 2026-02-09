@@ -448,6 +448,24 @@ function getArtifactsSnapshot() {
   };
 }
 
+function hasExportableArtifacts() {
+  const screenshotCount =
+    session && Array.isArray(session.screenshots) ? session.screenshots.length : 0;
+  const markerCount =
+    session && Array.isArray(session.markers) ? session.markers.length : 0;
+  const hasRecording = Boolean(state.recording.dataUrl) || state.recording.hasData;
+  const hasNetwork = Object.keys(state.network.requests).length > 0;
+  const hasConsole = state.console.logs.length > 0;
+  const hasScreenshot = Boolean(state.screenshot.dataUrl) || screenshotCount > 0;
+  return (
+    hasRecording ||
+    hasNetwork ||
+    hasConsole ||
+    hasScreenshot ||
+    markerCount > 0
+  );
+}
+
 function getStatusSnapshot() {
   updateSessionCounts();
   const artifacts = getArtifactsSnapshot();
@@ -611,7 +629,34 @@ async function buildEvidenceExportData(context) {
     ...meta,
     dataUrl: screenshotEntries[index] ? screenshotEntries[index].dataUrl : null,
   }));
-  const sessionExport = buildSessionExport();
+  let sessionExport = buildSessionExport();
+  if (!sessionExport && hasExportableArtifacts()) {
+    const tab = await getActiveTab();
+    const createdAt =
+      state.recording.capturedAt || state.screenshot.capturedAt || nowIso();
+    sessionExport = {
+      session_id: null,
+      created_at: createdAt,
+      ended_at: nowIso(),
+      mode: state.recording.hasData
+        ? "recording"
+        : Object.keys(state.network.requests).length > 0
+          ? "network_console"
+          : "screenshot",
+      state: "stopped",
+      active_tab: {
+        tab_id: tab && tab.id ? tab.id : null,
+        url: tab && tab.url ? tab.url : "",
+        title: tab && tab.title ? tab.title : "",
+      },
+      counts: {
+        network_requests: Object.keys(state.network.requests).length,
+        console_entries: state.console.logs.length,
+        errors: state.console.logs.filter((log) => log.level === "error").length,
+      },
+      diagnostics: [],
+    };
+  }
   const pipelineConfig =
     globalThis.PipelineConfig && globalThis.PipelineConfig.DEFAULTS
       ? globalThis.PipelineConfig.DEFAULTS
@@ -2079,14 +2124,14 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "GET_EXPORT_DATA":
-      if (!session) {
+      if (!session && !hasExportableArtifacts()) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }
       result = { ok: true, data: await buildEvidenceExportData(normalizedMessage) };
       break;
     case "GET_EVIDENCE_EXPORT_DATA":
-      if (!session) {
+      if (!session && !hasExportableArtifacts()) {
         result = { ok: false, error: "No session to export yet." };
         break;
       }

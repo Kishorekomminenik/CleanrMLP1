@@ -109,7 +109,7 @@
           </p>
           <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
         </div>
-        <div class="button-row">
+        <div class="button-row" id="session_capture_row">
           <button id="btn_take_screenshot_inline" class="secondary" disabled>
             Capture Screenshot
           </button>
@@ -121,51 +121,56 @@
       </section>
 
       <section class="card">
-        <h2>Annotations</h2>
-        <div class="annotation-grid">
-          <label>
-            Font
-            <select id="annotationFontFamily">
-              <option value="Inter" selected>Inter</option>
-              <option value="Roboto">Roboto</option>
-              <option value="Arial">Arial</option>
-              <option value="Monospace">Monospace</option>
-            </select>
-          </label>
-          <label>
-            Size
-            <select id="annotationFontSize">
-              <option value="12">12</option>
-              <option value="14" selected>14</option>
-              <option value="16">16</option>
-              <option value="18">18</option>
-              <option value="24">24</option>
-            </select>
-          </label>
-          <label>
-            Weight
-            <select id="annotationFontWeight">
-              <option value="Regular" selected>Regular</option>
-              <option value="Bold">Bold</option>
-            </select>
-          </label>
-          <label>
-            Color
-            <select id="annotationFontColor">
-              <option value="Red" selected>Red</option>
-              <option value="Blue">Blue</option>
-              <option value="Yellow">Yellow</option>
-              <option value="Black">Black</option>
-              <option value="White">White</option>
-            </select>
-          </label>
-          <label>
-            Opacity
-            <select id="annotationFontOpacity">
-              <option value="1" selected>100%</option>
-              <option value="0.7">70%</option>
-            </select>
-          </label>
+        <button id="annotation_toggle" class="section-toggle" type="button">
+          <span>Annotations</span>
+          <span id="annotation_chevron" class="chevron">▸</span>
+        </button>
+        <div id="annotation_body" class="annotation-body collapsed">
+          <div class="annotation-grid">
+            <label>
+              Font
+              <select id="annotationFontFamily">
+                <option value="Inter" selected>Inter</option>
+                <option value="Roboto">Roboto</option>
+                <option value="Arial">Arial</option>
+                <option value="Monospace">Monospace</option>
+              </select>
+            </label>
+            <label>
+              Size
+              <select id="annotationFontSize">
+                <option value="12">12</option>
+                <option value="14" selected>14</option>
+                <option value="16">16</option>
+                <option value="18">18</option>
+                <option value="24">24</option>
+              </select>
+            </label>
+            <label>
+              Weight
+              <select id="annotationFontWeight">
+                <option value="Regular" selected>Regular</option>
+                <option value="Bold">Bold</option>
+              </select>
+            </label>
+            <label>
+              Color
+              <select id="annotationFontColor">
+                <option value="Red" selected>Red</option>
+                <option value="Blue">Blue</option>
+                <option value="Yellow">Yellow</option>
+                <option value="Black">Black</option>
+                <option value="White">White</option>
+              </select>
+            </label>
+            <label>
+              Opacity
+              <select id="annotationFontOpacity">
+                <option value="1" selected>100%</option>
+                <option value="0.7">70%</option>
+              </select>
+            </label>
+          </div>
         </div>
       </section>
 

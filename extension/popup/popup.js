@@ -52,6 +52,10 @@ const recordingRadio = document.getElementById("mode_recording");
 const recordingLabel = document.getElementById("label_recording");
 const networkRadio = document.getElementById("mode_network");
 const networkLabel = document.getElementById("label_network");
+const sessionCaptureRow = document.getElementById("session_capture_row");
+const annotationToggle = document.getElementById("annotation_toggle");
+const annotationChevron = document.getElementById("annotation_chevron");
+const annotationBody = document.getElementById("annotation_body");
 const annotationFontFamily = document.getElementById("annotationFontFamily");
 const annotationFontSize = document.getElementById("annotationFontSize");
 const annotationFontWeight = document.getElementById("annotationFontWeight");
@@ -83,6 +87,7 @@ let recordingStopPromise = null;
 let recordingStopResolver = null;
 let recordingStopRequestedAt = null;
 let recordingDurationMsSnapshot = null;
+let annotationCollapsed = true;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -1146,6 +1151,7 @@ function updateStatusUI(state) {
     sessionState === "recording" ||
     sessionState === "stopping";
   const allowMarkers = Boolean(state.session) && captureActive;
+  const allowScreenshots = currentMode === "screenshot" ? true : allowMarkers;
   const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
@@ -1197,16 +1203,19 @@ function updateStatusUI(state) {
       currentMode !== "network_console" || !networkAvailable || !hasActiveTab;
   }
   if (buttons.screenshotInline) {
-    buttons.screenshotInline.disabled = !allowMarkers;
+    buttons.screenshotInline.disabled = !allowScreenshots;
   }
   if (buttons.fullPageScreenshot) {
-    buttons.fullPageScreenshot.disabled = !allowMarkers;
+    buttons.fullPageScreenshot.disabled = !allowScreenshots;
   }
   if (buttons.fullPageScreenshotMode) {
-    buttons.fullPageScreenshotMode.disabled = !allowMarkers;
+    buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
   }
   if (buttons.addMarker) {
     buttons.addMarker.disabled = !allowMarkers;
+  }
+  if (sessionCaptureRow) {
+    sessionCaptureRow.classList.toggle("is-hidden", currentMode === "screenshot");
   }
 
   if (liveRecordingState && liveRecordingState.ok) {
@@ -1729,6 +1738,7 @@ async function handleDownload() {
             shot.fileName ||
             `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
           zip.file(`screenshots/${name}`, screenshotBlob);
+          await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
     } else if (data.screenshotDataUrl) {
@@ -1761,12 +1771,15 @@ async function handleDownload() {
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(
         () => reject(new Error("ZIP export timed out. Try again or reduce capture size.")),
-        10000
+        20000
       )
     );
     await Promise.race([
       (async () => {
-        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipBlob = await zip.generateAsync({
+          type: "blob",
+          compression: "STORE",
+        });
         const url = URL.createObjectURL(zipBlob);
         const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
         try {
@@ -2108,6 +2121,13 @@ statusToggle.addEventListener("click", () => {
   statusChevron.textContent = collapsed ? "▸" : "▾";
   statusUserToggled = true;
 });
+if (annotationToggle && annotationBody && annotationChevron) {
+  annotationToggle.addEventListener("click", () => {
+    annotationCollapsed = !annotationCollapsed;
+    annotationBody.classList.toggle("collapsed", annotationCollapsed);
+    annotationChevron.textContent = annotationCollapsed ? "▸" : "▾";
+  });
+}
 redactionToggle.addEventListener("change", async (event) => {
   const enabled = event.target.checked;
   await chrome.storage.local.set({ redactionEnabled: enabled });

@@ -108,6 +108,10 @@ h2 {
   display: none;
 }
 
+.annotation-body.collapsed {
+  display: none;
+}
+
 .radio-group {
   display: grid;
   gap: 8px;
