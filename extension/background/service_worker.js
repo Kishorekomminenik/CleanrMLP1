@@ -969,8 +969,13 @@ async function captureFullPageScreenshot(requestedTabId) {
     error.code = "RESTRICTED_PAGE";
     throw error;
   }
-  if (!tab.url || !/^https?:/i.test(tab.url) || /\.pdf(\?|#|$)/i.test(tab.url)) {
-    const error = new Error("Not supported on this page.");
+  const isPdf = /\.pdf(\?|#|$)/i.test(tab.url || "");
+  if (!tab.url || !/^https?:/i.test(tab.url) || isPdf) {
+    const error = new Error(
+      isPdf
+        ? "Full capture isn’t supported on PDFs. Open a regular website tab and try again."
+        : "Not supported on this page."
+    );
     error.code = "RESTRICTED_PAGE";
     throw error;
   }

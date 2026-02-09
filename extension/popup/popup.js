@@ -1453,8 +1453,10 @@ async function handleFullPageScreenshot() {
       return;
     }
     if (!/^https?:\/\//i.test(tab.url) || /\.pdf(\?|#|$)/i.test(tab.url)) {
-      const message =
-        "Full capture isn’t supported on this page. Open a regular website tab and try again.";
+      const isPdf = /\.pdf(\?|#|$)/i.test(tab.url);
+      const message = isPdf
+        ? "Full capture isn’t supported on PDFs. Open a regular website tab and try again."
+        : "Full capture isn’t supported on this page. Open a regular website tab and try again.";
       setStatus(statusElements.message, message, "error");
       showToast(message, "error");
       return;
@@ -1501,6 +1503,7 @@ async function handleFullPageScreenshot() {
     let message = "Full capture failed. Try again, or use Snap.";
     if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
       message =
+        errorInfo.message ||
         "Full capture isn’t supported on this page. Open a regular website tab and try again.";
     } else if (code === "PAGE_TOO_LARGE") {
       message =
