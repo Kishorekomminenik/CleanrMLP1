@@ -1443,6 +1443,7 @@ async function handleScreenshot() {
 }
 
 async function handleFullPageScreenshot() {
+  console.log("[FULL] start");
   const statusResponse = await send(MSG.GET_STATUS);
   const sessionState =
     statusResponse && statusResponse.state && statusResponse.state.session
@@ -1470,21 +1471,22 @@ async function handleFullPageScreenshot() {
   );
   const response = await send(MSG.CAPTURE_FULLPAGE);
   if (!response.ok) {
-    const errorText = response.error || "";
-    let message = "Screenshot capture failed. Try again, or refresh the tab and retry.";
-    if (/restricted|not supported|Capture not supported/i.test(errorText)) {
+    const errorInfo = response.error || {};
+    const code = errorInfo.code || "UNKNOWN";
+    let message = "Full capture failed. Try again, or use Snap.";
+    if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
       message =
-        "Full-page capture isn’t available on this page (restricted URL). Open a regular webpage and try again.";
-    } else if (/too tall|maximum height|exceeds/i.test(errorText)) {
+        "Full capture isn’t supported on this page. Open a regular website tab and try again.";
+    } else if (code === "PAGE_TOO_LARGE") {
       message =
-        "This page is too tall to capture in one image. Try a shorter page or capture multiple viewport screenshots.";
+        "This page is large. Full capture may take a moment.";
+    } else if (code === "INJECT_FAILED" || code === "PLAN_FAILED") {
+      message = "Full capture failed. Try again, or use Snap.";
+    } else if (errorInfo.message && typeof errorInfo.message === "string") {
+      message = errorInfo.message;
     }
-    setStatus(
-      statusElements.message,
-      message,
-      "error"
-    );
-    showToast("Full capture failed", "error");
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
     await refreshStatus();
     return;
   }
@@ -2120,12 +2122,18 @@ async function handleOpenRecordingPanel() {
   await refreshStatus();
 }
 
-function routeAction(action) {
+function routeAction(action, el) {
   if (!action) {
     return;
   }
   if (CLICK_DEBUG) {
     console.log("[UI] action:", action);
+  }
+  if (action === "screenshot:full") {
+    console.log("[UI] screenshot:full click", {
+      id: el && el.id ? el.id : null,
+      action: el && el.dataset ? el.dataset.action : action,
+    });
   }
   if (action.startsWith("mode:")) {
     const mode = action.split(":")[1];
@@ -2234,7 +2242,7 @@ document.addEventListener("click", (event) => {
   if (actionEl.disabled) {
     return;
   }
-  routeAction(actionEl.dataset.action);
+  routeAction(actionEl.dataset.action, actionEl);
 });
 
 document.addEventListener("change", (event) => {

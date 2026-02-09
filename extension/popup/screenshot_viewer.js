@@ -16,6 +16,7 @@ const appName = manifest && manifest.name ? manifest.name : "Repro";
 document.title = `${appName} — ${APP_TAGLINE}`;
 
 const baseCanvas = document.getElementById("baseCanvas");
+const bootErrorEl = document.getElementById("editor_boot_error");
 const drawCanvas = document.getElementById("drawCanvas");
 const textLayer = document.getElementById("textLayer");
 const canvasWrap = document.getElementById("canvasWrap");
@@ -935,11 +936,23 @@ window.addEventListener("resize", () => {
   updateScale();
 });
 
+function showBootError(message, error) {
+  if (bootErrorEl) {
+    bootErrorEl.hidden = false;
+    bootErrorEl.textContent = message;
+  }
+  console.error("[EDITOR] bootstrap failed", error);
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
-  setTool(currentTool);
-  setEditorEnabled(false);
-  await loadAnnotationSettings();
-  loadScreenshot();
+  try {
+    setTool(currentTool);
+    setEditorEnabled(false);
+    await loadAnnotationSettings();
+    loadScreenshot();
+  } catch (error) {
+    showBootError("Editor failed to load (script error). Check console.", error);
+  }
 });
 
 document.addEventListener("keydown", () => {

@@ -77,13 +77,15 @@
 
       sendResponse({
         ok: true,
-        viewportW,
-        viewportH,
-        pageW,
-        pageH,
-        devicePixelRatio: dpr,
-        scrollY0: originalScrollY,
-        steps,
+        plan: {
+          viewportW,
+          viewportH,
+          pageW,
+          pageH,
+          devicePixelRatio: dpr,
+          scrollY0: originalScrollY,
+          steps,
+        },
       });
       return false;
     }

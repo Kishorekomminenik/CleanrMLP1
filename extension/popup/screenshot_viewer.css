@@ -90,6 +90,16 @@ body {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
 }
 
+.boot-error {
+  margin: 8px 16px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
 .toolbar-group {
   display: flex;
   align-items: center;
