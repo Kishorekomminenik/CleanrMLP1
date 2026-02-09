@@ -1,55 +1,71 @@
+let CAPTURE_LOCK = false;
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function captureViewport() {
-  const response = await chrome.runtime.sendMessage({ type: "FP_CAPTURE_VIEWPORT" });
-  if (typeof response === "string") {
-    return response;
+async function captureViewportThrottled() {
+  if (CAPTURE_LOCK) {
+    await sleep(800);
   }
-  if (response && response.dataUrl) {
-    return response.dataUrl;
+
+  CAPTURE_LOCK = true;
+  try {
+    const dataUrl = await chrome.runtime.sendMessage({ type: "FP_CAPTURE_VIEWPORT" });
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+      throw new Error("Invalid viewport capture result");
+    }
+    return dataUrl;
+  } finally {
+    await sleep(700);
+    CAPTURE_LOCK = false;
   }
-  throw new Error(response && response.error ? response.error : "CAPTURE_DENIED");
 }
 
-async function captureAll() {
-  const height = document.documentElement.scrollHeight;
-  const width = document.documentElement.clientWidth;
-  const vh = window.innerHeight;
-  const dpr = window.devicePixelRatio || 1;
+function getMetrics() {
+  const doc = document.documentElement;
+  const body = document.body;
+  return {
+    scrollHeight: Math.max(doc.scrollHeight, body?.scrollHeight || 0),
+    viewportH: window.innerHeight,
+    width: Math.max(doc.clientWidth, doc.scrollWidth, body?.scrollWidth || 0),
+  };
+}
+
+async function captureAllFrames() {
+  const { scrollHeight, viewportH, width } = getMetrics();
   const frames = [];
   const originalY = window.scrollY;
 
-  if (!height || !width || !vh) {
-    return { ok: false, code: "PLAN_FAILED", error: "Unable to read page size." };
-  }
+  for (let y = 0; y < scrollHeight; y += viewportH) {
+    window.scrollTo(0, y);
+    await sleep(400);
 
-  try {
-    for (let y = 0; y < height; y += vh) {
-      window.scrollTo(0, y);
-      await sleep(120);
-      frames.push(await captureViewport());
+    try {
+      const frame = await captureViewportThrottled();
+      frames.push(frame);
+    } catch (e) {
+      console.warn("Viewport capture retry", e);
+      await sleep(1000);
+      const retry = await captureViewportThrottled();
+      frames.push(retry);
     }
-  } catch (error) {
-    return {
-      ok: false,
-      code: "CAPTURE_DENIED",
-      error: error && error.message ? error.message : String(error),
-    };
   }
 
   window.scrollTo(0, originalY);
-  return { ok: true, frames, width, totalHeight: height, devicePixelRatio: dpr };
+
+  return {
+    frames,
+    width: Math.min(width, window.innerWidth),
+    totalHeight: frames.length * viewportH,
+  };
 }
 
 chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
   if (msg?.type === "FP_CAPTURE_ALL") {
-    captureAll()
+    captureAllFrames()
       .then(sendResponse)
-      .catch((e) =>
-        sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
-      );
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
     return true;
   }
   return false;
