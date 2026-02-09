@@ -954,9 +954,13 @@ async function captureFullPageScreenshot() {
     session && (session.state === "capturing" || session.state === "paused");
   const triggerTimestampIso = nowIso();
   const triggerTms = computeSessionOffsetMs(triggerTimestampIso);
-  const tabId = sessionActive && session.active_tab ? session.active_tab.tab_id : null;
-  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+  const activeTabId = sessionActive && session.active_tab ? session.active_tab.tab_id : null;
+  const tab = activeTabId ? await chrome.tabs.get(activeTabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
+  const tabId = tab && tab.id ? tab.id : null;
+  if (!tabId) {
+    throw new Error("No active tab available.");
+  }
   if (!chrome.scripting || !chrome.scripting.executeScript) {
     throw new Error("Scripting API unavailable for full page capture.");
   }

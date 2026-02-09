@@ -1,5 +1,5 @@
 export const FONT_OPTIONS = ["Inter", "Roboto", "Arial", "Monospace"];
-export const SIZE_OPTIONS = [10, 12, 14, 16, 18, 20, 24];
+export const SIZE_OPTIONS = [10, 12, 14, 16, 18, 24, 32];
 export const WEIGHT_OPTIONS = ["Regular", "Medium", "Bold"];
 export const COLOR_OPTIONS = ["#FF0000", "#2563EB", "#F59E0B", "#111827", "#FFFFFF"];
 export const OPACITY_OPTIONS = [1, 0.7];
