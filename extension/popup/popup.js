@@ -1797,6 +1797,24 @@ async function handleDownload() {
 
     const data = exportResponse.data;
     const exportTimestamp = data.exportTimestamp || requestedExportTimestamp;
+    const estimatedJsonBytes = [
+      JSON.stringify(data.networkLogs || {}).length,
+      JSON.stringify(data.consoleLogs || {}).length,
+      JSON.stringify(data.session || {}).length,
+      JSON.stringify(data.environment || {}).length,
+      data.qaSessionLog ? JSON.stringify(data.qaSessionLog).length : 0,
+      data.qaSummaryText ? data.qaSummaryText.length : 0,
+    ].reduce((total, size) => total + size, 0);
+    const MAX_JSON_BYTES = 25 * 1024 * 1024;
+    if (estimatedJsonBytes > MAX_JSON_BYTES) {
+      setStatus(
+        statusElements.download,
+        "Export too large. Reduce capture size and try again.",
+        "error"
+      );
+      hadError = true;
+      return;
+    }
     let recordingExport = null;
     let recordingBlob = null;
     let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
@@ -1864,37 +1882,56 @@ async function handleDownload() {
     zip.file("session.json", JSON.stringify(data.session || {}, null, 2));
     zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error("ZIP export timed out. Try again or reduce capture size.")),
-        30000
-      )
-    );
-    await Promise.race([
-      (async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        const zipBlob = await zip.generateAsync({
-          type: "blob",
-          compression: "STORE",
-        });
-        const url = URL.createObjectURL(zipBlob);
-        const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-        try {
-          await new Promise((resolve, reject) => {
-            chrome.downloads.download({ url, filename }, (downloadId) => {
-              if (chrome.runtime.lastError) {
-                reject(new Error(chrome.runtime.lastError.message));
-                return;
-              }
-              resolve(downloadId);
+    let zipError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error("ZIP export timed out. Try again or reduce capture size.")
+              ),
+            30000
+          )
+        );
+        await Promise.race([
+          (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const zipBlob = await zip.generateAsync({
+              type: "blob",
+              compression: "STORE",
             });
-          });
-        } finally {
-          setTimeout(() => URL.revokeObjectURL(url), 2000);
+            const url = URL.createObjectURL(zipBlob);
+            const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+            try {
+              await new Promise((resolve, reject) => {
+                chrome.downloads.download({ url, filename }, (downloadId) => {
+                  if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                  }
+                  resolve(downloadId);
+                });
+              });
+            } finally {
+              setTimeout(() => URL.revokeObjectURL(url), 2000);
+            }
+          })(),
+          timeoutPromise,
+        ]);
+        zipError = null;
+        break;
+      } catch (error) {
+        zipError = error;
+        if (attempt < 2) {
+          setStatus(statusElements.download, "Retrying ZIP...", "default");
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
-      })(),
-      timeoutPromise,
-    ]);
+      }
+    }
+    if (zipError) {
+      throw zipError;
+    }
 
     if (recordingBlob) {
       await downloadBlob(recordingBlob, recordingFileName);
