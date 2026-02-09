@@ -1444,6 +1444,28 @@ async function handleScreenshot() {
 
 async function handleFullPageScreenshot() {
   console.log("[FULL] start");
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id || !tab.url) {
+      const message = "No active tab found.";
+      setStatus(statusElements.message, message, "error");
+      showToast(message, "error");
+      return;
+    }
+    if (!/^https?:\/\//i.test(tab.url) || /\.pdf(\?|#|$)/i.test(tab.url)) {
+      const message =
+        "Full capture isn’t supported on this page. Open a regular website tab and try again.";
+      setStatus(statusElements.message, message, "error");
+      showToast(message, "error");
+      return;
+    }
+  } catch (error) {
+    const message =
+      error && error.message ? error.message : "Unable to read active tab.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    return;
+  }
   const statusResponse = await send(MSG.GET_STATUS);
   const sessionState =
     statusResponse && statusResponse.state && statusResponse.state.session
@@ -1469,7 +1491,10 @@ async function handleFullPageScreenshot() {
     "Capturing full page… please don’t scroll.",
     "default"
   );
-  const response = await send(MSG.CAPTURE_FULLPAGE);
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const response = await send(MSG.CAPTURE_FULLPAGE, {
+    tabId: activeTab && activeTab.id ? activeTab.id : null,
+  });
   if (!response.ok) {
     const errorInfo = response.error || {};
     const code = errorInfo.code || "UNKNOWN";
@@ -1489,6 +1514,22 @@ async function handleFullPageScreenshot() {
     showToast(message, "error");
     await refreshStatus();
     return;
+  }
+  if (response.pngDataUrl && typeof response.pngDataUrl === "string") {
+    try {
+      const blob = await dataUrlToBlob(response.pngDataUrl);
+      const filename = `qa-screenshot-fullpage-${formatExportTimestamp(
+        new Date()
+      )}.png`;
+      await downloadBlob(blob, filename);
+    } catch (error) {
+      const message =
+        error && error.message ? error.message : "Download failed.";
+      setStatus(statusElements.message, message, "error");
+      showToast(message, "error");
+      await refreshStatus();
+      return;
+    }
   }
   setStatus(statusElements.message, "Full page screenshot captured.", "success");
   showToast("Full captured");

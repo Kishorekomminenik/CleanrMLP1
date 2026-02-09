@@ -221,6 +221,9 @@ function isRestrictedUrl(url) {
   if (!url) {
     return true;
   }
+  if (/\.pdf(\?|#|$)/i.test(url)) {
+    return true;
+  }
   if (
     url.startsWith("chrome://") ||
     url.startsWith("edge://") ||
@@ -949,19 +952,24 @@ async function captureScreenshot() {
   }
 }
 
-async function captureFullPageScreenshot() {
+async function captureFullPageScreenshot(requestedTabId) {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
   const triggerTimestampIso = nowIso();
   const triggerTms = computeSessionOffsetMs(triggerTimestampIso);
-  const activeTabId = sessionActive && session.active_tab ? session.active_tab.tab_id : null;
-  const tab = activeTabId ? await chrome.tabs.get(activeTabId) : await getActiveTab();
+  const activeTabId =
+    sessionActive && session.active_tab ? session.active_tab.tab_id : null;
+  const tab = requestedTabId
+    ? await chrome.tabs.get(requestedTabId)
+    : activeTabId
+      ? await chrome.tabs.get(activeTabId)
+      : await getActiveTab();
   if (!tab || !tab.id) {
     const error = new Error("No active tab available.");
     error.code = "RESTRICTED_PAGE";
     throw error;
   }
-  if (!tab.url || !/^https?:/i.test(tab.url)) {
+  if (!tab.url || !/^https?:/i.test(tab.url) || /\.pdf(\?|#|$)/i.test(tab.url)) {
     const error = new Error("Not supported on this page.");
     error.code = "RESTRICTED_PAGE";
     throw error;
@@ -1978,7 +1986,7 @@ async function handleMessage(message, sender) {
     }
     case "CAPTURE_FULLPAGE":
       try {
-        const dataUrl = await captureFullPageScreenshot();
+        const dataUrl = await captureFullPageScreenshot(normalizedMessage.tabId);
         result = { ok: true, pngDataUrl: dataUrl };
       } catch (error) {
         result = {
