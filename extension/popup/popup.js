@@ -1146,8 +1146,13 @@ function updateStatusUI(state) {
       : null;
   const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
   const sessionMode = state.session ? state.session.mode : null;
-  const sessionActive = sessionState === "capturing" || sessionState === "paused";
-  const allowMarkers = sessionActive && sessionMode !== "screenshot";
+  const sessionActive =
+    sessionState === "capturing" ||
+    sessionState === "paused" ||
+    sessionState === "recording";
+  const markerModeAllowed =
+    sessionMode === "recording" || sessionMode === "network_console";
+  const allowMarkers = sessionActive && markerModeAllowed;
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
   statusElements.mode.textContent = modeLabel;
@@ -1768,11 +1773,12 @@ async function handleDownload() {
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(
         () => reject(new Error("ZIP export timed out. Try again or reduce capture size.")),
-        20000
+        30000
       )
     );
     await Promise.race([
       (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
         const zipBlob = await zip.generateAsync({
           type: "blob",
           compression: "STORE",
