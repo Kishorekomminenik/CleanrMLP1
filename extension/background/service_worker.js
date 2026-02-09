@@ -434,6 +434,8 @@ function markSessionStopped() {
 function getArtifactsSnapshot() {
   const screenshotCount =
     session && Array.isArray(session.screenshots) ? session.screenshots.length : 0;
+  const markerCount =
+    session && Array.isArray(session.markers) ? session.markers.length : 0;
   return {
     hasScreenshot: Boolean(state.screenshot.dataUrl) || screenshotCount > 0,
     hasRecording: Boolean(state.recording.dataUrl) || Boolean(state.recording.hasData),
@@ -444,7 +446,8 @@ function getArtifactsSnapshot() {
       Boolean(state.recording.dataUrl) ||
       Boolean(state.recording.hasData) ||
       Object.keys(state.network.requests).length > 0 ||
-      state.console.logs.length > 0,
+      state.console.logs.length > 0 ||
+      markerCount > 0,
   };
 }
 
@@ -916,15 +919,10 @@ async function captureScreenshot() {
 }
 
 async function captureFullPageScreenshot() {
-  if (!session || (session.state !== "capturing" && session.state !== "paused")) {
-    throw new Error("Start a session to capture a full page screenshot.");
-  }
-  const tabId =
-    session && session.active_tab ? session.active_tab.tab_id : null;
-  if (!tabId) {
-    throw new Error("No active tab locked for this session.");
-  }
-  const tab = await chrome.tabs.get(tabId);
+  const sessionActive =
+    session && (session.state === "capturing" || session.state === "paused");
+  const tabId = sessionActive && session.active_tab ? session.active_tab.tab_id : null;
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
   if (!chrome.scripting || !chrome.scripting.executeScript) {
     throw new Error("Scripting API unavailable for full page capture.");
@@ -1018,18 +1016,20 @@ async function captureFullPageScreenshot() {
   const timestampIso = nowIso();
   state.screenshot.dataUrl = dataUrl;
   state.screenshot.capturedAt = timestampIso;
-  session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
-  const tMs = computeSessionOffsetMs(timestampIso);
-  const index = session.screenshots.length + 1;
-  session.screenshots.push({
-    index,
-    timestampIso,
-    t_ms: tMs,
-    blob,
-    dataUrl,
-    fullPage: true,
-    fileName: "qa-screenshot-fullpage.png",
-  });
+  if (session) {
+    session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
+    const tMs = computeSessionOffsetMs(timestampIso);
+    const index = session.screenshots.length + 1;
+    session.screenshots.push({
+      index,
+      timestampIso,
+      t_ms: tMs,
+      blob,
+      dataUrl,
+      fullPage: true,
+      fileName: "qa-screenshot-fullpage.png",
+    });
+  }
   clearStatusMessage();
   return dataUrl;
 }

@@ -1145,13 +1145,10 @@ function updateStatusUI(state) {
       ? recordingLiveState.state
       : null;
   const sessionState = liveRecordingState || (state.session ? state.session.state : "idle");
-  const captureActive =
-    sessionState === "capturing" ||
-    sessionState === "paused" ||
-    sessionState === "recording" ||
-    sessionState === "stopping";
-  const allowMarkers = Boolean(state.session) && captureActive;
-  const allowScreenshots = currentMode === "screenshot" ? true : allowMarkers;
+  const sessionMode = state.session ? state.session.mode : null;
+  const sessionActive = sessionState === "capturing" || sessionState === "paused";
+  const allowMarkers = sessionActive && sessionMode !== "screenshot";
+  const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabel = sessionMode ? sessionMode.replace("_", " + ") : "-";
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
@@ -1377,7 +1374,7 @@ async function handleFullPageScreenshot() {
     sessionState === "paused" ||
     recordingState === "recording" ||
     recordingState === "paused";
-  if (!captureActive) {
+  if (currentMode !== "screenshot" && !captureActive) {
     setStatus(
       statusElements.message,
       "Start a session first.",
