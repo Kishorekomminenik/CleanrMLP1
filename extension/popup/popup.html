@@ -15,7 +15,19 @@
             <img id="app_icon" class="app-icon" alt="" />
             <span id="app_title"></span>
           </div>
-          <span id="session_pill" class="status-pill">Idle</span>
+          <div class="header-actions">
+            <span id="session_pill" class="status-pill">Idle</span>
+            <button
+              id="help_button"
+              class="icon-button"
+              type="button"
+              data-action="help:open"
+              aria-label="Help"
+              title="Help"
+            >
+              ⓘ
+            </button>
+          </div>
         </div>
         <div id="session_meta" class="meta-line">Shot • 0 req • 0 err</div>
         <p class="warning">
@@ -239,6 +251,83 @@
       </section>
 
       <div id="toast" class="toast">Saved</div>
+    </div>
+
+    <div id="help_modal" class="help-modal hidden" aria-hidden="true">
+      <div class="help-backdrop" data-action="help:close"></div>
+      <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help_title">
+        <div class="help-header">
+          <div>
+            <h2 id="help_title">How Repro works</h2>
+            <p class="help-subtitle">Local-only QA evidence capture</p>
+          </div>
+          <button
+            id="help_close"
+            class="icon-button"
+            type="button"
+            data-action="help:close"
+            aria-label="Close help"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="help-section">
+          <h3>Choose a mode</h3>
+          <div class="help-lines">
+            <div class="help-line">
+              <span class="help-mode">Shot</span>
+              <span class="help-desc">Capture screenshots (Snap / Full)</span>
+            </div>
+            <div class="help-line">
+              <span class="help-mode">Record</span>
+              <span class="help-desc">Capture video with logs</span>
+            </div>
+            <div class="help-line">
+              <span class="help-mode">Net</span>
+              <span class="help-desc">Capture network and console only</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="help-section">
+          <h3>What gets captured</h3>
+          <ul>
+            <li>Nothing is captured until you press Start</li>
+            <li>Screenshots and Full Page are always manual</li>
+            <li>Markers add timestamps you can reference later</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h3>Export rules</h3>
+          <ul>
+            <li>ZIP is available only after Stop</li>
+            <li>WebM = video only</li>
+            <li>ZIP = logs, screenshots, markers (+ video if recorded)</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h3>Known limits</h3>
+          <ul>
+            <li>Full Page may not work on protected or streaming pages</li>
+            <li>Some pages block screenshots by browser design</li>
+            <li>All data stays local to your machine</li>
+          </ul>
+        </div>
+
+        <div class="help-footer">
+          <button
+            id="help_got_it"
+            class="primary"
+            type="button"
+            data-action="help:gotit"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
     </div>
 
     <script src="../lib/jszip.min.js"></script>

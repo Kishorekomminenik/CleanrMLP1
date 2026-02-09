@@ -19,6 +19,9 @@ const statusElements = {
 
 const appTitleEl = document.getElementById("app_title");
 const appIconEl = document.getElementById("app_icon");
+const helpButton = document.getElementById("help_button");
+const helpModal = document.getElementById("help_modal");
+const helpCloseButton = document.getElementById("help_close");
 
 const buttons = {
   screenshot: document.getElementById("btn_take_screenshot"),
@@ -96,6 +99,8 @@ let recordingStopRequestedAt = null;
 let recordingDurationMsSnapshot = null;
 let annotationCollapsed = true;
 let toastTimer = null;
+let helpIsOpen = false;
+let helpReturnFocusEl = null;
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -2186,6 +2191,15 @@ function routeAction(action, el) {
     return;
   }
   switch (action) {
+    case "help:open":
+      openHelp();
+      break;
+    case "help:close":
+      closeHelp();
+      break;
+    case "help:gotit":
+      closeHelp();
+      break;
     case "recording:start":
       handleRecordingStart();
       break;
@@ -2258,6 +2272,33 @@ function routeChange(action, el) {
   }
 }
 
+function openHelp() {
+  if (!helpModal) {
+    return;
+  }
+  helpReturnFocusEl = document.activeElement;
+  helpModal.classList.remove("hidden");
+  helpModal.setAttribute("aria-hidden", "false");
+  helpIsOpen = true;
+  if (helpCloseButton) {
+    helpCloseButton.focus();
+  }
+}
+
+function closeHelp() {
+  if (!helpModal) {
+    return;
+  }
+  helpModal.classList.add("hidden");
+  helpModal.setAttribute("aria-hidden", "true");
+  helpIsOpen = false;
+  if (helpReturnFocusEl && helpReturnFocusEl.focus) {
+    helpReturnFocusEl.focus();
+  } else if (helpButton) {
+    helpButton.focus();
+  }
+}
+
 async function persistLastSelectedMode(mode) {
   await chrome.storage.local.set({ lastSelectedMode: mode });
 }
@@ -2295,6 +2336,12 @@ document.addEventListener("change", (event) => {
     return;
   }
   routeChange(actionEl.dataset.action, actionEl);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && helpIsOpen) {
+    closeHelp();
+  }
 });
 
 async function handleResetSession() {
