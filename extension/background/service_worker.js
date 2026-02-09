@@ -965,16 +965,24 @@ async function captureFullPageScreenshot() {
     throw new Error("Scripting API unavailable for full page capture.");
   }
 
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content/fullpage_capture.js"],
-  });
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content/fullpage_capture.js"],
+    });
+  } catch (error) {
+    throw new Error("Capture not supported on this page.");
+  }
 
   const plan = await sendMessageToTabWithResponse(tabId, {
     type: "FP_GET_PLAN",
   });
   if (!plan.ok) {
-    throw new Error(plan.error || "Unable to prepare full page capture.");
+    const message = plan.error || "Unable to prepare full page capture.";
+    if (/receiving end does not exist|no tab to message|port closed/i.test(message)) {
+      throw new Error("Capture not supported on this page.");
+    }
+    throw new Error(message);
   }
   if (!plan.pageH || !plan.viewportH) {
     throw new Error("Unable to read page dimensions.");
@@ -1001,9 +1009,22 @@ async function captureFullPageScreenshot() {
         y: step.y,
       });
       await new Promise((resolve) => setTimeout(resolve, 240));
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-        format: "png",
-      });
+      let dataUrl;
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+          format: "png",
+        });
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        if (
+          /capture|denied|not allowed|not permitted|blocked|protected|permission/i.test(
+            message
+          )
+        ) {
+          throw new Error("Capture not supported on this page.");
+        }
+        throw new Error(message || "Full page capture failed.");
+      }
       const bitmap = await dataUrlToImageBitmap(dataUrl);
       captures.push({ bitmap, y: step.y });
     }

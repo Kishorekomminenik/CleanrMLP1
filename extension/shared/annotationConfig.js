@@ -13,10 +13,10 @@ export const DEFAULT_ANNOTATION_STYLE = {
 };
 
 const FONT_FAMILY_MAP = {
-  Inter: "Inter, system-ui, Arial",
-  Roboto: "Roboto, system-ui, Arial",
-  Arial: "Arial, Helvetica",
-  Monospace: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  Inter: "Inter, Roboto, Arial, sans-serif",
+  Roboto: "Roboto, Inter, Arial, sans-serif",
+  Arial: "Arial, sans-serif",
+  Monospace: "ui-monospace, Menlo, Monaco, Consolas, monospace",
 };
 
 const LEGACY_COLOR_MAP = {

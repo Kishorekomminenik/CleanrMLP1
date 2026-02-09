@@ -715,6 +715,13 @@ async function loadScreenshot() {
 }
 
 async function exportAnnotatedBlob() {
+  if (document.fonts && document.fonts.ready) {
+    try {
+      await document.fonts.ready;
+    } catch (error) {
+      // Continue with fallback fonts.
+    }
+  }
   const exportCanvas = document.createElement("canvas");
   exportCanvas.width = imageSize.width;
   exportCanvas.height = imageSize.height;
