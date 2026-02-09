@@ -20,28 +20,33 @@
       </header>
 
       <section class="segmented" id="mode_segment">
-        <input
-          type="radio"
-          name="captureMode"
+        <button
+          type="button"
           id="mode_recording"
-          value="recording"
-        />
-        <label id="label_recording" for="mode_recording">Record</label>
-        <input
-          type="radio"
-          name="captureMode"
+          class="seg-btn"
+          data-action="mode:recording"
+          data-mode="recording"
+        >
+          Record
+        </button>
+        <button
+          type="button"
           id="mode_network"
-          value="network_console"
-        />
-        <label id="label_network" for="mode_network">Net</label>
-        <input
-          type="radio"
-          name="captureMode"
+          class="seg-btn"
+          data-action="mode:network_console"
+          data-mode="network_console"
+        >
+          Net
+        </button>
+        <button
+          type="button"
           id="mode_screenshot"
-          value="screenshot"
-          checked
-        />
-        <label for="mode_screenshot">Shot</label>
+          class="seg-btn is-active"
+          data-action="mode:screenshot"
+          data-mode="screenshot"
+        >
+          Shot
+        </button>
       </section>
 
       <div id="capability-messages" class="capability-messages">
@@ -62,19 +67,33 @@
         </div>
         <div class="mode-controls" data-mode="recording">
           <div class="button-row control-grid">
-            <button id="btn_start_recording" class="primary">Start</button>
-            <button id="btn_pause_recording" disabled>Pause</button>
-            <button id="btn_resume_recording" disabled>Resume</button>
-            <button id="btn_stop_recording" class="danger" disabled>Stop</button>
-            <button id="btn_open_recording_panel" class="ghost">Panel</button>
+            <button id="btn_start_recording" class="primary" data-action="recording:start">
+              Start
+            </button>
+            <button id="btn_pause_recording" data-action="recording:pause" disabled>
+              Pause
+            </button>
+            <button id="btn_resume_recording" data-action="recording:resume" disabled>
+              Resume
+            </button>
+            <button id="btn_stop_recording" class="danger" data-action="recording:stop" disabled>
+              Stop
+            </button>
+            <button id="btn_open_recording_panel" class="ghost" data-action="recording:panel">
+              Panel
+            </button>
           </div>
           <p id="controlsStatus" class="status-strip">-</p>
         </div>
         <div class="mode-controls" data-mode="network_console">
           <div class="button-row control-grid">
-            <button id="btn_start_capture" class="primary">Start</button>
-            <button id="btn_stop_capture" class="danger" disabled>Stop</button>
-            <button id="refreshTabBtn" class="secondary" disabled>
+            <button id="btn_start_capture" class="primary" data-action="network:start">
+              Start
+            </button>
+            <button id="btn_stop_capture" class="danger" data-action="network:stop" disabled>
+              Stop
+            </button>
+            <button id="refreshTabBtn" class="secondary" data-action="network:refresh" disabled>
               Refresh
             </button>
           </div>
@@ -87,13 +106,17 @@
 
       <section class="card">
         <div class="action-row" id="quick_actions">
-          <button id="btn_take_screenshot" class="secondary">
+          <button id="btn_take_screenshot" class="secondary" data-action="screenshot:snap">
             &#128247; Snap
           </button>
-          <button id="btn_fullpage_screenshot_mode" class="secondary">
+          <button
+            id="btn_fullpage_screenshot_mode"
+            class="secondary"
+            data-action="screenshot:full"
+          >
             &#128470; Full
           </button>
-          <button id="btn_add_marker" class="secondary">
+          <button id="btn_add_marker" class="secondary" data-action="marker:add">
             &#128204; Mark
           </button>
         </div>
@@ -103,7 +126,13 @@
       </section>
 
       <section class="card">
-        <button id="annotation_toggle" class="section-toggle" type="button">
+        <button
+          id="annotation_toggle"
+          class="section-toggle"
+          type="button"
+          data-action="annotations:toggle"
+          data-section="annotations"
+        >
           <span>Annotations</span>
           <span id="annotation_chevron" class="chevron">▸</span>
         </button>
@@ -111,45 +140,27 @@
           <div class="annotation-grid">
             <label>
               Font
-              <select id="annotationFontFamily">
-                <option value="Inter" selected>Inter</option>
-                <option value="Roboto">Roboto</option>
-                <option value="Arial">Arial</option>
-                <option value="Monospace">Monospace</option>
+              <select id="annotationFontFamily" data-action="annotation:style">
               </select>
             </label>
             <label>
               Size
-              <select id="annotationFontSize">
-                <option value="12">12</option>
-                <option value="14" selected>14</option>
-                <option value="16">16</option>
-                <option value="18">18</option>
-                <option value="24">24</option>
+              <select id="annotationFontSize" data-action="annotation:style">
               </select>
             </label>
             <label>
               Weight
-              <select id="annotationFontWeight">
-                <option value="Regular" selected>Regular</option>
-                <option value="Bold">Bold</option>
+              <select id="annotationFontWeight" data-action="annotation:style">
               </select>
             </label>
             <label>
               Color
-              <select id="annotationFontColor">
-                <option value="Red" selected>Red</option>
-                <option value="Blue">Blue</option>
-                <option value="Yellow">Yellow</option>
-                <option value="Black">Black</option>
-                <option value="White">White</option>
+              <select id="annotationFontColor" data-action="annotation:style">
               </select>
             </label>
             <label>
               Opacity
-              <select id="annotationFontOpacity">
-                <option value="1" selected>100%</option>
-                <option value="0.7">70%</option>
+              <select id="annotationFontOpacity" data-action="annotation:style">
               </select>
             </label>
           </div>
@@ -157,7 +168,13 @@
       </section>
 
       <section class="card">
-        <button id="status_toggle" class="section-toggle" type="button">
+        <button
+          id="status_toggle"
+          class="section-toggle"
+          type="button"
+          data-action="status:toggle"
+          data-section="status"
+        >
           <span>Session Status</span>
           <span id="status_chevron" class="chevron">▸</span>
         </button>
@@ -193,18 +210,22 @@
         <div class="toggle-row">
           <span class="label">Redaction</span>
           <label class="toggle">
-            <input type="checkbox" id="redactionToggle" />
+            <input type="checkbox" id="redactionToggle" data-action="redaction:toggle" />
             <span id="redactionStatus">ON</span>
           </label>
         </div>
         <div class="button-row" id="download_controls">
-          <button id="btn_download_zip" class="primary">
+          <button id="btn_download_zip" class="primary" data-action="export:zip">
             Export ZIP
           </button>
-          <button id="btn_download_recording" class="primary is-hidden">
+          <button
+            id="btn_download_recording"
+            class="ghost is-hidden"
+            data-action="export:webm"
+          >
             WebM
           </button>
-          <button id="btn_reset_session">Reset Session</button>
+          <button id="btn_reset_session" data-action="session:reset">Reset</button>
         </div>
         <p id="recordingDownloadHint" class="hint is-hidden">
           WebM includes video only. Use Evidence ZIP for logs + screenshots.
@@ -213,11 +234,11 @@
         <p id="downloadStatus" class="status">Ready.</p>
       </section>
 
-      <div id="toast" class="toast hidden">Saved</div>
+      <div id="toast" class="toast">Saved</div>
     </div>
 
     <script src="../lib/jszip.min.js"></script>
     <script src="../utils/redact.js"></script>
-    <script src="./popup.js"></script>
+    <script type="module" src="./popup.js"></script>
   </body>
 </html>

@@ -80,12 +80,8 @@
           </div>
           <div class="control-group" data-controls="text">
             <label>
-              Text
+              Size
               <select id="textSize">
-                <option value="12">12</option>
-                <option value="16" selected>16</option>
-                <option value="20">20</option>
-                <option value="24">24</option>
               </select>
             </label>
           </div>
@@ -93,10 +89,6 @@
             <label>
               Font
               <select id="textFontFamily">
-                <option value="system-ui, Arial" selected>System</option>
-                <option value="Arial, Helvetica">Arial</option>
-                <option value="Georgia, serif">Georgia</option>
-                <option value="Courier New, monospace">Courier</option>
               </select>
             </label>
           </div>
@@ -104,35 +96,19 @@
             <label>
               Weight
               <select id="textWeight">
-                <option value="400" selected>400</option>
-                <option value="500">500</option>
-                <option value="700">700</option>
               </select>
             </label>
           </div>
           <div class="control-group" data-controls="text">
             <label>
               Color
-              <input id="textColor" type="color" value="#111827" />
+              <select id="textColor"></select>
             </label>
           </div>
           <div class="control-group" data-controls="text">
             <label>
               Opacity
-              <input
-                id="textOpacity"
-                type="range"
-                min="0.2"
-                max="1"
-                step="0.1"
-                value="1"
-              />
-            </label>
-          </div>
-          <div class="control-group" data-controls="text">
-            <label class="toggle">
-              <input id="textBold" type="checkbox" />
-              Bold
+              <select id="textOpacity"></select>
             </label>
           </div>
         </div>
@@ -177,6 +153,6 @@
       </div>
     </div>
 
-    <script src="screenshot_viewer.js"></script>
+    <script type="module" src="screenshot_viewer.js"></script>
   </body>
 </html>

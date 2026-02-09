@@ -1,3 +1,13 @@
+import {
+  COLOR_OPTIONS,
+  DEFAULT_ANNOTATION_STYLE,
+  FONT_OPTIONS,
+  OPACITY_OPTIONS,
+  SIZE_OPTIONS,
+  WEIGHT_OPTIONS,
+  normalizeAnnotationStyle,
+} from "../shared/annotationConfig.js";
+
 const statusElements = {
   message: document.getElementById("status_message"),
   mode: document.getElementById("status_mode"),
@@ -24,10 +34,6 @@ const buttons = {
   reset: document.getElementById("btn_reset_session"),
 };
 
-const modeRadios = Array.from(
-  document.querySelectorAll('input[name="captureMode"]')
-);
-const modeControls = Array.from(document.querySelectorAll(".mode-controls"));
 let currentMode = "screenshot";
 const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
@@ -48,10 +54,6 @@ const sessionPill = document.getElementById("session_pill");
 const sessionMeta = document.getElementById("session_meta");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
-const recordingRadio = document.getElementById("mode_recording");
-const recordingLabel = document.getElementById("label_recording");
-const networkRadio = document.getElementById("mode_network");
-const networkLabel = document.getElementById("label_network");
 const annotationToggle = document.getElementById("annotation_toggle");
 const annotationChevron = document.getElementById("annotation_chevron");
 const annotationBody = document.getElementById("annotation_body");
@@ -98,13 +100,9 @@ const STATUS_COLORS = {
   success: "#166534",
 };
 
-const ANNOTATION_DEFAULTS = {
-  fontFamily: "Inter",
-  fontSize: 14,
-  fontWeight: "Regular",
-  color: "Red",
-  opacity: 1,
-};
+const ANNOTATION_DEFAULTS = { ...DEFAULT_ANNOTATION_STYLE };
+
+const CLICK_DEBUG = false;
 
 const APP_VERSION = "v0.1";
 const JSZIP_LOAD_ERROR =
@@ -660,12 +658,34 @@ async function loadRecordingDownloadData() {
   }
 }
 
+function getModeButtons() {
+  return Array.from(document.querySelectorAll(".segmented .seg-btn"));
+}
+
+function getModeControls() {
+  return Array.from(document.querySelectorAll(".mode-controls"));
+}
+
+function setActiveModeButton(mode) {
+  getModeButtons().forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.mode === mode);
+  });
+}
+
+function setModeButtonDisabled(mode, disabled) {
+  const button = document.querySelector(`.segmented .seg-btn[data-mode="${mode}"]`);
+  if (button) {
+    button.disabled = Boolean(disabled);
+  }
+}
+
 function setMode(mode) {
   currentMode = mode;
-  modeControls.forEach((block) => {
+  getModeControls().forEach((block) => {
     const isActive = block.dataset.mode === mode;
     block.classList.toggle("active", isActive);
   });
+  setActiveModeButton(mode);
   const isScreenshot = mode === "screenshot";
   if (screenshotHint) {
     screenshotHint.classList.toggle("is-hidden", !isScreenshot);
@@ -677,7 +697,7 @@ function setMode(mode) {
     statusCountsRow.classList.toggle("is-hidden", isScreenshot);
   }
   if (downloadControls) {
-    downloadControls.classList.toggle("is-hidden", isScreenshot);
+    downloadControls.classList.toggle("is-hidden", false);
   }
   if (mode === "recording") {
     checkRecordingAvailability();
@@ -734,64 +754,40 @@ function setRecordingButtons(state) {
   buttons.recordStop.classList.toggle("btn-disabled", stopDisabled);
 }
 
+function formatOpacityLabel(value) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function renderAnnotationOptions() {
+  const setOptions = (select, options, formatter) => {
+    if (!select) {
+      return;
+    }
+    select.innerHTML = "";
+    options.forEach((optionValue) => {
+      const option = document.createElement("option");
+      option.value = String(optionValue);
+      option.textContent = formatter ? formatter(optionValue) : String(optionValue);
+      select.appendChild(option);
+    });
+  };
+  setOptions(annotationFontFamily, FONT_OPTIONS);
+  setOptions(annotationFontSize, SIZE_OPTIONS);
+  setOptions(annotationFontWeight, WEIGHT_OPTIONS);
+  setOptions(annotationFontColor, COLOR_OPTIONS);
+  setOptions(annotationFontOpacity, OPACITY_OPTIONS, formatOpacityLabel);
+}
+
 function mapAnnotationStyleToStorage(style) {
-  const fontFamilyMap = {
-    Inter: "Inter, system-ui, Arial",
-    Roboto: "Roboto, system-ui, Arial",
-    Arial: "Arial, Helvetica",
-    Monospace: "ui-monospace, SFMono-Regular, Menlo, monospace",
-  };
-  const colorMap = {
-    Red: "#ef4444",
-    Blue: "#2563eb",
-    Yellow: "#facc15",
-    Black: "#111827",
-    White: "#ffffff",
-  };
-  return {
-    fontFamily: fontFamilyMap[style.fontFamily] || fontFamilyMap.Inter,
-    weight: style.fontWeight === "Bold" ? "700" : "400",
-    size: style.fontSize,
-    color: colorMap[style.color] || colorMap.Red,
-    opacity: style.opacity,
-    bold: style.fontWeight === "Bold",
-  };
+  return normalizeAnnotationStyle(style);
 }
 
 function mapAnnotationStyleToUi(style) {
-  const fontFamily = style.fontFamily || "";
-  let fontChoice = "Inter";
-  if (/roboto/i.test(fontFamily)) {
-    fontChoice = "Roboto";
-  } else if (/mono/i.test(fontFamily)) {
-    fontChoice = "Monospace";
-  } else if (/arial/i.test(fontFamily)) {
-    fontChoice = "Arial";
-  }
-  let weightChoice = "Regular";
-  if (style.weight && String(style.weight).startsWith("7")) {
-    weightChoice = "Bold";
-  }
-  const colorMap = {
-    "#ef4444": "Red",
-    "#2563eb": "Blue",
-    "#facc15": "Yellow",
-    "#111827": "Black",
-    "#ffffff": "White",
-  };
-  const colorChoice = colorMap[(style.color || "").toLowerCase()] || "Red";
-  return {
-    fontFamily: fontChoice,
-    fontSize: style.size || ANNOTATION_DEFAULTS.fontSize,
-    fontWeight: weightChoice,
-    color: colorChoice,
-    opacity:
-      typeof style.opacity === "number" ? style.opacity : ANNOTATION_DEFAULTS.opacity,
-  };
+  return normalizeAnnotationStyle(style);
 }
 
 function getAnnotationStyleFromUi() {
-  return {
+  return normalizeAnnotationStyle({
     fontFamily: annotationFontFamily
       ? annotationFontFamily.value
       : ANNOTATION_DEFAULTS.fontFamily,
@@ -807,7 +803,7 @@ function getAnnotationStyleFromUi() {
     opacity: annotationFontOpacity
       ? Number(annotationFontOpacity.value)
       : ANNOTATION_DEFAULTS.opacity,
-  };
+  });
 }
 
 async function sendAnnotationStyle() {
@@ -821,6 +817,7 @@ async function sendAnnotationStyle() {
 function disableRecordingUI() {
   recordingAvailable = false;
   recordingBlockedReason = "policy";
+  setModeButtonDisabled("recording", true);
   if (recordingUnavailable) {
     const shouldShow = currentMode === "recording";
     recordingUnavailable.classList.toggle("hidden", !shouldShow);
@@ -831,6 +828,7 @@ function disableRecordingUI() {
 function enableRecordingUI() {
   recordingAvailable = true;
   recordingBlockedReason = null;
+  setModeButtonDisabled("recording", false);
   if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
   }
@@ -839,6 +837,7 @@ function enableRecordingUI() {
 function setRecordingBlocked(reason) {
   recordingAvailable = false;
   recordingBlockedReason = reason;
+  setModeButtonDisabled("recording", true);
   if (recordingUnavailable) {
     const shouldShow = currentMode === "recording" && reason === "policy";
     recordingUnavailable.classList.toggle("hidden", !shouldShow);
@@ -903,33 +902,19 @@ async function checkRecordingAvailability() {
 
 function disableNetworkUI() {
   networkAvailable = false;
-  if (networkRadio) {
-    networkRadio.disabled = true;
-  }
-  if (networkLabel) {
-    networkLabel.classList.add("is-disabled");
-  }
+  setModeButtonDisabled("network_console", true);
   if (networkUnavailable) {
     networkUnavailable.classList.remove("hidden");
   }
-  if (networkRadio && networkRadio.checked) {
-    const screenshotRadio = document.getElementById("mode_screenshot");
-    if (screenshotRadio) {
-      screenshotRadio.checked = true;
-      setMode("screenshot");
-    }
+  if (currentMode === "network_console") {
+    setMode("screenshot");
   }
   setNetworkButtons({ networkCount: 0, session: null, networkActive: false });
 }
 
 function enableNetworkUI() {
   networkAvailable = true;
-  if (networkRadio) {
-    networkRadio.disabled = false;
-  }
-  if (networkLabel) {
-    networkLabel.classList.remove("is-disabled");
-  }
+  setModeButtonDisabled("network_console", false);
   if (networkUnavailable) {
     networkUnavailable.classList.add("hidden");
   }
@@ -974,11 +959,22 @@ function applySessionLock(state) {
   if (mode !== "network_console") {
     buttons.networkStart.disabled = true;
   }
-  modeRadios.forEach((radio) => {
-    if (radio.value !== mode) {
-      radio.disabled = true;
-    }
+  getModeButtons().forEach((button) => {
+    button.disabled = button.dataset.mode !== mode;
   });
+}
+
+function hasExportableArtifacts(state) {
+  if (!state) {
+    return false;
+  }
+  if (state.artifacts && typeof state.artifacts.hasAnyArtifacts === "boolean") {
+    return state.artifacts.hasAnyArtifacts;
+  }
+  if (typeof state.hasArtifacts === "boolean") {
+    return state.hasArtifacts;
+  }
+  return false;
 }
 
 function applyStatusMessage(state) {
@@ -1147,18 +1143,12 @@ function formatElapsedFromLiveState(liveState, fallbackSession) {
 
 function updateStatusUI(state) {
   buttons.screenshot.disabled = false;
-  modeRadios.forEach((radio) => {
-    radio.disabled = false;
+  getModeButtons().forEach((button) => {
+    button.disabled = false;
   });
 
-  if (state.session && state.session.mode) {
-    const matchingRadio = modeRadios.find(
-      (radio) => radio.value === state.session.mode
-    );
-    if (matchingRadio) {
-      matchingRadio.checked = true;
-      setMode(state.session.mode);
-    }
+  if (state.session && state.session.mode && state.session.mode !== currentMode) {
+    setMode(state.session.mode);
   }
 
   const sessionMode = state.session ? state.session.mode : null;
@@ -1297,20 +1287,18 @@ function updateStatusUI(state) {
     recordingDownloadHint.classList.toggle("is-hidden", !isRecordingMode);
   }
   if (buttons.download) {
-    if (state.artifacts) {
-      buttons.download.disabled =
-        currentMode === "screenshot" ||
-        !state.artifacts.hasAnyArtifacts ||
-        captureActive;
-    } else if (typeof state.hasArtifacts === "boolean") {
-      buttons.download.disabled =
-        currentMode === "screenshot" || !state.hasArtifacts || captureActive;
-    } else {
-      buttons.download.disabled = captureActive;
-    }
+    buttons.download.disabled = !hasExportableArtifacts(state) || captureActive;
   }
   if (exportHint) {
-    exportHint.classList.toggle("is-hidden", !captureActive);
+    if (captureActive) {
+      exportHint.textContent = "Stop to export.";
+      exportHint.classList.remove("is-hidden");
+    } else if (!hasExportableArtifacts(state)) {
+      exportHint.textContent = "Nothing to export.";
+      exportHint.classList.remove("is-hidden");
+    } else {
+      exportHint.classList.add("is-hidden");
+    }
   }
   if (buttons.downloadRecording) {
     const hasRecording = state.artifacts ? state.artifacts.hasRecording : false;
@@ -1360,6 +1348,7 @@ async function refreshStatus() {
 }
 
 async function loadAnnotationStyle() {
+  renderAnnotationOptions();
   let current = ANNOTATION_DEFAULTS;
   const response = await send(MSG.GET_ANNOTATION_STYLE);
   if (response && response.ok && response.style) {
@@ -1404,8 +1393,10 @@ async function handleScreenshot() {
     return;
   }
   try {
+    const annotationStyle = getAnnotationStyleFromUi();
     await chrome.storage.session.set({
       latestScreenshotDataUrl: response.screenshotDataUrl,
+      latestScreenshotAnnotationStyle: annotationStyle,
     });
     await chrome.tabs.create({
       url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
@@ -2007,12 +1998,172 @@ async function handleAddMarker() {
       response.error || "Failed to add marker.",
       "error"
     );
+    showToast("Error", "error");
     return;
   }
   setStatus(statusElements.message, "Marker added.", "success");
   showToast("Marked");
   await refreshStatus();
 }
+
+async function handleNetworkRefresh() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) {
+      throw new Error("No active tab to refresh.");
+    }
+    await chrome.tabs.reload(tab.id);
+    setStatus(statusElements.message, "Refreshing tab...", "success");
+  } catch (error) {
+    setStatus(
+      statusElements.message,
+      error && error.message ? error.message : "Unable to refresh the active tab.",
+      "error"
+    );
+  }
+}
+
+function toggleStatusSection() {
+  if (!statusBody || !statusChevron) {
+    return;
+  }
+  const collapsed = statusBody.classList.toggle("collapsed");
+  statusChevron.textContent = collapsed ? "▸" : "▾";
+  statusUserToggled = true;
+}
+
+function toggleAnnotationSection() {
+  if (!annotationBody || !annotationChevron || !annotationToggle) {
+    return;
+  }
+  annotationCollapsed = !annotationCollapsed;
+  annotationBody.classList.toggle("collapsed", annotationCollapsed);
+  annotationChevron.textContent = annotationCollapsed ? "▸" : "▾";
+  annotationToggle.classList.toggle("open", !annotationCollapsed);
+}
+
+async function handleRedactionToggle(checked) {
+  await chrome.storage.local.set({ redactionEnabled: checked });
+  redactionStatus.textContent = checked ? "ON" : "OFF";
+}
+
+async function handleOpenRecordingPanel() {
+  await send("OPEN_RECORDING_PANEL");
+  await refreshStatus();
+}
+
+function routeAction(action) {
+  if (!action) {
+    return;
+  }
+  if (CLICK_DEBUG) {
+    console.log("[UI] action:", action);
+  }
+  if (action.startsWith("mode:")) {
+    const mode = action.split(":")[1];
+    setMode(mode);
+    return;
+  }
+  switch (action) {
+    case "recording:start":
+      handleRecordingStart();
+      break;
+    case "recording:pause":
+      handleRecordingPause();
+      break;
+    case "recording:resume":
+      handleRecordingResume();
+      break;
+    case "recording:stop":
+      handleRecordingStop();
+      break;
+    case "recording:panel":
+      handleOpenRecordingPanel();
+      break;
+    case "network:start":
+      handleNetworkStart();
+      break;
+    case "network:stop":
+      handleNetworkStop();
+      break;
+    case "network:refresh":
+      handleNetworkRefresh();
+      break;
+    case "screenshot:snap":
+      handleScreenshot();
+      break;
+    case "screenshot:full":
+      handleFullPageScreenshot();
+      break;
+    case "marker:add":
+      handleAddMarker();
+      break;
+    case "export:zip":
+      handleDownload();
+      break;
+    case "export:webm":
+      handleRecordingDownload();
+      break;
+    case "session:reset":
+      handleResetSession();
+      break;
+    case "status:toggle":
+      toggleStatusSection();
+      break;
+    case "annotations:toggle":
+      toggleAnnotationSection();
+      break;
+    default:
+      break;
+  }
+}
+
+function routeChange(action, el) {
+  if (!action) {
+    return;
+  }
+  if (CLICK_DEBUG) {
+    console.log("[UI] change:", action);
+  }
+  switch (action) {
+    case "redaction:toggle":
+      handleRedactionToggle(el.checked);
+      break;
+    case "annotation:style":
+      sendAnnotationStyle();
+      break;
+    default:
+      break;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const actionEl = event.target.closest("[data-action]");
+  if (!actionEl) {
+    if (CLICK_DEBUG) {
+      const top = document.elementsFromPoint(event.clientX, event.clientY)[0];
+      if (top) {
+        top.style.outline = "2px solid #f59e0b";
+        setTimeout(() => {
+          top.style.outline = "";
+        }, 500);
+      }
+    }
+    return;
+  }
+  if (actionEl.disabled) {
+    return;
+  }
+  routeAction(actionEl.dataset.action);
+});
+
+document.addEventListener("change", (event) => {
+  const actionEl = event.target.closest("[data-action]");
+  if (!actionEl) {
+    return;
+  }
+  routeChange(actionEl.dataset.action, actionEl);
+});
 
 async function handleResetSession() {
   await send(MSG.RECORDING_RESET);
@@ -2106,74 +2257,6 @@ async function initCapabilities() {
   await loadNetworkAvailability(res.capabilities, tabId);
 }
 
-buttons.screenshot.addEventListener("click", handleScreenshot);
-if (buttons.fullPageScreenshotMode) {
-  buttons.fullPageScreenshotMode.addEventListener(
-    "click",
-    handleFullPageScreenshot
-  );
-}
-buttons.recordStart.addEventListener("click", handleRecordingStart);
-buttons.recordPause.addEventListener("click", handleRecordingPause);
-buttons.recordResume.addEventListener("click", handleRecordingResume);
-buttons.recordStop.addEventListener("click", handleRecordingStop);
-buttons.recordPanel.addEventListener("click", async () => {
-  await send("OPEN_RECORDING_PANEL");
-  await refreshStatus();
-});
-buttons.networkStart.addEventListener("click", handleNetworkStart);
-buttons.networkStop.addEventListener("click", handleNetworkStop);
-if (buttons.networkRefresh) {
-  buttons.networkRefresh.addEventListener("click", async () => {
-    try {
-      const [tab] = await chrome.tabs.query({
-        active: true,
-        currentWindow: true,
-      });
-      if (!tab || !tab.id) {
-        setStatus(
-          statusElements.message,
-          "No active tab to refresh.",
-          "error"
-        );
-        return;
-      }
-      await chrome.tabs.reload(tab.id);
-      setStatus(statusElements.message, "Refreshing tab...", "success");
-    } catch (error) {
-      setStatus(
-        statusElements.message,
-        "Unable to refresh the active tab.",
-        "error"
-      );
-    }
-  });
-}
-buttons.download.addEventListener("click", handleDownload);
-if (buttons.downloadRecording) {
-  buttons.downloadRecording.addEventListener("click", handleRecordingDownload);
-}
-if (buttons.addMarker) {
-  buttons.addMarker.addEventListener("click", handleAddMarker);
-}
-buttons.reset.addEventListener("click", handleResetSession);
-
-[annotationFontFamily, annotationFontSize, annotationFontWeight, annotationFontColor].forEach(
-  (control) => {
-    if (!control) {
-      return;
-    }
-    control.addEventListener("change", () => {
-      void sendAnnotationStyle();
-    });
-  }
-);
-if (annotationFontOpacity) {
-  annotationFontOpacity.addEventListener("change", () => {
-    void sendAnnotationStyle();
-  });
-}
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "RECORDING_STATE_CHANGED") {
     (async () => {
@@ -2185,31 +2268,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   return false;
-});
-statusToggle.addEventListener("click", () => {
-  const collapsed = statusBody.classList.toggle("collapsed");
-  statusChevron.textContent = collapsed ? "▸" : "▾";
-  statusUserToggled = true;
-});
-if (annotationToggle && annotationBody && annotationChevron) {
-  annotationToggle.addEventListener("click", () => {
-    annotationCollapsed = !annotationCollapsed;
-    annotationBody.classList.toggle("collapsed", annotationCollapsed);
-    annotationChevron.textContent = annotationCollapsed ? "▸" : "▾";
-    annotationToggle.classList.toggle("open", !annotationCollapsed);
-  });
-}
-redactionToggle.addEventListener("change", async (event) => {
-  const enabled = event.target.checked;
-  await chrome.storage.local.set({ redactionEnabled: enabled });
-  redactionStatus.textContent = enabled ? "ON" : "OFF";
-});
-
-modeRadios.forEach((radio) => {
-  radio.addEventListener("change", (event) => {
-    const selectedMode = event.target.value;
-    setMode(selectedMode);
-  });
 });
 
 assertJsZipAvailable();

@@ -1,3 +1,15 @@
+import {
+  COLOR_OPTIONS,
+  DEFAULT_ANNOTATION_STYLE,
+  FONT_OPTIONS,
+  OPACITY_OPTIONS,
+  SIZE_OPTIONS,
+  WEIGHT_OPTIONS,
+  normalizeAnnotationStyle,
+  resolveFontFamily,
+  resolveFontWeight,
+} from "../shared/annotationConfig.js";
+
 const baseCanvas = document.getElementById("baseCanvas");
 const drawCanvas = document.getElementById("drawCanvas");
 const textLayer = document.getElementById("textLayer");
@@ -23,7 +35,6 @@ const controls = {
   textWeight: document.getElementById("textWeight"),
   textColor: document.getElementById("textColor"),
   textOpacity: document.getElementById("textOpacity"),
-  textBold: document.getElementById("textBold"),
 };
 
 const buttons = {
@@ -62,14 +73,7 @@ let editingTextEl = null;
 let undoStack = [];
 let redoStack = [];
 
-const DEFAULT_TEXT_SETTINGS = {
-  fontFamily: "system-ui, Arial",
-  weight: "400",
-  size: 16,
-  color: "#111827",
-  opacity: 1,
-  bold: false,
-};
+const DEFAULT_TEXT_SETTINGS = { ...DEFAULT_ANNOTATION_STYLE };
 
 function setCopyLabel(text) {
   const label = buttons.copy ? buttons.copy.querySelector(".btn-label") : null;
@@ -148,53 +152,82 @@ function setEditorEnabled(enabled) {
   updateHistoryButtons();
 }
 
+function formatOpacityLabel(value) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function renderTextOptions() {
+  const setOptions = (select, options, formatter) => {
+    if (!select) {
+      return;
+    }
+    select.innerHTML = "";
+    options.forEach((optionValue) => {
+      const option = document.createElement("option");
+      option.value = String(optionValue);
+      option.textContent = formatter ? formatter(optionValue) : String(optionValue);
+      select.appendChild(option);
+    });
+  };
+  setOptions(controls.textFontFamily, FONT_OPTIONS);
+  setOptions(controls.textSize, SIZE_OPTIONS);
+  setOptions(controls.textWeight, WEIGHT_OPTIONS);
+  setOptions(controls.textColor, COLOR_OPTIONS);
+  setOptions(controls.textOpacity, OPACITY_OPTIONS, formatOpacityLabel);
+}
+
 async function loadAnnotationSettings() {
+  renderTextOptions();
   const result = await chrome.storage.session.get({
+    latestScreenshotAnnotationStyle: null,
     annotationSettings: null,
   });
-  const settings = result.annotationSettings || DEFAULT_TEXT_SETTINGS;
+  const settings = normalizeAnnotationStyle(
+    result.latestScreenshotAnnotationStyle ||
+      result.annotationSettings ||
+      DEFAULT_TEXT_SETTINGS
+  );
   if (controls.textFontFamily) {
-    controls.textFontFamily.value = settings.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily;
+    controls.textFontFamily.value = settings.fontFamily;
   }
   if (controls.textWeight) {
-    controls.textWeight.value = settings.weight || DEFAULT_TEXT_SETTINGS.weight;
+    controls.textWeight.value = settings.fontWeight;
   }
   if (controls.textSize) {
-    controls.textSize.value = String(settings.size || DEFAULT_TEXT_SETTINGS.size);
+    controls.textSize.value = String(settings.fontSize);
   }
   if (controls.textColor) {
-    controls.textColor.value = settings.color || DEFAULT_TEXT_SETTINGS.color;
+    controls.textColor.value = settings.color;
   }
   if (controls.textOpacity) {
-    controls.textOpacity.value = String(
-      typeof settings.opacity === "number" ? settings.opacity : DEFAULT_TEXT_SETTINGS.opacity
-    );
-  }
-  if (controls.textBold) {
-    controls.textBold.checked = Boolean(settings.bold);
+    controls.textOpacity.value = String(settings.opacity);
   }
 }
 
 function getAnnotationSettings() {
-  return {
+  return normalizeAnnotationStyle({
     fontFamily: controls.textFontFamily
       ? controls.textFontFamily.value
       : DEFAULT_TEXT_SETTINGS.fontFamily,
-    weight: controls.textWeight ? controls.textWeight.value : DEFAULT_TEXT_SETTINGS.weight,
-    size: controls.textSize
+    fontSize: controls.textSize
       ? Number(controls.textSize.value)
-      : DEFAULT_TEXT_SETTINGS.size,
+      : DEFAULT_TEXT_SETTINGS.fontSize,
+    fontWeight: controls.textWeight
+      ? controls.textWeight.value
+      : DEFAULT_TEXT_SETTINGS.fontWeight,
     color: controls.textColor ? controls.textColor.value : DEFAULT_TEXT_SETTINGS.color,
     opacity: controls.textOpacity
       ? Number(controls.textOpacity.value)
       : DEFAULT_TEXT_SETTINGS.opacity,
-    bold: controls.textBold ? controls.textBold.checked : DEFAULT_TEXT_SETTINGS.bold,
-  };
+  });
 }
 
 async function saveAnnotationSettings() {
   const settings = getAnnotationSettings();
-  await chrome.storage.session.set({ annotationSettings: settings });
+  await chrome.storage.session.set({
+    annotationSettings: settings,
+    latestScreenshotAnnotationStyle: settings,
+  });
 }
 
 function applySettingsToEditingText() {
@@ -203,10 +236,9 @@ function applySettingsToEditingText() {
   }
   const settings = getAnnotationSettings();
   editingTextEl.dataset.color = settings.color;
-  editingTextEl.dataset.size = String(settings.size);
-  editingTextEl.dataset.bold = settings.bold ? "true" : "false";
+  editingTextEl.dataset.fontSize = String(settings.fontSize);
   editingTextEl.dataset.fontFamily = settings.fontFamily;
-  editingTextEl.dataset.weight = settings.weight;
+  editingTextEl.dataset.fontWeight = settings.fontWeight;
   editingTextEl.dataset.opacity = String(settings.opacity);
   applyTextStyle(editingTextEl);
   positionTextElement(editingTextEl);
@@ -279,12 +311,15 @@ function createId() {
 }
 
 function applyTextStyle(el) {
-  const size = Number(el.dataset.size) || 16;
-  const bold = el.dataset.bold === "true";
-  const color = el.dataset.color || "#111827";
+  const size = Number(el.dataset.fontSize) || DEFAULT_TEXT_SETTINGS.fontSize;
+  const color = el.dataset.color || DEFAULT_TEXT_SETTINGS.color;
   const opacity = Number(el.dataset.opacity);
-  const weight = bold ? "700" : el.dataset.weight || "400";
-  const fontFamily = el.dataset.fontFamily || "system-ui, Arial";
+  const weight = resolveFontWeight(
+    el.dataset.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight
+  );
+  const fontFamily = resolveFontFamily(
+    el.dataset.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily
+  );
   const colorValue =
     !Number.isNaN(opacity) && opacity < 1
       ? hexToRgba(color, opacity)
@@ -311,21 +346,25 @@ function updateTextPositions() {
 }
 
 function getTextsSnapshot() {
-  return Array.from(textLayer.querySelectorAll(".text-label")).map((el) => ({
-    id: el.dataset.id,
-    x: Number(el.dataset.x) || 0,
-    y: Number(el.dataset.y) || 0,
-    text: el.innerText || "",
-    color: el.dataset.color || "#111827",
-    size: Number(el.dataset.size) || 16,
-    bold: el.dataset.bold === "true",
-    fontFamily: el.dataset.fontFamily || "system-ui, Arial",
-    weight: el.dataset.weight || (el.dataset.bold === "true" ? "700" : "400"),
-    opacity:
-      typeof el.dataset.opacity !== "undefined"
-        ? Number(el.dataset.opacity)
-        : 1,
-  }));
+  return Array.from(textLayer.querySelectorAll(".text-label")).map((el) => {
+    const normalized = normalizeAnnotationStyle({
+      fontFamily: el.dataset.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily,
+      fontSize: Number(el.dataset.fontSize) || DEFAULT_TEXT_SETTINGS.fontSize,
+      fontWeight: el.dataset.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight,
+      color: el.dataset.color || DEFAULT_TEXT_SETTINGS.color,
+      opacity:
+        typeof el.dataset.opacity !== "undefined"
+          ? Number(el.dataset.opacity)
+          : DEFAULT_TEXT_SETTINGS.opacity,
+    });
+    return {
+      id: el.dataset.id,
+      x: Number(el.dataset.x) || 0,
+      y: Number(el.dataset.y) || 0,
+      text: el.innerText || "",
+      ...normalized,
+    };
+  });
 }
 
 function rebuildTextLayer(texts) {
@@ -390,10 +429,11 @@ function buildTextElement(data) {
   el.dataset.x = data.x;
   el.dataset.y = data.y;
   el.dataset.color = data.color;
-  el.dataset.size = data.size;
-  el.dataset.bold = data.bold ? "true" : "false";
-  el.dataset.fontFamily = data.fontFamily || "system-ui, Arial";
-  el.dataset.weight = data.weight || (data.bold ? "700" : "400");
+  el.dataset.fontSize = String(
+    typeof data.fontSize === "number" ? data.fontSize : DEFAULT_TEXT_SETTINGS.fontSize
+  );
+  el.dataset.fontFamily = data.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily;
+  el.dataset.fontWeight = data.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight;
   el.dataset.opacity =
     typeof data.opacity === "number" && !Number.isNaN(data.opacity)
       ? String(data.opacity)
@@ -678,19 +718,21 @@ async function exportAnnotatedBlob() {
   ctx.drawImage(drawCanvas, 0, 0);
   const texts = getTextsSnapshot();
   texts.forEach((text) => {
-    const weight = text.bold ? "700" : text.weight || "400";
-    const fontFamily = text.fontFamily || "system-ui, Arial";
+    const weight = resolveFontWeight(text.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight);
+    const fontFamily = resolveFontFamily(
+      text.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily
+    );
     const opacity =
       typeof text.opacity === "number" && !Number.isNaN(text.opacity)
         ? text.opacity
         : 1;
     const colorValue =
       opacity < 1 ? hexToRgba(text.color, opacity) : text.color;
-    ctx.font = `${weight} ${text.size}px ${fontFamily}`;
+    ctx.font = `${weight} ${text.fontSize}px ${fontFamily}`;
     ctx.fillStyle = colorValue;
     ctx.textBaseline = "top";
     const lines = text.text.split("\n");
-    const lineHeight = text.size * 1.2;
+    const lineHeight = text.fontSize * 1.2;
     lines.forEach((line, index) => {
       ctx.fillText(line, text.x, text.y + index * lineHeight);
     });
@@ -763,21 +805,13 @@ textLayer.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   const point = getCanvasPoint(event);
   console.log("[TEXT] create textbox at", point.x, point.y);
+  const textSettings = getAnnotationSettings();
   const newText = {
     id: createId(),
     x: point.x,
     y: point.y,
     text: "",
-    color: controls.textColor ? controls.textColor.value : controls.mainColor.value,
-    size: Number(controls.textSize.value),
-    bold: controls.textBold.checked,
-    fontFamily: controls.textFontFamily
-      ? controls.textFontFamily.value
-      : "system-ui, Arial",
-    weight: controls.textWeight ? controls.textWeight.value : "400",
-    opacity: controls.textOpacity
-      ? Number(controls.textOpacity.value)
-      : 1,
+    ...textSettings,
   };
   const el = buildTextElement(newText);
   textLayer.appendChild(el);
@@ -883,8 +917,7 @@ bindTextControl(controls.textFontFamily);
 bindTextControl(controls.textWeight);
 bindTextControl(controls.textColor);
 bindTextControl(controls.textSize);
-bindTextControl(controls.textBold);
-bindTextControl(controls.textOpacity, "input");
+bindTextControl(controls.textOpacity);
 
 window.addEventListener("resize", () => {
   updateScale();

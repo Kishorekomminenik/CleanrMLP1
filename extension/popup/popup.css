@@ -25,6 +25,8 @@ body {
   max-height: 560px;
 }
 
+/* Guardrail: never disable containers with pointer-events:none. */
+
 .container {
   width: 360px;
   max-width: 100%;
@@ -35,6 +37,11 @@ body {
 
 header {
   margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--panel-alt);
+  padding-bottom: 8px;
 }
 
 .header-row {
@@ -132,13 +139,7 @@ h2 {
   margin-bottom: 12px;
 }
 
-.segmented input[type="radio"] {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.segmented label {
+.segmented .seg-btn {
   text-align: center;
   padding: 8px 10px;
   border-radius: 10px;
@@ -147,17 +148,24 @@ h2 {
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.2s ease;
+  background: transparent;
 }
 
-.segmented input[type="radio"]:checked + label {
+.segmented .seg-btn.is-active {
   background: #2563eb;
   color: #fff;
   border-color: #1d4ed8;
 }
 
-.segmented input[type="radio"]:focus-visible + label {
+.segmented .seg-btn:focus-visible {
   outline: 2px solid rgba(37, 99, 235, 0.5);
   outline-offset: 2px;
+}
+
+.segmented .seg-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .capability-messages {
