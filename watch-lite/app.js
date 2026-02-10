@@ -7,6 +7,8 @@ const errorPanel = document.getElementById("errorPanel");
 const errorClose = document.getElementById("errorClose");
 const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
+const banner = document.getElementById("howtoBanner");
+const bannerClose = document.getElementById("bannerClose");
 const timeline = document.getElementById("timeline");
 const timelineTicks = document.getElementById("timelineTicks");
 const currentTimeLabel = document.getElementById("currentTime");
@@ -17,6 +19,7 @@ const videoPanel = document.getElementById("videoPanel");
 const videoEl = document.getElementById("videoEl");
 const videoPlay = document.getElementById("videoPlay");
 const videoTime = document.getElementById("videoTime");
+const videoSyncNote = document.getElementById("videoSyncNote");
 const filterMarkers = document.getElementById("filterMarkers");
 const filterNetwork = document.getElementById("filterNetwork");
 const filterConsole = document.getElementById("filterConsole");
@@ -36,6 +39,9 @@ const state = {
   missingScreenshots: [],
   videoUrl: null,
   videoMissing: false,
+  selectedEventId: null,
+  videoSyncAvailable: false,
+  partialMode: false,
 };
 
 const EVENT_ICONS = {
@@ -45,6 +51,13 @@ const EVENT_ICONS = {
   screenshot: "S",
   session: "I",
 };
+
+let eventIdCounter = 0;
+
+function createEventId() {
+  eventIdCounter += 1;
+  return `evt_${String(eventIdCounter).padStart(6, "0")}`;
+}
 
 function formatTime(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -100,31 +113,50 @@ function clearLoadedInfo() {
 }
 
 function parseTimestampFromName(name) {
-  const match = name.match(/qa-session-log-(\d{8}-\d{6})/);
+  const match = name.match(/qa-session-log[-_](\d{8})[-_](\d{6})/i);
   if (!match) {
     return null;
   }
-  const raw = match[1];
-  const year = raw.slice(0, 4);
-  const month = raw.slice(4, 6);
-  const day = raw.slice(6, 8);
-  const hour = raw.slice(9, 11);
-  const minute = raw.slice(11, 13);
-  const second = raw.slice(13, 15);
+  const rawDate = match[1];
+  const rawTime = match[2];
+  const year = rawDate.slice(0, 4);
+  const month = rawDate.slice(4, 6);
+  const day = rawDate.slice(6, 8);
+  const hour = rawTime.slice(0, 2);
+  const minute = rawTime.slice(2, 4);
+  const second = rawTime.slice(4, 6);
   return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).getTime();
 }
 
-function selectSessionLogFile(zipFiles) {
-  const candidates = Object.keys(zipFiles).filter((name) =>
-    /qa-session-log.*\.json$/i.test(name)
-  );
-  if (!candidates.length) {
+function pickNewestByZipDate(names, zipFiles) {
+  if (!names.length) {
     return null;
   }
-  const sorted = candidates
-    .map((name) => ({ name, ts: parseTimestampFromName(name) }))
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const sorted = names
+    .map((name) => ({
+      name,
+      ts: zipFiles[name] && zipFiles[name].date ? zipFiles[name].date.getTime() : 0,
+    }))
+    .sort((a, b) => b.ts - a.ts);
   return sorted[0].name;
+}
+
+function selectSessionLogFile(zipFiles) {
+  const names = Object.keys(zipFiles);
+  const timestamped = names.filter((name) =>
+    /qa-session-log[-_]\d{8}[-_]\d{6}\.json$/i.test(name)
+  );
+  if (timestamped.length) {
+    const sorted = timestamped
+      .map((name) => ({ name, ts: parseTimestampFromName(name) || 0 }))
+      .sort((a, b) => b.ts - a.ts);
+    return sorted[0].name;
+  }
+  const generic = names.filter((name) => /qa-session-log\.json$/i.test(name));
+  if (generic.length) {
+    return pickNewestByZipDate(generic, zipFiles) || generic[0];
+  }
+  return null;
 }
 
 function computeTmsFromIso(tsIso, sessionStartIso) {
@@ -139,8 +171,77 @@ function computeTmsFromIso(tsIso, sessionStartIso) {
   return Math.max(0, ts - base);
 }
 
+function findFile(zipFiles, regex) {
+  return Object.keys(zipFiles).find((name) => regex.test(name));
+}
+
+function listScreenshotFiles(zipFiles) {
+  const names = Object.keys(zipFiles);
+  return names.filter(
+    (name) =>
+      /^screenshots\/.+\.png$/i.test(name) || /qa-screenshot-.*\.png$/i.test(name)
+  );
+}
+
+function parseScreenshotTimestamp(name) {
+  const match = name.match(/(\d{8})[-_](\d{6})/);
+  if (!match) {
+    return null;
+  }
+  const date = match[1];
+  const time = match[2];
+  const year = date.slice(0, 4);
+  const month = date.slice(4, 6);
+  const day = date.slice(6, 8);
+  const hour = time.slice(0, 2);
+  const minute = time.slice(2, 4);
+  const second = time.slice(4, 6);
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).getTime();
+}
+
+function deriveSessionStartIso({
+  sessionLog,
+  networkEntries,
+  consoleEntries,
+  screenshotTimes,
+  environmentTimestamp,
+}) {
+  if (sessionLog?.session?.startedAt) {
+    return sessionLog.session.startedAt;
+  }
+  const candidates = [];
+  networkEntries.forEach((entry) => {
+    const ts = Date.parse(entry.timestamp);
+    if (!Number.isNaN(ts)) {
+      candidates.push(ts);
+    }
+  });
+  consoleEntries.forEach((entry) => {
+    const ts = Date.parse(entry.timestamp);
+    if (!Number.isNaN(ts)) {
+      candidates.push(ts);
+    }
+  });
+  screenshotTimes.forEach((ts) => {
+    if (typeof ts === "number") {
+      candidates.push(ts);
+    }
+  });
+  if (environmentTimestamp) {
+    const ts = Date.parse(environmentTimestamp);
+    if (!Number.isNaN(ts)) {
+      candidates.push(ts);
+    }
+  }
+  if (!candidates.length) {
+    return null;
+  }
+  return new Date(Math.min(...candidates)).toISOString();
+}
+
 function buildEventsFromNormalized(normalizedEvents = []) {
   return normalizedEvents.map((ev) => {
+    const eventId = ev.id || createEventId();
     let type = "session";
     if (ev.kind === "marker") {
       type = "marker";
@@ -169,9 +270,12 @@ function buildEventsFromNormalized(normalizedEvents = []) {
     const status = ev.data?.status;
     const isError =
       ev.level === "error" ||
+      ev.kind === "error" ||
+      (type === "console" && /exception/i.test(ev.msg || "")) ||
       (type === "network" && typeof status === "number" && status >= 400);
 
     return {
+      id: eventId,
       t_ms: typeof ev.t_ms === "number" ? ev.t_ms : 0,
       type,
       summary,
@@ -193,6 +297,7 @@ function buildEventsFromRaw(sessionLog) {
   const markers = sessionLog?.raw?.markers || [];
   markers.forEach((marker) => {
     events.push({
+      id: createEventId(),
       t_ms:
         typeof marker.t_ms === "number"
           ? marker.t_ms
@@ -208,6 +313,7 @@ function buildEventsFromRaw(sessionLog) {
   const screenshots = sessionLog?.raw?.screenshots || [];
   screenshots.forEach((shot) => {
     events.push({
+      id: createEventId(),
       t_ms:
         typeof shot.t_ms === "number"
           ? shot.t_ms
@@ -227,6 +333,7 @@ function buildEventsFromRaw(sessionLog) {
       typeof status === "number" ? status : ""
     } ${entry.url || ""}`.trim();
     events.push({
+      id: createEventId(),
       t_ms: computeTmsFromIso(entry.timestamp, sessionStart),
       type: "network",
       summary,
@@ -242,16 +349,78 @@ function buildEventsFromRaw(sessionLog) {
       entry.message || ""
     }`.trim();
     events.push({
+      id: createEventId(),
       t_ms: computeTmsFromIso(entry.timestamp, sessionStart),
       type: "console",
       summary,
       payload: entry,
       refs: {},
-      isError: entry.level === "error",
+      isError:
+        entry.level === "error" ||
+        /exception/i.test(entry.source || "") ||
+        /exception/i.test(entry.message || ""),
     });
   });
 
   return events;
+}
+
+function buildEventsFromSupplemental({ networkLogs, consoleLogs, sessionStartIso }) {
+  const events = [];
+  const networkEntries = networkLogs?.entries || [];
+  networkEntries.forEach((entry) => {
+    const status = entry.response_status;
+    const summary = `${entry.method || ""} ${
+      typeof status === "number" ? status : ""
+    } ${entry.url || ""}`.trim();
+    events.push({
+      id: createEventId(),
+      t_ms: computeTmsFromIso(entry.timestamp, sessionStartIso),
+      type: "network",
+      summary,
+      payload: entry,
+      refs: { requestId: entry.request_id || null },
+      isError: typeof status === "number" && status >= 400,
+    });
+  });
+
+  const consoleEntries = consoleLogs?.entries || [];
+  consoleEntries.forEach((entry) => {
+    const summary = `${(entry.level || "log").toUpperCase()}: ${
+      entry.message || ""
+    }`.trim();
+    events.push({
+      id: createEventId(),
+      t_ms: computeTmsFromIso(entry.timestamp, sessionStartIso),
+      type: "console",
+      summary,
+      payload: entry,
+      refs: {},
+      isError:
+        entry.level === "error" ||
+        /exception/i.test(entry.source || "") ||
+        /exception/i.test(entry.message || ""),
+    });
+  });
+
+  return events;
+}
+
+function buildScreenshotEventsFromFiles(files, sessionStartIso) {
+  return files.map((fileName) => {
+    const baseName = fileName.split("/").pop();
+    const ts = parseScreenshotTimestamp(baseName);
+    const t_ms = ts && sessionStartIso ? Math.max(0, ts - Date.parse(sessionStartIso)) : 0;
+    return {
+      id: createEventId(),
+      t_ms,
+      type: "screenshot",
+      summary: `Screenshot: ${baseName}`,
+      payload: { fileName: baseName },
+      refs: { screenshotFile: baseName },
+      isError: false,
+    };
+  });
 }
 
 function computeDurationMs(sessionLog, events) {
@@ -267,29 +436,27 @@ function computeDurationMs(sessionLog, events) {
   return Math.max(max, 0);
 }
 
-async function loadScreenshotBlobs(zip, sessionLog) {
-  const screenshots = sessionLog?.raw?.screenshots || [];
+async function loadScreenshotBlobs(zip, screenshotFiles, referencedNames = []) {
   state.missingScreenshots = [];
-  for (const shot of screenshots) {
-    if (!shot.fileName) {
-      continue;
-    }
-    const candidates = Object.keys(zip.files).filter((name) =>
-      name.endsWith(shot.fileName)
-    );
-    if (!candidates.length) {
-      state.missingScreenshots.push(shot.fileName);
-      continue;
-    }
-    const entry = zip.file(candidates[0]);
+  state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.screenshotUrls.clear();
+
+  for (const path of screenshotFiles) {
+    const entry = zip.file(path);
     if (!entry) {
-      state.missingScreenshots.push(shot.fileName);
       continue;
     }
     const blob = await entry.async("blob");
     const url = URL.createObjectURL(blob);
-    state.screenshotUrls.set(shot.fileName, url);
+    const baseName = path.split("/").pop();
+    state.screenshotUrls.set(baseName, url);
   }
+
+  referencedNames.forEach((name) => {
+    if (name && !state.screenshotUrls.has(name)) {
+      state.missingScreenshots.push(name);
+    }
+  });
 }
 
 async function loadVideo(zip) {
@@ -302,6 +469,9 @@ async function loadVideo(zip) {
       videoEl.removeAttribute("src");
     }
     state.videoMissing = true;
+    if (videoSyncNote) {
+      videoSyncNote.classList.add("hidden");
+    }
     return;
   }
   const entry = zip.file(candidates[0]);
@@ -313,6 +483,9 @@ async function loadVideo(zip) {
   videoEl.src = state.videoUrl;
   videoPanel.classList.remove("hidden");
   state.videoMissing = false;
+  if (videoSyncNote) {
+    videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
+  }
 }
 
 function renderTimelineTicks(events) {
@@ -374,6 +547,9 @@ function renderEventList() {
     const item = document.createElement("div");
     item.className = "event-item";
     item.dataset.index = String(index);
+    if (state.selectedEventId && ev.id === state.selectedEventId) {
+      item.classList.add("active");
+    }
 
     const time = document.createElement("div");
     time.className = "event-time";
@@ -391,7 +567,7 @@ function renderEventList() {
 
     item.appendChild(time);
     item.appendChild(summary);
-    item.addEventListener("click", () => renderDetails(ev));
+    item.addEventListener("click", () => selectEvent(ev, true));
     eventList.appendChild(item);
   });
 }
@@ -465,15 +641,70 @@ function renderDetails(ev) {
   }
 }
 
+function syncVideoToTms(tms) {
+  if (!videoEl || !state.videoSyncAvailable) {
+    return;
+  }
+  videoEl.currentTime = Math.max(0, tms / 1000);
+}
+
+function findNearestEvent(events, tms) {
+  let candidate = null;
+  for (const ev of events) {
+    if (ev.t_ms <= tms) {
+      candidate = ev;
+    } else {
+      break;
+    }
+  }
+  return candidate || events[0] || null;
+}
+
+function setCurrentTms(tms, snap = true) {
+  state.currentTms = Math.max(0, tms);
+  updateTimeline();
+  syncVideoToTms(state.currentTms);
+  if (snap) {
+    const nearest = findNearestEvent(state.events, state.currentTms);
+    if (nearest) {
+      state.selectedEventId = nearest.id;
+      renderDetails(nearest);
+    }
+  }
+  refreshView();
+}
+
+function selectEvent(ev, syncTimeline = false) {
+  if (!ev) {
+    return;
+  }
+  state.selectedEventId = ev.id;
+  renderDetails(ev);
+  if (syncTimeline) {
+    setCurrentTms(ev.t_ms, false);
+  } else {
+    refreshView();
+  }
+}
+
 function updateTimeline() {
   timeline.max = String(state.durationMs || 0);
   timeline.value = String(state.currentTms || 0);
   currentTimeLabel.textContent = formatTime(state.currentTms);
   durationLabel.textContent = `Duration: ${formatTime(state.durationMs)}`;
+  if (videoSyncNote) {
+    videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
+  }
 }
 
 function refreshView() {
   state.filtered = filterEvents(state.events);
+  if (
+    state.selectedEventId &&
+    !state.filtered.some((ev) => ev.id === state.selectedEventId)
+  ) {
+    state.selectedEventId = null;
+  }
   renderEventList();
   renderTimelineTicks(state.events);
 }
@@ -497,54 +728,138 @@ async function loadZip(file) {
   }
   state.zip = zip;
   state.zipFiles = zip.files;
+  state.partialMode = false;
 
   const sessionLogName = selectSessionLogFile(zip.files);
-  if (!sessionLogName) {
-    showError(
-      "This ZIP does not look like a Repro export (missing qa-session-log*.json)."
+  const screenshotFiles = listScreenshotFiles(zip.files);
+  const screenshotTimes = screenshotFiles
+    .map((name) => parseScreenshotTimestamp(name.split("/").pop()))
+    .filter(Boolean);
+  let sessionLabel = sessionLogName || "partial logs";
+  let networkLogs = null;
+  let consoleLogs = null;
+  let environment = null;
+
+  let sessionStartIso = null;
+  if (sessionLogName) {
+    let sessionLogRaw = "";
+    try {
+      sessionLogRaw = await zip.file(sessionLogName).async("string");
+    } catch (error) {
+      showError("Unable to read qa-session-log JSON from ZIP.");
+      return;
+    }
+    try {
+      state.sessionLog = JSON.parse(sessionLogRaw);
+    } catch (error) {
+      showError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
+      return;
+    }
+
+    sessionStartIso = state.sessionLog?.session?.startedAt || null;
+    const normalized = state.sessionLog.normalizedEvents || [];
+    state.events = normalized.length
+      ? buildEventsFromNormalized(normalized)
+      : buildEventsFromRaw(state.sessionLog);
+  } else {
+    const networkName = findFile(zip.files, /network_logs\.json$/i);
+    const consoleName = findFile(zip.files, /console_logs\.json$/i);
+    const environmentName = findFile(zip.files, /environment\.json$/i);
+    if (!networkName && !consoleName) {
+      const found = Object.keys(zip.files)
+        .filter((name) => name.endsWith(".json"))
+        .slice(0, 5)
+        .join(", ");
+      const foundText = found ? `Found JSON: ${found}` : "No JSON files found.";
+      showError(
+        `This ZIP does not look like a Repro export (missing qa-session-log*.json). ${foundText}`
+      );
+      return;
+    }
+    state.partialMode = true;
+    try {
+      if (networkName) {
+        const raw = await zip.file(networkName).async("string");
+        networkLogs = JSON.parse(raw);
+      }
+      if (consoleName) {
+        const raw = await zip.file(consoleName).async("string");
+        consoleLogs = JSON.parse(raw);
+      }
+      if (environmentName) {
+        const raw = await zip.file(environmentName).async("string");
+        environment = JSON.parse(raw);
+      }
+    } catch (error) {
+      showError("Unable to read logs JSON from ZIP.");
+      return;
+    }
+    sessionStartIso = deriveSessionStartIso({
+      sessionLog: null,
+      networkEntries: networkLogs?.entries || [],
+      consoleEntries: consoleLogs?.entries || [],
+      screenshotTimes,
+      environmentTimestamp: environment?.timestamp,
+    });
+    state.events = buildEventsFromSupplemental({
+      networkLogs,
+      consoleLogs,
+      sessionStartIso,
+    });
+    state.events = state.events.concat(
+      buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
     );
-    return;
+    state.sessionLog = {
+      session: { startedAt: sessionStartIso, endedAt: null, mode: null },
+      raw: {
+        network: networkLogs?.entries || [],
+        console: consoleLogs?.entries || [],
+        markers: [],
+        screenshots: [],
+      },
+    };
+    sessionLabel = "partial logs";
   }
-
-  let sessionLogRaw = "";
-  try {
-    sessionLogRaw = await zip.file(sessionLogName).async("string");
-  } catch (error) {
-    showError("Unable to read qa-session-log JSON from ZIP.");
-    return;
-  }
-  try {
-    state.sessionLog = JSON.parse(sessionLogRaw);
-  } catch (error) {
-    showError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
-    return;
-  }
-
-  const normalized = state.sessionLog.normalizedEvents || [];
-  state.events = normalized.length
-    ? buildEventsFromNormalized(normalized)
-    : buildEventsFromRaw(state.sessionLog);
 
   state.events.sort((a, b) => a.t_ms - b.t_ms);
   state.durationMs = computeDurationMs(state.sessionLog, state.events);
   state.currentTms = state.durationMs;
+  state.videoSyncAvailable = state.durationMs > 0;
 
-  await loadScreenshotBlobs(zip, state.sessionLog);
+  const referencedShots =
+    state.sessionLog?.raw?.screenshots?.map((s) => s.fileName) || [];
+  if (!referencedShots.length && screenshotFiles.length) {
+    state.events = state.events.concat(
+      buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
+    );
+    state.events.sort((a, b) => a.t_ms - b.t_ms);
+  }
+  await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
   await loadVideo(zip);
 
-  setLoadedInfo(file.name, sessionLogName);
+  setLoadedInfo(file.name, sessionLabel);
 
   updateTimeline();
+  const nearest = findNearestEvent(state.events, state.currentTms);
+  if (nearest) {
+    state.selectedEventId = nearest.id;
+    renderDetails(nearest);
+  }
   refreshView();
   emptyState.textContent = "";
 
+  const warnings = [];
+  if (state.partialMode) {
+    warnings.push("Loaded partial logs (no qa-session-log). Some details may be missing.");
+  }
   if (state.missingScreenshots.length) {
-    showError(
-      "Some screenshots referenced in the log are missing from this ZIP.",
-      true
-    );
-  } else if (state.videoMissing && state.sessionLog?.session?.mode === "recording") {
-    showError("Video file is missing from this ZIP.", true);
+    warnings.push("Some screenshots referenced in the log are missing from this ZIP.");
+  }
+  if (state.videoMissing && state.sessionLog?.session?.mode === "recording") {
+    warnings.push("Video file is missing from this ZIP.");
+  }
+  if (warnings.length) {
+    showError(warnings.join(" "), true);
   }
 }
 
@@ -558,6 +873,10 @@ function resetState() {
   state.durationMs = 0;
   state.missingScreenshots = [];
   state.videoMissing = false;
+  state.selectedEventId = null;
+  state.videoSyncAvailable = false;
+  state.partialMode = false;
+  eventIdCounter = 0;
   if (state.videoUrl) {
     URL.revokeObjectURL(state.videoUrl);
   }
@@ -575,6 +894,9 @@ function resetState() {
   videoPanel.classList.add("hidden");
   videoEl.removeAttribute("src");
   videoPlay.textContent = "Play";
+  if (videoSyncNote) {
+    videoSyncNote.classList.add("hidden");
+  }
   emptyState.textContent =
     "Open an evidence ZIP exported from Repro to replay a session locally.";
   clearError();
@@ -599,12 +921,7 @@ zipInput.addEventListener("change", (event) => {
 });
 
 timeline.addEventListener("input", () => {
-  state.currentTms = Number(timeline.value);
-  currentTimeLabel.textContent = formatTime(state.currentTms);
-  if (!videoEl.classList.contains("hidden") && videoEl.duration) {
-    videoEl.currentTime = state.currentTms / 1000;
-  }
-  refreshView();
+  setCurrentTms(Number(timeline.value), true);
 });
 
 [filterMarkers, filterNetwork, filterConsole, filterScreenshots, filterErrors].forEach(
@@ -626,3 +943,18 @@ videoEl.addEventListener("timeupdate", () => {
   const t = Math.floor((videoEl.currentTime || 0) * 1000);
   videoTime.textContent = formatTime(t);
 });
+
+if (errorClose) {
+  errorClose.addEventListener("click", clearError);
+}
+
+if (bannerClose && banner) {
+  const dismissed = localStorage.getItem("watchLiteBannerDismissed") === "1";
+  if (dismissed) {
+    banner.classList.add("hidden");
+  }
+  bannerClose.addEventListener("click", () => {
+    banner.classList.add("hidden");
+    localStorage.setItem("watchLiteBannerDismissed", "1");
+  });
+}

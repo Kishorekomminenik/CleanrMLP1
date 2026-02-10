@@ -8,6 +8,13 @@
   </head>
   <body>
     <div class="app">
+      <div id="howtoBanner" class="banner">
+        <div>
+          <strong>How to use:</strong>
+          Open watch-lite/index.html → Load Evidence ZIP → Scrub timeline or click events.
+        </div>
+        <button id="bannerClose" class="icon-button" type="button">×</button>
+      </div>
       <header class="header">
         <div class="header-title">
           <h1>Repro Watch Lite</h1>
@@ -58,6 +65,9 @@
                 <span id="videoTime" class="muted">00:00</span>
               </div>
             </div>
+            <p id="videoSyncNote" class="muted hidden">
+              Video sync unavailable for this session.
+            </p>
             <video id="videoEl" controls></video>
           </div>
 
