@@ -1775,10 +1775,32 @@ async function buildEnvironmentFallback() {
   };
 }
 
+async function addZipItemsInChunks(zip, items, options = {}) {
+  const batchSize = options.batchSize || 25;
+  const onProgress = options.onProgress || null;
+  let completed = 0;
+  for (const item of items) {
+    const data = await item.getData();
+    zip.file(item.path, data);
+    completed += 1;
+    if (onProgress) {
+      onProgress(completed, items.length);
+    }
+    if (completed % batchSize === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+}
+
 async function handleDownload() {
   let hadError = false;
   buttons.download.disabled = true;
-  setStatus(statusElements.download, "Preparing ZIP...");
+  const originalLabel = buttons.download.textContent;
+  const setProgressLabel = (text) => {
+    buttons.download.textContent = text;
+    setStatus(statusElements.download, text);
+  };
+  setProgressLabel("Preparing ZIP...");
   try {
     const statusResponse = await send(MSG.GET_STATUS);
     if (!statusResponse.ok) {
@@ -1895,47 +1917,100 @@ async function handleDownload() {
       }
     }
     const zip = new JSZip();
-    if (Array.isArray(data.screenshots)) {
-      for (const shot of data.screenshots) {
-        if (shot && shot.dataUrl) {
-          const screenshotBlob = await dataUrlToBlob(shot.dataUrl);
-          const name =
-            shot.fileName ||
-            `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
-          zip.file(`screenshots/${name}`, screenshotBlob);
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-    } else if (data.screenshotDataUrl) {
-      const screenshotBlob = await dataUrlToBlob(data.screenshotDataUrl);
-      zip.file("screenshots/screenshot.png", screenshotBlob);
+    const baseItems = [
+      {
+        path: "network_logs.json",
+        getData: () =>
+          JSON.stringify(data.networkLogs || { version: "1.0", entries: [] }, null, 2),
+      },
+      {
+        path: "console_logs.json",
+        getData: () =>
+          JSON.stringify(data.consoleLogs || { version: "1.0", entries: [] }, null, 2),
+      },
+      {
+        path: "session.json",
+        getData: () => JSON.stringify(data.session || {}, null, 2),
+      },
+      {
+        path: "environment.json",
+        getData: () => JSON.stringify(data.environment || {}, null, 2),
+      },
+    ];
+    if (data.qaSessionLog) {
+      baseItems.push({
+        path: "qa-session-log.json",
+        getData: () => JSON.stringify(data.qaSessionLog, null, 2),
+      });
     }
+    if (data.qaSummaryText) {
+      baseItems.push({
+        path: "qa-summary.txt",
+        getData: () => data.qaSummaryText,
+      });
+    }
+
+    const screenshotItems = [];
+    if (Array.isArray(data.screenshots)) {
+      data.screenshots.forEach((shot) => {
+        if (!shot || !shot.dataUrl) {
+          return;
+        }
+        const name =
+          shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
+        screenshotItems.push({
+          path: `screenshots/${name}`,
+          getData: () => dataUrlToBlob(shot.dataUrl),
+        });
+      });
+    } else if (data.screenshotDataUrl) {
+      screenshotItems.push({
+        path: "screenshots/screenshot.png",
+        getData: () => dataUrlToBlob(data.screenshotDataUrl),
+      });
+    }
+
+    const totalItems = baseItems.length + screenshotItems.length + 1;
+    let addedItems = 0;
+    const reportProgress = () => {
+      const pct = Math.min(99, Math.round((addedItems / totalItems) * 100));
+      setProgressLabel(`Preparing ZIP… ${pct}%`);
+    };
+
+    await addZipItemsInChunks(zip, baseItems, {
+      batchSize: 10,
+      onProgress: () => {
+        addedItems += 1;
+        reportProgress();
+      },
+    });
+
+    await addZipItemsInChunks(zip, screenshotItems, {
+      batchSize: 25,
+      onProgress: () => {
+        addedItems += 1;
+        reportProgress();
+      },
+    });
+
     if (recordingBlob) {
       zip.file(recordingFileName, recordingBlob);
+      addedItems += 1;
+      reportProgress();
     } else if (data.recordingDataUrl) {
       const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
       zip.file(recordingFileName, recordingDataBlob);
+      addedItems += 1;
+      reportProgress();
+    } else {
+      addedItems += 1;
+      reportProgress();
     }
-    zip.file(
-      "network_logs.json",
-      JSON.stringify(data.networkLogs || { version: "1.0", entries: [] }, null, 2)
-    );
-    zip.file(
-      "console_logs.json",
-      JSON.stringify(data.consoleLogs || { version: "1.0", entries: [] }, null, 2)
-    );
-    if (data.qaSessionLog) {
-      zip.file("qa-session-log.json", JSON.stringify(data.qaSessionLog, null, 2));
-    }
-    if (data.qaSummaryText) {
-      zip.file("qa-summary.txt", data.qaSummaryText);
-    }
-    zip.file("session.json", JSON.stringify(data.session || {}, null, 2));
-    zip.file("environment.json", JSON.stringify(data.environment || {}, null, 2));
 
     let zipError = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
+        setProgressLabel("Finalizing ZIP…");
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
             () =>
@@ -2047,6 +2122,7 @@ async function handleDownload() {
     );
   } finally {
     buttons.download.disabled = false;
+    buttons.download.textContent = originalLabel;
     if (!hadError) {
       setStatus(statusElements.download, "Ready.");
     }
