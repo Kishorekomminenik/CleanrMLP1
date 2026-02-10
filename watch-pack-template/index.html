@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Repro Watch</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Repro Watch</h1>
+          <p id="packMeta" class="muted">Loading pack...</p>
+        </div>
+        <div class="header-actions">
+          <label class="toggle">
+            <input type="checkbox" id="autoFollow" checked />
+            Auto-follow
+          </label>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="left">
+          <div id="videoPanel" class="panel video-panel hidden">
+            <div class="video-header">
+              <h2>Video</h2>
+              <div class="video-controls">
+                <button id="videoPlay" class="secondary">Play</button>
+                <span id="videoTime" class="muted">00:00</span>
+              </div>
+            </div>
+            <p id="videoSyncNote" class="muted hidden">
+              Video sync unavailable for this session.
+            </p>
+            <video id="videoEl" controls></video>
+          </div>
+
+          <div class="panel timeline-panel">
+            <div class="timeline-header">
+              <h2>Timeline</h2>
+              <span id="currentTime" class="muted">00:00</span>
+            </div>
+            <div class="timeline-track">
+              <input id="timeline" type="range" min="0" max="0" value="0" />
+              <div id="timelineTicks" class="timeline-ticks"></div>
+            </div>
+            <div class="timeline-meta muted">
+              <span id="durationLabel">Duration: 00:00</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="right">
+          <div class="panel filters">
+            <h2>Filters</h2>
+            <div class="filter-row">
+              <label><input type="checkbox" id="filterMarkers" checked /> Markers</label>
+              <label><input type="checkbox" id="filterNetwork" checked /> Network</label>
+              <label><input type="checkbox" id="filterConsole" checked /> Console</label>
+              <label><input type="checkbox" id="filterScreenshots" checked /> Screenshots</label>
+            </div>
+            <div class="filter-row">
+              <label><input type="checkbox" id="filterErrors" /> Errors only</label>
+            </div>
+            <input
+              id="searchInput"
+              class="search"
+              type="search"
+              placeholder="Search by URL or text"
+            />
+          </div>
+
+          <div class="panel event-list-panel">
+            <h2>Events</h2>
+            <div id="eventList" class="event-list"></div>
+          </div>
+
+          <div class="panel details-panel">
+            <h2>Details</h2>
+            <div id="detailsBody" class="details-body muted">
+              Select an event to see details.
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./vendor/jszip.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

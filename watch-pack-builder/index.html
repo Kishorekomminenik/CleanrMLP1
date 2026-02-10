@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Repro Watch Pack Builder</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Repro Watch Pack Builder</h1>
+          <p class="muted">Local-only watch pack generator</p>
+        </div>
+        <div class="header-actions">
+          <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
+          <input id="zipInput" type="file" accept=".zip" class="hidden" />
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <h2>Detected Files</h2>
+          <div id="fileSummary" class="summary muted">No ZIP loaded.</div>
+          <div id="builderError" class="error hidden"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Generate Watch Pack</h2>
+          <p class="muted">
+            Generates a shareable ZIP with a standalone viewer and assets.
+          </p>
+          <button id="generateBtn" class="primary" disabled>
+            Generate Watch Pack ZIP
+          </button>
+        </section>
+      </main>
+    </div>
+
+    <script src="./vendor/jszip.min.js"></script>
+    <script src="./builder.js"></script>
+  </body>
+</html>
