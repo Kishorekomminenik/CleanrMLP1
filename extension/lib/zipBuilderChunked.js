@@ -38,6 +38,8 @@
     const generateOptions = {
       type: "blob",
       compression: options.compression || "STORE",
+      streamFiles:
+        typeof options.streamFiles === "boolean" ? options.streamFiles : true,
     };
     const onUpdate = typeof options.onUpdate === "function" ? options.onUpdate : null;
     if (onUpdate) {

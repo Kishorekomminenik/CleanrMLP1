@@ -1448,6 +1448,7 @@ async function runEvidenceZipExport(context) {
     reportExportProgress(78, "zip_generate_start");
     const zipBlob = await ZipBuilderChunked.generateZipBlob(zip, {
       compression: "STORE",
+      streamFiles: true,
       onUpdate: (metadata) => {
         if (!metadata || typeof metadata.percent !== "number") {
           return;
