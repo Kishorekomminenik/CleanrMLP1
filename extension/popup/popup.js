@@ -1977,34 +1977,45 @@ async function handleDownload() {
       setProgressLabel(`Preparing ZIP… ${pct}%`);
     };
 
-    await addZipItemsInChunks(zip, baseItems, {
-      batchSize: 10,
-      onProgress: () => {
+    try {
+      await addZipItemsInChunks(zip, baseItems, {
+        batchSize: 10,
+        onProgress: () => {
+          addedItems += 1;
+          reportProgress();
+        },
+      });
+
+      await addZipItemsInChunks(zip, screenshotItems, {
+        batchSize: 25,
+        onProgress: () => {
+          addedItems += 1;
+          reportProgress();
+        },
+      });
+
+      if (recordingBlob) {
+        zip.file(recordingFileName, recordingBlob);
         addedItems += 1;
         reportProgress();
-      },
-    });
-
-    await addZipItemsInChunks(zip, screenshotItems, {
-      batchSize: 25,
-      onProgress: () => {
+      } else if (data.recordingDataUrl) {
+        const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
+        zip.file(recordingFileName, recordingDataBlob);
         addedItems += 1;
         reportProgress();
-      },
-    });
-
-    if (recordingBlob) {
-      zip.file(recordingFileName, recordingBlob);
-      addedItems += 1;
-      reportProgress();
-    } else if (data.recordingDataUrl) {
-      const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
-      zip.file(recordingFileName, recordingDataBlob);
-      addedItems += 1;
-      reportProgress();
-    } else {
-      addedItems += 1;
-      reportProgress();
+      } else {
+        addedItems += 1;
+        reportProgress();
+      }
+    } catch (error) {
+      console.error("[ZIP] chunked build failed", error);
+      setStatus(
+        statusElements.download,
+        "Export failed while packaging large session. Try stopping capture earlier.",
+        "error"
+      );
+      hadError = true;
+      return;
     }
 
     let zipError = null;
