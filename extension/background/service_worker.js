@@ -411,10 +411,13 @@ function reportExportProgress(percent, stage, detail) {
   if (!exportJob) {
     exportJob = {};
   }
-  exportJob.lastProgress = percent;
+  const prev =
+    typeof exportJob.lastProgress === "number" ? exportJob.lastProgress : 0;
+  const next = typeof percent === "number" ? Math.max(prev, percent) : prev;
+  exportJob.lastProgress = next;
   logExportPhase(stage, detail);
   sendExportEvent("EXPORT_EVIDENCE_ZIP_PROGRESS", {
-    percent,
+    percent: next,
     stage,
     detail,
   });
@@ -1270,74 +1273,67 @@ async function runEvidenceZipExport(context) {
       screenshotCount,
     });
     reportExportProgress(12, "stringify_start");
-    const networkLogsJson = JSON.stringify(
-      data.networkLogs || { version: "1.0", entries: [] },
-      null,
-      2
-    );
-    const consoleLogsJson = JSON.stringify(
-      data.consoleLogs || { version: "1.0", entries: [] },
-      null,
-      2
-    );
-    const sessionJson = JSON.stringify(data.session || {}, null, 2);
-    const environmentJson = JSON.stringify(data.environment || {}, null, 2);
-    const qaSessionLogJson = data.qaSessionLog
-      ? JSON.stringify(data.qaSessionLog, null, 2)
-      : null;
-    const exportMetadataJson = JSON.stringify(data.exportMetadata || {}, null, 2);
-    const exportTruncationJson = data.exportTruncationReport
-      ? JSON.stringify(data.exportTruncationReport, null, 2)
-      : null;
     const jsonSizes = {
-      network_logs: networkLogsJson.length,
-      console_logs: consoleLogsJson.length,
-      session: sessionJson.length,
-      environment: environmentJson.length,
-      qa_session_log: qaSessionLogJson ? qaSessionLogJson.length : 0,
-      export_metadata: exportMetadataJson.length,
-      export_truncation_report: exportTruncationJson ? exportTruncationJson.length : 0,
+      network_logs: 0,
+      console_logs: 0,
+      session: 0,
+      environment: 0,
+      qa_session_log: 0,
+      export_metadata: 0,
+      export_truncation_report: 0,
       qa_summary: data.qaSummaryText ? data.qaSummaryText.length : 0,
     };
-    logExportPhase("stringify_done", jsonSizes);
-    reportExportProgress(18, "stringify_done", jsonSizes);
-
     const zip = new JSZip();
     const zipDate =
       data.session && data.session.ended_at
         ? new Date(data.session.ended_at)
         : new Date();
+    const toJsonWithSize = (value, key) => {
+      const json = JSON.stringify(value || {}, null, 2);
+      jsonSizes[key] = json.length;
+      return json;
+    };
     const baseItems = [
       {
         path: "network_logs.json",
-        data: networkLogsJson,
+        getData: () =>
+          toJsonWithSize(
+            data.networkLogs || { version: "1.0", entries: [] },
+            "network_logs"
+          ),
         options: { date: zipDate },
       },
       {
         path: "console_logs.json",
-        data: consoleLogsJson,
+        getData: () =>
+          toJsonWithSize(
+            data.consoleLogs || { version: "1.0", entries: [] },
+            "console_logs"
+          ),
         options: { date: zipDate },
       },
       {
         path: "session.json",
-        data: sessionJson,
+        getData: () => toJsonWithSize(data.session || {}, "session"),
         options: { date: zipDate },
       },
       {
         path: "environment.json",
-        data: environmentJson,
+        getData: () => toJsonWithSize(data.environment || {}, "environment"),
         options: { date: zipDate },
       },
       {
         path: "export_metadata.json",
-        data: exportMetadataJson,
+        getData: () =>
+          toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
         options: { date: zipDate },
       },
     ];
-    if (qaSessionLogJson) {
+    if (data.qaSessionLog) {
       baseItems.push({
         path: "qa-session-log.json",
-        data: qaSessionLogJson,
+        getData: () =>
+          toJsonWithSize(data.qaSessionLog || {}, "qa_session_log"),
         options: { date: zipDate },
       });
     }
@@ -1348,22 +1344,27 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       });
     }
-    if (exportTruncationJson) {
+    if (data.exportTruncationReport) {
       baseItems.push({
         path: "export_truncation_report.json",
-        data: exportTruncationJson,
+        getData: () =>
+          toJsonWithSize(
+            data.exportTruncationReport || {},
+            "export_truncation_report"
+          ),
         options: { date: zipDate },
       });
     }
     logExportPhase("zip_add_json", { count: baseItems.length });
     await ZipBuilderChunked.addItemsInBatches(zip, baseItems, {
-      batchSize: EXPORT_BATCH_DEFAULTS.files,
+      batchSize: 1,
       yieldEveryMs: EXPORT_BATCH_DEFAULTS.yieldEveryMs,
       onProgress: ({ completed, total }) => {
         const percent = Math.round(20 + (completed / total) * 20);
         reportExportProgress(percent, "zip_add_json", { completed, total });
       },
     });
+    logExportPhase("stringify_done", jsonSizes);
 
     const screenshotItems = [];
     if (Array.isArray(data.screenshots)) {
