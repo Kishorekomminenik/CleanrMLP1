@@ -1,6 +1,8 @@
 const openZipBtn = document.getElementById("openZipBtn");
+const resetBtn = document.getElementById("resetBtn");
 const zipInput = document.getElementById("zipInput");
 const loaderError = document.getElementById("loaderError");
+const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
 const timeline = document.getElementById("timeline");
 const timelineTicks = document.getElementById("timelineTicks");
@@ -28,6 +30,7 @@ const state = {
   currentTms: 0,
   durationMs: 0,
   screenshotUrls: new Map(),
+  missingScreenshots: [],
   videoUrl: null,
 };
 
@@ -54,6 +57,22 @@ function setError(message) {
 function clearError() {
   loaderError.textContent = "";
   loaderError.classList.add("hidden");
+}
+
+function setLoadedInfo(zipName, sessionLogName) {
+  if (!loadedInfo) {
+    return;
+  }
+  loadedInfo.textContent = `Loaded: ${zipName} • ${sessionLogName}`;
+  loadedInfo.classList.remove("hidden");
+}
+
+function clearLoadedInfo() {
+  if (!loadedInfo) {
+    return;
+  }
+  loadedInfo.textContent = "";
+  loadedInfo.classList.add("hidden");
 }
 
 function parseTimestampFromName(name) {
@@ -226,6 +245,7 @@ function computeDurationMs(sessionLog, events) {
 
 async function loadScreenshotBlobs(zip, sessionLog) {
   const screenshots = sessionLog?.raw?.screenshots || [];
+  state.missingScreenshots = [];
   for (const shot of screenshots) {
     if (!shot.fileName) {
       continue;
@@ -234,10 +254,12 @@ async function loadScreenshotBlobs(zip, sessionLog) {
       name.endsWith(shot.fileName)
     );
     if (!candidates.length) {
+      state.missingScreenshots.push(shot.fileName);
       continue;
     }
     const entry = zip.file(candidates[0]);
     if (!entry) {
+      state.missingScreenshots.push(shot.fileName);
       continue;
     }
     const blob = await entry.async("blob");
@@ -252,6 +274,9 @@ async function loadVideo(zip) {
   );
   if (!candidates.length) {
     videoPanel.classList.add("hidden");
+    if (videoEl) {
+      videoEl.removeAttribute("src");
+    }
     return;
   }
   const entry = zip.file(candidates[0]);
@@ -363,8 +388,13 @@ function renderDetails(ev) {
     const img = document.createElement("img");
     if (name && state.screenshotUrls.has(name)) {
       img.src = state.screenshotUrls.get(name);
+      detailsBody.appendChild(img);
+    } else {
+      const message = document.createElement("div");
+      message.textContent =
+        "Screenshot file missing from ZIP. Re-export the evidence to include it.";
+      detailsBody.appendChild(message);
     }
-    detailsBody.appendChild(img);
   } else if (ev.type === "network") {
     const fields = [
       ["Method", ev.payload?.method],
@@ -424,6 +454,7 @@ function refreshView() {
 
 async function loadZip(file) {
   clearError();
+  clearLoadedInfo();
   emptyState.textContent = "Loading evidence...";
 
   if (!window.JSZip) {
@@ -431,7 +462,13 @@ async function loadZip(file) {
     return;
   }
 
-  const zip = await JSZip.loadAsync(file);
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch (error) {
+    setError("Unable to read ZIP file. Please select a valid Repro export.");
+    return;
+  }
   state.zip = zip;
   state.zipFiles = zip.files;
 
@@ -441,8 +478,19 @@ async function loadZip(file) {
     return;
   }
 
-  const sessionLogRaw = await zip.file(sessionLogName).async("string");
-  state.sessionLog = JSON.parse(sessionLogRaw);
+  let sessionLogRaw = "";
+  try {
+    sessionLogRaw = await zip.file(sessionLogName).async("string");
+  } catch (error) {
+    setError("Unable to read qa-session-log JSON from ZIP.");
+    return;
+  }
+  try {
+    state.sessionLog = JSON.parse(sessionLogRaw);
+  } catch (error) {
+    setError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
+    return;
+  }
 
   const normalized = state.sessionLog.normalizedEvents || [];
   state.events = normalized.length
@@ -456,12 +504,51 @@ async function loadZip(file) {
   await loadScreenshotBlobs(zip, state.sessionLog);
   await loadVideo(zip);
 
+  setLoadedInfo(file.name, sessionLogName);
+
   updateTimeline();
   refreshView();
   emptyState.textContent = "";
 }
 
+function resetState() {
+  state.zip = null;
+  state.zipFiles = null;
+  state.sessionLog = null;
+  state.events = [];
+  state.filtered = [];
+  state.currentTms = 0;
+  state.durationMs = 0;
+  state.missingScreenshots = [];
+  if (state.videoUrl) {
+    URL.revokeObjectURL(state.videoUrl);
+  }
+  state.videoUrl = null;
+  state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.screenshotUrls.clear();
+
+  eventList.innerHTML = "";
+  detailsBody.textContent = "Select an event to see details.";
+  timelineTicks.innerHTML = "";
+  timeline.value = "0";
+  timeline.max = "0";
+  currentTimeLabel.textContent = "00:00";
+  durationLabel.textContent = "Duration: 00:00";
+  videoPanel.classList.add("hidden");
+  videoEl.removeAttribute("src");
+  videoPlay.textContent = "Play";
+  emptyState.textContent =
+    "Open an evidence ZIP exported from Repro to replay a session locally.";
+  clearError();
+  clearLoadedInfo();
+}
+
 openZipBtn.addEventListener("click", () => zipInput.click());
+resetBtn.addEventListener("click", () => {
+  resetState();
+  zipInput.value = "";
+  zipInput.click();
+});
 zipInput.addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (file) {
