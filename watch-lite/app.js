@@ -1,7 +1,10 @@
 const openZipBtn = document.getElementById("openZipBtn");
+const openAnotherBtn = document.getElementById("openAnotherBtn");
 const resetBtn = document.getElementById("resetBtn");
 const zipInput = document.getElementById("zipInput");
 const loaderError = document.getElementById("loaderError");
+const errorPanel = document.getElementById("errorPanel");
+const errorClose = document.getElementById("errorClose");
 const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
 const timeline = document.getElementById("timeline");
@@ -32,6 +35,7 @@ const state = {
   screenshotUrls: new Map(),
   missingScreenshots: [],
   videoUrl: null,
+  videoMissing: false,
 };
 
 const EVENT_ICONS = {
@@ -49,21 +53,41 @@ function formatTime(ms) {
   return `${minutes}:${seconds}`;
 }
 
-function setError(message) {
+function showError(message, isWarning = false) {
+  if (!errorPanel) {
+    return;
+  }
   loaderError.textContent = message;
-  loaderError.classList.remove("hidden");
+  errorPanel.classList.remove("hidden");
+  if (isWarning) {
+    errorPanel.style.borderColor = "rgba(217, 119, 6, 0.4)";
+    errorPanel.style.background = "#fff7ed";
+    loaderError.style.color = "#b45309";
+  } else {
+    errorPanel.style.borderColor = "rgba(220, 38, 38, 0.4)";
+    errorPanel.style.background = "#fef2f2";
+    loaderError.style.color = "#b91c1c";
+  }
 }
 
 function clearError() {
+  if (!errorPanel) {
+    return;
+  }
   loaderError.textContent = "";
-  loaderError.classList.add("hidden");
+  errorPanel.classList.add("hidden");
+  loaderError.style.color = "";
+  errorPanel.style.borderColor = "";
+  errorPanel.style.background = "";
 }
 
 function setLoadedInfo(zipName, sessionLogName) {
   if (!loadedInfo) {
     return;
   }
-  loadedInfo.textContent = `Loaded: ${zipName} • ${sessionLogName}`;
+  loadedInfo.textContent = `Loaded: ${zipName} • ${sessionLogName} • ${formatTime(
+    state.durationMs
+  )}`;
   loadedInfo.classList.remove("hidden");
 }
 
@@ -277,6 +301,7 @@ async function loadVideo(zip) {
     if (videoEl) {
       videoEl.removeAttribute("src");
     }
+    state.videoMissing = true;
     return;
   }
   const entry = zip.file(candidates[0]);
@@ -287,6 +312,7 @@ async function loadVideo(zip) {
   state.videoUrl = URL.createObjectURL(blob);
   videoEl.src = state.videoUrl;
   videoPanel.classList.remove("hidden");
+  state.videoMissing = false;
 }
 
 function renderTimelineTicks(events) {
@@ -458,7 +484,7 @@ async function loadZip(file) {
   emptyState.textContent = "Loading evidence...";
 
   if (!window.JSZip) {
-    setError("JSZip failed to load. Ensure vendor/jszip.min.js exists.");
+    showError("JSZip failed to load. Ensure vendor/jszip.min.js exists.");
     return;
   }
 
@@ -466,7 +492,7 @@ async function loadZip(file) {
   try {
     zip = await JSZip.loadAsync(file);
   } catch (error) {
-    setError("Unable to read ZIP file. Please select a valid Repro export.");
+    showError("Unable to read ZIP file. Please select a valid Repro export.");
     return;
   }
   state.zip = zip;
@@ -474,7 +500,9 @@ async function loadZip(file) {
 
   const sessionLogName = selectSessionLogFile(zip.files);
   if (!sessionLogName) {
-    setError("This ZIP does not look like a Repro export (missing qa-session-log*.json).");
+    showError(
+      "This ZIP does not look like a Repro export (missing qa-session-log*.json)."
+    );
     return;
   }
 
@@ -482,13 +510,13 @@ async function loadZip(file) {
   try {
     sessionLogRaw = await zip.file(sessionLogName).async("string");
   } catch (error) {
-    setError("Unable to read qa-session-log JSON from ZIP.");
+    showError("Unable to read qa-session-log JSON from ZIP.");
     return;
   }
   try {
     state.sessionLog = JSON.parse(sessionLogRaw);
   } catch (error) {
-    setError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
+    showError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
     return;
   }
 
@@ -509,6 +537,15 @@ async function loadZip(file) {
   updateTimeline();
   refreshView();
   emptyState.textContent = "";
+
+  if (state.missingScreenshots.length) {
+    showError(
+      "Some screenshots referenced in the log are missing from this ZIP.",
+      true
+    );
+  } else if (state.videoMissing && state.sessionLog?.session?.mode === "recording") {
+    showError("Video file is missing from this ZIP.", true);
+  }
 }
 
 function resetState() {
@@ -520,6 +557,7 @@ function resetState() {
   state.currentTms = 0;
   state.durationMs = 0;
   state.missingScreenshots = [];
+  state.videoMissing = false;
   if (state.videoUrl) {
     URL.revokeObjectURL(state.videoUrl);
   }
@@ -544,16 +582,18 @@ function resetState() {
 }
 
 openZipBtn.addEventListener("click", () => zipInput.click());
-resetBtn.addEventListener("click", () => {
+openAnotherBtn.addEventListener("click", () => {
   resetState();
   zipInput.value = "";
   zipInput.click();
 });
+resetBtn.addEventListener("click", resetState);
 zipInput.addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (file) {
+    resetState();
     loadZip(file).catch((error) => {
-      setError(error?.message || "Failed to load ZIP.");
+      showError(error?.message || "Failed to load ZIP.");
     });
   }
 });

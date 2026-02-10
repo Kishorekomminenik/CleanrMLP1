@@ -12,10 +12,12 @@
         <div class="header-title">
           <h1>Repro Watch Lite</h1>
           <p class="header-subtitle">Local-only QA evidence capture</p>
+          <p id="loadedInfo" class="loaded-info muted hidden"></p>
         </div>
         <div class="header-actions">
           <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
-          <button id="resetBtn" class="secondary">Open another ZIP</button>
+          <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
+          <button id="resetBtn" class="secondary">Reset</button>
           <input
             id="zipInput"
             type="file"
@@ -35,8 +37,17 @@
             <p id="loaderHint" class="muted">
               All data stays on your machine. Nothing is uploaded.
             </p>
-            <p id="loadedInfo" class="muted hidden"></p>
-            <p id="loaderError" class="error hidden"></p>
+            <p id="repoNote" class="note">
+              This viewer uses JSZip from the repo (../extension/lib). For
+              standalone sharing, bundle JSZip into watch-lite/vendor.
+            </p>
+            <div id="errorPanel" class="error-panel hidden" role="alert">
+              <div>
+                <div class="error-title">There was a problem</div>
+                <div id="loaderError" class="error-text"></div>
+              </div>
+              <button id="errorClose" class="icon-button" type="button">×</button>
+            </div>
           </div>
 
           <div id="videoPanel" class="panel video-panel hidden">

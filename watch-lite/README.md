@@ -20,4 +20,4 @@ Optional files:
 ## Notes
 - All data stays on your machine.
 - If the ZIP is missing `qa-session-log-*.json`, a friendly error is shown.
-- For standalone distribution, replace `vendor/jszip.min.js` with a full JSZip bundle.
+- This repo-mode viewer loads JSZip from `../extension/lib`. For standalone sharing, bundle JSZip into `watch-lite/vendor`.
