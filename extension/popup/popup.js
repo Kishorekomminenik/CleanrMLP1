@@ -1775,6 +1775,65 @@ async function buildEnvironmentFallback() {
   };
 }
 
+async function getViewportSnapshot() {
+  let activeTab = null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeTab = tab;
+  } catch (error) {
+    activeTab = null;
+  }
+  const fallback = {
+    devicePixelRatio: null,
+    viewport: {
+      w: activeTab && typeof activeTab.width === "number" ? activeTab.width : null,
+      h: activeTab && typeof activeTab.height === "number" ? activeTab.height : null,
+    },
+  };
+  if (
+    !activeTab ||
+    !activeTab.id ||
+    !chrome.scripting ||
+    typeof chrome.scripting.executeScript !== "function"
+  ) {
+    return fallback;
+  }
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: activeTab.id },
+      func: () => ({
+        devicePixelRatio:
+          typeof window.devicePixelRatio === "number" ? window.devicePixelRatio : null,
+        viewport: {
+          w: typeof window.innerWidth === "number" ? window.innerWidth : null,
+          h: typeof window.innerHeight === "number" ? window.innerHeight : null,
+        },
+      }),
+    });
+    if (result && result.result) {
+      return {
+        devicePixelRatio:
+          typeof result.result.devicePixelRatio === "number"
+            ? result.result.devicePixelRatio
+            : null,
+        viewport: {
+          w:
+            result.result.viewport && typeof result.result.viewport.w === "number"
+              ? result.result.viewport.w
+              : fallback.viewport.w,
+          h:
+            result.result.viewport && typeof result.result.viewport.h === "number"
+              ? result.result.viewport.h
+              : fallback.viewport.h,
+        },
+      };
+    }
+  } catch (error) {
+    return fallback;
+  }
+  return fallback;
+}
+
 async function addZipItemsInChunks(zip, items, options = {}) {
   const batchSize = options.batchSize || 25;
   const onProgress = options.onProgress || null;
@@ -1845,11 +1904,14 @@ async function handleDownload() {
 
     const timezone =
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+    const viewportSnapshot = await getViewportSnapshot();
     const requestedExportTimestamp = formatExportTimestamp(new Date());
     const exportResponse = await Promise.race([
       send("GET_EVIDENCE_EXPORT_DATA", {
         timezone,
         exportTimestamp: requestedExportTimestamp,
+        devicePixelRatio: viewportSnapshot.devicePixelRatio,
+        viewport: viewportSnapshot.viewport,
       }),
       new Promise((resolve) =>
         setTimeout(
@@ -1877,6 +1939,7 @@ async function handleDownload() {
       JSON.stringify(data.environment || {}).length,
       data.qaSessionLog ? JSON.stringify(data.qaSessionLog).length : 0,
       data.qaSummaryText ? data.qaSummaryText.length : 0,
+      data.exportMetadata ? JSON.stringify(data.exportMetadata).length : 0,
     ].reduce((total, size) => total + size, 0);
     const MAX_JSON_BYTES = 25 * 1024 * 1024;
     if (estimatedJsonBytes > MAX_JSON_BYTES) {
@@ -1935,6 +1998,10 @@ async function handleDownload() {
       {
         path: "environment.json",
         getData: () => JSON.stringify(data.environment || {}, null, 2),
+      },
+      {
+        path: "export_metadata.json",
+        getData: () => JSON.stringify(data.exportMetadata || {}, null, 2),
       },
     ];
     if (data.qaSessionLog) {

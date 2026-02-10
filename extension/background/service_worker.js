@@ -25,6 +25,7 @@ const FULLPAGE_MAX_HEIGHT = 30000;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
+const QA_SESSION_LOG_SCHEMA_VERSION = "1.1.0";
 
 const state = {
   screenshot: {
@@ -41,6 +42,8 @@ const state = {
     videoBlobUrl: null,
     videoMime: null,
     videoByteLength: null,
+    videoStartEpochMs: null,
+    videoEndEpochMs: null,
   },
   network: {
     active: false,
@@ -76,6 +79,57 @@ let exportPhase = null;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function parseEpochMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function getExtensionVersion() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    return manifest && manifest.version ? manifest.version : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function captureMonotonicBaseline() {
+  const hasPerf =
+    typeof performance !== "undefined" && typeof performance.now === "function";
+  if (!hasPerf) {
+    return {
+      monotonic: {
+        epoch_origin_ms: null,
+        monotonic_origin_ms: null,
+      },
+      monotonic_available: false,
+    };
+  }
+  const monotonicOriginMs = performance.now();
+  if (typeof monotonicOriginMs !== "number" || Number.isNaN(monotonicOriginMs)) {
+    return {
+      monotonic: {
+        epoch_origin_ms: null,
+        monotonic_origin_ms: null,
+      },
+      monotonic_available: false,
+    };
+  }
+  return {
+    monotonic: {
+      epoch_origin_ms: Date.now(),
+      monotonic_origin_ms: monotonicOriginMs,
+    },
+    monotonic_available: true,
+  };
 }
 
 function formatExportTimestamp(date) {
@@ -371,6 +425,7 @@ function checkStartMode(mode) {
 
 function createSession(mode, tab) {
   chrome.storage.session.remove(["annotationSettings"]);
+  const monotonicBaseline = captureMonotonicBaseline();
   session = {
     session_id: createSessionId(),
     created_at: nowIso(),
@@ -392,6 +447,8 @@ function createSession(mode, tab) {
       errors: 0,
     },
     diagnostics: [],
+    monotonic: monotonicBaseline.monotonic,
+    monotonic_available: monotonicBaseline.monotonic_available,
   };
 }
 
@@ -506,12 +563,22 @@ function syncRecordingState(snapshot) {
     state.recording.error = snapshot.lastError;
   }
   if (nextState === "recording") {
+    if (typeof state.recording.videoStartEpochMs !== "number") {
+      state.recording.videoStartEpochMs = Date.now();
+    }
+    state.recording.videoEndEpochMs = null;
     setSessionState("capturing");
   } else if (nextState === "paused") {
     setSessionState("paused");
   } else if (nextState === "idle" && session && session.mode === "recording") {
     if (state.recording.hasData && !state.recording.capturedAt) {
       state.recording.capturedAt = nowIso();
+    }
+    if (
+      state.recording.hasData &&
+      typeof state.recording.videoEndEpochMs !== "number"
+    ) {
+      state.recording.videoEndEpochMs = Date.now();
     }
     markSessionStopped();
   }
@@ -539,6 +606,8 @@ async function getActiveTab() {
 
 async function buildEnvironment(context) {
   const userAgent = navigator.userAgent || "";
+  const extensionVersion = getExtensionVersion();
+  const timezoneOffsetMinutes = new Date().getTimezoneOffset();
   let platform = "unknown";
   try {
     const platformInfo = await chrome.runtime.getPlatformInfo();
@@ -558,12 +627,41 @@ async function buildEnvironment(context) {
   }
 
   const tab = session ? session.active_tab : await getActiveTab();
+  const contextViewport = context && context.viewport ? context.viewport : null;
+  const viewportWidth =
+    contextViewport && typeof contextViewport.w === "number"
+      ? contextViewport.w
+      : contextViewport && typeof contextViewport.width === "number"
+        ? contextViewport.width
+        : tab && typeof tab.width === "number"
+          ? tab.width
+          : null;
+  const viewportHeight =
+    contextViewport && typeof contextViewport.h === "number"
+      ? contextViewport.h
+      : contextViewport && typeof contextViewport.height === "number"
+        ? contextViewport.height
+        : tab && typeof tab.height === "number"
+          ? tab.height
+          : null;
+  const devicePixelRatio =
+    context && typeof context.devicePixelRatio === "number"
+      ? context.devicePixelRatio
+      : null;
   return {
     user_agent: userAgent,
     browser: detectBrowser(userAgent),
     browser_version: parseBrowserVersion(userAgent),
     platform,
     timezone,
+    timezone_iana: timezone,
+    timezone_offset_minutes: timezoneOffsetMinutes,
+    extension_version: extensionVersion,
+    device_pixel_ratio: devicePixelRatio,
+    viewport: {
+      w: viewportWidth,
+      h: viewportHeight,
+    },
     captured_url: tab && tab.url ? tab.url : "",
     captured_title: tab && tab.title ? tab.title : "",
     timestamp: new Date().toISOString(),
@@ -581,6 +679,19 @@ async function buildEvidenceExportData(context) {
     redactionEnabled: true,
   });
   const redactionEnabled = redactionResult.redactionEnabled !== false;
+  const extensionVersion =
+    environment && environment.extension_version
+      ? environment.extension_version
+      : getExtensionVersion();
+  const exportCreatedAt = new Date();
+  const exportMetadata = {
+    zip_created_at_utc: exportCreatedAt.toISOString(),
+    zip_created_at_local: exportCreatedAt.toString(),
+    zip_created_at_epoch_ms: exportCreatedAt.getTime(),
+    zip_builder_version: extensionVersion || null,
+    redaction_enabled:
+      typeof redactionEnabled === "boolean" ? redactionEnabled : null,
+  };
   const networkCapped = state.network.capped;
   const rawNetworkCount = Object.keys(state.network.requests).length;
   const networkEntries = buildNetworkExportEntries();
@@ -644,7 +755,7 @@ async function buildEvidenceExportData(context) {
     const createdAt =
       state.recording.capturedAt || state.screenshot.capturedAt || nowIso();
     sessionExport = {
-      session_id: null,
+      session_id: createSessionId(),
       created_at: createdAt,
       ended_at: nowIso(),
       mode: state.recording.hasData
@@ -764,15 +875,68 @@ async function buildEvidenceExportData(context) {
       });
     }
   }
+  const sessionId = sessionExport ? sessionExport.session_id : null;
+  const startedAtIso = sessionExport ? sessionExport.created_at : null;
+  const endedAtIso = sessionExport ? sessionExport.ended_at : null;
+  const startedAtMs = parseEpochMs(startedAtIso);
+  const endedAtMs = parseEpochMs(endedAtIso);
+  const durationMs =
+    startedAtMs !== null && endedAtMs !== null
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : null;
+  const timezoneOffsetMinutes =
+    environment && typeof environment.timezone_offset_minutes === "number"
+      ? environment.timezone_offset_minutes
+      : null;
+  const timezoneIana =
+    (environment && (environment.timezone_iana || environment.timezone)) || null;
+  const monotonicBaseline =
+    session && session.monotonic
+      ? session.monotonic
+      : { epoch_origin_ms: null, monotonic_origin_ms: null };
+  const monotonicAvailable =
+    session && typeof session.monotonic_available === "boolean"
+      ? session.monotonic_available
+      : false;
+  const videoStartEpochMs =
+    typeof state.recording.videoStartEpochMs === "number"
+      ? state.recording.videoStartEpochMs
+      : null;
+  const videoEndEpochMs =
+    typeof state.recording.videoEndEpochMs === "number"
+      ? state.recording.videoEndEpochMs
+      : parseEpochMs(state.recording.capturedAt);
+  const videoDurationMs =
+    videoStartEpochMs !== null && videoEndEpochMs !== null
+      ? Math.max(0, videoEndEpochMs - videoStartEpochMs)
+      : null;
+  const videoCodec = state.recording.videoMime || state.recording.mimeType || null;
   const qaSessionLog = {
+    schema_version: QA_SESSION_LOG_SCHEMA_VERSION,
     session: {
-      startedAt: sessionExport ? sessionExport.created_at : null,
-      endedAt: sessionExport ? sessionExport.ended_at : null,
+      session_id: sessionId,
+      startedAt: startedAtIso,
+      startedAt_ms: startedAtMs,
+      endedAt: endedAtIso,
+      endedAt_ms: endedAtMs,
+      durationMs,
       tabId:
         sessionExport && sessionExport.active_tab
           ? sessionExport.active_tab.tab_id
           : null,
       mode: sessionExport ? sessionExport.mode : null,
+      timezone_offset_minutes: timezoneOffsetMinutes,
+      timezone_iana: timezoneIana,
+      extension_version: extensionVersion || null,
+      monotonic: {
+        epoch_origin_ms: monotonicBaseline.epoch_origin_ms,
+        monotonic_origin_ms: monotonicBaseline.monotonic_origin_ms,
+      },
+      monotonic_available: monotonicAvailable,
+      video_time_zero_epoch_ms: videoStartEpochMs,
+      video_duration_ms: videoDurationMs,
+      video_codec: videoCodec,
+      video_fps: null,
     },
     raw: {
       network: redactedNetworkEntries,
@@ -802,6 +966,7 @@ async function buildEvidenceExportData(context) {
     environment,
     qaSessionLog,
     qaSummaryText,
+    exportMetadata,
     exportTimestamp,
   };
 }
@@ -1161,6 +1326,12 @@ async function startRecording(streamId, tabId, mimeType) {
     state.recording.videoBlobUrl = null;
     state.recording.videoMime = null;
     state.recording.videoByteLength = null;
+    if (state.recording.status === "recording") {
+      if (typeof state.recording.videoStartEpochMs !== "number") {
+        state.recording.videoStartEpochMs = Date.now();
+      }
+      state.recording.videoEndEpochMs = null;
+    }
     clearStatusMessage();
     return response;
   } catch (error) {
@@ -1603,6 +1774,8 @@ async function resetSession() {
   state.recording.videoBlobUrl = null;
   state.recording.videoMime = null;
   state.recording.videoByteLength = null;
+  state.recording.videoStartEpochMs = null;
+  state.recording.videoEndEpochMs = null;
 
   session = null;
   clearStatusMessage();
@@ -1758,17 +1931,23 @@ function addConsoleEntry(entry) {
 }
 
 function buildConsoleExportEntries() {
-  return state.console.logs.map((entry) => ({
-    timestamp: entry.timestamp || nowIso(),
-    level: entry.level || "log",
-    message: typeof entry.message === "string" ? entry.message : "",
-    args: Array.isArray(entry.args) ? entry.args : [],
-    source: entry.source || "console",
-    url: entry.url || null,
-    line: typeof entry.line === "number" ? entry.line : null,
-    column: typeof entry.column === "number" ? entry.column : null,
-    stack: entry.stack || null,
-  }));
+  return state.console.logs.map((entry) => {
+    const timestampIso = entry.timestamp || nowIso();
+    const timestampEpochMs = parseEpochMs(timestampIso);
+    return {
+      timestamp: timestampIso,
+      timestamp_epoch_ms: timestampEpochMs,
+      time_missing: timestampEpochMs === null ? true : undefined,
+      level: entry.level || "log",
+      message: typeof entry.message === "string" ? entry.message : "",
+      args: Array.isArray(entry.args) ? entry.args : [],
+      source: entry.source || "console",
+      url: entry.url || null,
+      line: typeof entry.line === "number" ? entry.line : null,
+      column: typeof entry.column === "number" ? entry.column : null,
+      stack: entry.stack || null,
+    };
+  });
 }
 
 function decodeResponseBody(entry) {
@@ -1805,9 +1984,13 @@ function buildNetworkExportEntries() {
         ? entry.responseHeaders
         : null;
     const skipBody = shouldSkipResponseBody(responseHeaders);
+    const timestampIso = entry.timestampIso || nowIso();
+    const timestampEpochMs = parseEpochMs(timestampIso);
     return {
       request_id: entry.id || null,
-      timestamp: entry.timestampIso || nowIso(),
+      timestamp: timestampIso,
+      timestamp_epoch_ms: timestampEpochMs,
+      time_missing: timestampEpochMs === null ? true : undefined,
       url: entry.url || null,
       method: entry.method || null,
       request_headers:
@@ -2259,6 +2442,9 @@ async function handleMessage(message, sender) {
       state.recording.capturedAt = nowIso();
       state.recording.error = null;
       state.recording.hasData = true;
+      if (typeof state.recording.videoEndEpochMs !== "number") {
+        state.recording.videoEndEpochMs = Date.now();
+      }
       markSessionStopped();
       updateSessionCounts();
       result = { ok: true };

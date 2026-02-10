@@ -16,6 +16,23 @@ Optional files:
 - `qa-session-video-*.webm`
 - `screenshots/qa-screenshot-*.png`
 - `network_logs.json`, `console_logs.json`
+- `export_metadata.json`
+
+## Schema additions (2026-02)
+Recent exports add additive metadata for deterministic playback syncing. Fields may be
+present but null when unavailable.
+
+Highlights:
+- `qa-session-log.json`: `schema_version`, `session_id`, `startedAt_ms`,
+  `endedAt_ms`, `durationMs`, `timezone_offset_minutes`, `timezone_iana`,
+  `extension_version`, `monotonic`, `monotonic_available`,
+  `video_time_zero_epoch_ms`, `video_duration_ms`, `video_codec`, `video_fps`.
+- `network_logs.json` / `console_logs.json` entries: `timestamp_epoch_ms`
+  (+ `time_missing` when unknown).
+- `environment.json`: `extension_version`, `timezone_offset_minutes`,
+  `timezone_iana`, `device_pixel_ratio`, `viewport`.
+- `export_metadata.json`: `zip_created_at_utc`, `zip_created_at_local`,
+  `zip_created_at_epoch_ms`, `zip_builder_version`, `redaction_enabled`.
 
 ## Notes
 - All data stays on your machine.
