@@ -16,6 +16,15 @@ try {
   console.warn("Pipeline modules unavailable:", error);
 }
 
+try {
+  importScripts(
+    chrome.runtime.getURL("lib/jszip.min.js"),
+    chrome.runtime.getURL("lib/zipBuilderChunked.js")
+  );
+} catch (error) {
+  console.warn("Zip builder unavailable:", error);
+}
+
 const DEBUGGER_PROTOCOL_VERSION = "1.3";
 const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
@@ -26,6 +35,17 @@ const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
 const QA_SESSION_LOG_SCHEMA_VERSION = "1.1.0";
+const EXPORT_LIMITS = {
+  maxRequests: 2000,
+  maxConsoleEntries: 5000,
+  maxBodyBytes: 204800,
+  maxScreenshots: 200,
+};
+const EXPORT_BATCH_DEFAULTS = {
+  files: 20,
+  screenshots: 10,
+  yieldEveryMs: 0,
+};
 
 const state = {
   screenshot: {
@@ -76,6 +96,7 @@ let offscreenReady = false;
 let offscreenCreating = null;
 let recordingPanelWindowId = null;
 let exportPhase = null;
+let exportJob = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -140,6 +161,16 @@ function formatExportTimestamp(date) {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
   return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+}
+
+function formatZipTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
 }
 
 function computeSessionOffsetMs(timestampIso) {
@@ -211,6 +242,139 @@ function truncateToBytes(value, maxBytes) {
   return `${truncated}${TRUNCATION_SUFFIX}`;
 }
 
+function getExportLimits(pipelineConfig) {
+  const pipelineMaxBody =
+    pipelineConfig && typeof pipelineConfig.maxBodyBytes === "number"
+      ? pipelineConfig.maxBodyBytes
+      : null;
+  const maxBodyBytes = pipelineMaxBody
+    ? Math.min(EXPORT_LIMITS.maxBodyBytes, pipelineMaxBody)
+    : EXPORT_LIMITS.maxBodyBytes;
+  return {
+    ...EXPORT_LIMITS,
+    maxBodyBytes,
+  };
+}
+
+function limitArrayToTail(items, max) {
+  if (!Array.isArray(items)) {
+    return { items: [], total: 0, kept: 0, dropped: 0 };
+  }
+  const total = items.length;
+  if (!Number.isFinite(max) || max <= 0 || total <= max) {
+    return { items: items.slice(), total, kept: total, dropped: 0 };
+  }
+  const start = total - max;
+  return {
+    items: items.slice(start),
+    total,
+    kept: max,
+    dropped: start,
+  };
+}
+
+function applyNetworkBodyLimit(entries, maxBodyBytes) {
+  let truncatedRequest = 0;
+  let truncatedResponse = 0;
+  const nextEntries = entries.map((entry) => {
+    const next = { ...entry };
+    if (typeof next.request_post_data === "string") {
+      const truncated = truncateToBytes(next.request_post_data, maxBodyBytes);
+      if (truncated !== next.request_post_data) {
+        truncatedRequest += 1;
+        next.request_post_data = truncated;
+      }
+    }
+    if (typeof next.response_body === "string") {
+      const truncated = truncateToBytes(next.response_body, maxBodyBytes);
+      if (truncated !== next.response_body) {
+        truncatedResponse += 1;
+        next.response_body = truncated;
+      }
+    }
+    return next;
+  });
+  return { entries: nextEntries, truncatedRequest, truncatedResponse };
+}
+
+function buildExportTruncationReport(options) {
+  const {
+    limits,
+    networkResult,
+    consoleResult,
+    screenshotResult,
+    truncatedBodies,
+  } = options;
+  const droppedNetwork = networkResult ? networkResult.dropped : 0;
+  const droppedConsole = consoleResult ? consoleResult.dropped : 0;
+  const droppedScreenshots = screenshotResult ? screenshotResult.dropped : 0;
+  const truncatedRequest =
+    truncatedBodies && typeof truncatedBodies.request === "number"
+      ? truncatedBodies.request
+      : 0;
+  const truncatedResponse =
+    truncatedBodies && typeof truncatedBodies.response === "number"
+      ? truncatedBodies.response
+      : 0;
+  const hasTruncation =
+    droppedNetwork > 0 ||
+    droppedConsole > 0 ||
+    droppedScreenshots > 0 ||
+    truncatedRequest > 0 ||
+    truncatedResponse > 0;
+  if (!hasTruncation) {
+    return { report: null, note: null };
+  }
+  const report = {
+    created_at: nowIso(),
+    limits,
+    original_counts: {
+      network_entries: networkResult ? networkResult.total : 0,
+      console_entries: consoleResult ? consoleResult.total : 0,
+      screenshots: screenshotResult ? screenshotResult.total : 0,
+    },
+    kept_counts: {
+      network_entries: networkResult ? networkResult.kept : 0,
+      console_entries: consoleResult ? consoleResult.kept : 0,
+      screenshots: screenshotResult ? screenshotResult.kept : 0,
+    },
+    dropped_counts: {
+      network_entries: droppedNetwork,
+      console_entries: droppedConsole,
+      screenshots: droppedScreenshots,
+    },
+    truncated_fields: {
+      request_post_data: {
+        truncated: truncatedRequest,
+        max_bytes: limits.maxBodyBytes,
+      },
+      response_body: {
+        truncated: truncatedResponse,
+        max_bytes: limits.maxBodyBytes,
+      },
+    },
+    reasons: {
+      network_entries: droppedNetwork > 0 ? "maxRequests" : null,
+      console_entries: droppedConsole > 0 ? "maxConsoleEntries" : null,
+      screenshots: droppedScreenshots > 0 ? "maxScreenshots" : null,
+    },
+  };
+  const note =
+    "[Export Notice] Some items were truncated for stability. " +
+    "See export_truncation_report.json for details.";
+  return { report, note };
+}
+
+function appendSummaryNote(summary, note) {
+  if (!note) {
+    return summary;
+  }
+  if (!summary) {
+    return note;
+  }
+  return `${summary}\n\n${note}`;
+}
+
 function getHeaderValue(headers, name) {
   if (!headers) {
     return null;
@@ -233,6 +397,62 @@ function shouldSkipResponseBody(headers) {
 function logExportPhase(phase, details) {
   exportPhase = phase;
   console.log("[EXPORT]", phase, details || "");
+}
+
+function sendExportEvent(type, payload) {
+  try {
+    chrome.runtime.sendMessage({ type, ...payload });
+  } catch (error) {
+    console.warn("[EXPORT] Failed to send event", type, error);
+  }
+}
+
+function reportExportProgress(percent, stage, detail) {
+  if (!exportJob) {
+    exportJob = {};
+  }
+  exportJob.lastProgress = percent;
+  logExportPhase(stage, detail);
+  sendExportEvent("EXPORT_EVIDENCE_ZIP_PROGRESS", {
+    percent,
+    stage,
+    detail,
+  });
+}
+
+function isZipBuilderAvailable() {
+  return Boolean(globalThis.JSZip) && Boolean(globalThis.ZipBuilderChunked);
+}
+
+async function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const downloadId = await new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        {
+          url,
+          filename,
+          saveAs: false,
+        },
+        (id) => {
+          if (chrome.runtime.lastError || !id) {
+            reject(
+              new Error(
+                chrome.runtime.lastError
+                  ? chrome.runtime.lastError.message
+                  : "Download failed."
+              )
+            );
+            return;
+          }
+          resolve(id);
+        }
+      );
+    });
+    return downloadId;
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 }
 
 function detectBrowser(userAgent) {
@@ -816,6 +1036,42 @@ async function buildEvidenceExportData(context) {
           burstCollapse: { windowMs: 5000, minCount: 10 },
           topSlowRequestsLimit: 10,
         };
+  const exportLimits = getExportLimits(pipelineConfig);
+  const networkLimit = limitArrayToTail(
+    redactedNetworkEntries,
+    exportLimits.maxRequests
+  );
+  const consoleLimit = limitArrayToTail(
+    redactedConsoleEntries,
+    exportLimits.maxConsoleEntries
+  );
+  const networkBodyResult = applyNetworkBodyLimit(
+    networkLimit.items,
+    exportLimits.maxBodyBytes
+  );
+  const limitedNetworkEntries = networkBodyResult.entries;
+  const limitedConsoleEntries = consoleLimit.items;
+  const screenshotLimit = limitArrayToTail(
+    screenshotList,
+    exportLimits.maxScreenshots
+  );
+  const limitedScreenshotList = screenshotLimit.items;
+  const limitedScreenshotDownloads =
+    screenshotLimit.dropped > 0
+      ? screenshotDownloads.slice(screenshotLimit.dropped)
+      : screenshotDownloads.slice();
+  const truncationResult = buildExportTruncationReport({
+    limits: exportLimits,
+    networkResult: networkLimit,
+    consoleResult: consoleLimit,
+    screenshotResult: screenshotLimit,
+    truncatedBodies: {
+      request: networkBodyResult.truncatedRequest,
+      response: networkBodyResult.truncatedResponse,
+    },
+  });
+  const exportTruncationReport = truncationResult.report;
+  const truncationNote = truncationResult.note;
   let normalizedEvents = [];
   let signals = [];
   let qaSummaryText = null;
@@ -836,10 +1092,10 @@ async function buildEvidenceExportData(context) {
               : null,
           mode: sessionExport ? sessionExport.mode : null,
         },
-        rawNetwork: redactedNetworkEntries,
+        rawNetwork: limitedNetworkEntries,
         markers: markerList,
-        screenshots: screenshotList,
-        consoleEvents: redactedConsoleEntries,
+        screenshots: limitedScreenshotList,
+        consoleEvents: limitedConsoleEntries,
         uiActions: [],
       },
       pipelineConfig
@@ -875,6 +1131,7 @@ async function buildEvidenceExportData(context) {
       });
     }
   }
+  qaSummaryText = appendSummaryNote(qaSummaryText, truncationNote);
   const sessionId = sessionExport ? sessionExport.session_id : null;
   const startedAtIso = sessionExport ? sessionExport.created_at : null;
   const endedAtIso = sessionExport ? sessionExport.ended_at : null;
@@ -939,10 +1196,10 @@ async function buildEvidenceExportData(context) {
       video_fps: null,
     },
     raw: {
-      network: redactedNetworkEntries,
-      console: redactedConsoleEntries,
+      network: limitedNetworkEntries,
+      console: limitedConsoleEntries,
       markers: markerList,
-      screenshots: screenshotList,
+      screenshots: limitedScreenshotList,
     },
     normalizedEvents,
     signals,
@@ -952,23 +1209,273 @@ async function buildEvidenceExportData(context) {
     screenshotDataUrl: state.screenshot.dataUrl,
     recordingDataUrl: state.recording.dataUrl,
     recordingMimeType: state.recording.mimeType,
-    screenshots: screenshotDownloads,
+    screenshots: limitedScreenshotDownloads,
     video: videoReference,
     networkLogs: {
       version: "1.0",
-      entries: redactedNetworkEntries,
+      entries: limitedNetworkEntries,
     },
     consoleLogs: {
       version: "1.0",
-      entries: redactedConsoleEntries,
+      entries: limitedConsoleEntries,
     },
     session: sessionExport,
     environment,
     qaSessionLog,
     qaSummaryText,
     exportMetadata,
+    exportTruncationReport,
     exportTimestamp,
   };
+}
+
+async function runEvidenceZipExport(context) {
+  if (exportJob && exportJob.active) {
+    throw new Error("Export already in progress.");
+  }
+  exportJob = {
+    active: true,
+    startedAt: Date.now(),
+    lastProgress: 0,
+  };
+  const exportStartIso = nowIso();
+  reportExportProgress(1, "export_start", { startedAt: exportStartIso });
+  try {
+    if (!isZipBuilderAvailable()) {
+      throw new Error("Zip builder unavailable.");
+    }
+    reportExportProgress(5, "prepare_data");
+    const data = await buildEvidenceExportData(context);
+    const networkCount =
+      data.networkLogs && Array.isArray(data.networkLogs.entries)
+        ? data.networkLogs.entries.length
+        : 0;
+    const consoleCount =
+      data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+        ? data.consoleLogs.entries.length
+        : 0;
+    const screenshotCount = Array.isArray(data.screenshots)
+      ? data.screenshots.length
+      : data.screenshotDataUrl
+        ? 1
+        : 0;
+    logExportPhase("data_ready", {
+      networkCount,
+      consoleCount,
+      screenshotCount,
+    });
+    reportExportProgress(10, "data_ready", {
+      networkCount,
+      consoleCount,
+      screenshotCount,
+    });
+    reportExportProgress(12, "stringify_start");
+    const networkLogsJson = JSON.stringify(
+      data.networkLogs || { version: "1.0", entries: [] },
+      null,
+      2
+    );
+    const consoleLogsJson = JSON.stringify(
+      data.consoleLogs || { version: "1.0", entries: [] },
+      null,
+      2
+    );
+    const sessionJson = JSON.stringify(data.session || {}, null, 2);
+    const environmentJson = JSON.stringify(data.environment || {}, null, 2);
+    const qaSessionLogJson = data.qaSessionLog
+      ? JSON.stringify(data.qaSessionLog, null, 2)
+      : null;
+    const exportMetadataJson = JSON.stringify(data.exportMetadata || {}, null, 2);
+    const exportTruncationJson = data.exportTruncationReport
+      ? JSON.stringify(data.exportTruncationReport, null, 2)
+      : null;
+    const jsonSizes = {
+      network_logs: networkLogsJson.length,
+      console_logs: consoleLogsJson.length,
+      session: sessionJson.length,
+      environment: environmentJson.length,
+      qa_session_log: qaSessionLogJson ? qaSessionLogJson.length : 0,
+      export_metadata: exportMetadataJson.length,
+      export_truncation_report: exportTruncationJson ? exportTruncationJson.length : 0,
+      qa_summary: data.qaSummaryText ? data.qaSummaryText.length : 0,
+    };
+    logExportPhase("stringify_done", jsonSizes);
+    reportExportProgress(18, "stringify_done", jsonSizes);
+
+    const zip = new JSZip();
+    const zipDate =
+      data.session && data.session.ended_at
+        ? new Date(data.session.ended_at)
+        : new Date();
+    const baseItems = [
+      {
+        path: "network_logs.json",
+        data: networkLogsJson,
+        options: { date: zipDate },
+      },
+      {
+        path: "console_logs.json",
+        data: consoleLogsJson,
+        options: { date: zipDate },
+      },
+      {
+        path: "session.json",
+        data: sessionJson,
+        options: { date: zipDate },
+      },
+      {
+        path: "environment.json",
+        data: environmentJson,
+        options: { date: zipDate },
+      },
+      {
+        path: "export_metadata.json",
+        data: exportMetadataJson,
+        options: { date: zipDate },
+      },
+    ];
+    if (qaSessionLogJson) {
+      baseItems.push({
+        path: "qa-session-log.json",
+        data: qaSessionLogJson,
+        options: { date: zipDate },
+      });
+    }
+    if (data.qaSummaryText) {
+      baseItems.push({
+        path: "qa-summary.txt",
+        data: data.qaSummaryText,
+        options: { date: zipDate },
+      });
+    }
+    if (exportTruncationJson) {
+      baseItems.push({
+        path: "export_truncation_report.json",
+        data: exportTruncationJson,
+        options: { date: zipDate },
+      });
+    }
+    logExportPhase("zip_add_json", { count: baseItems.length });
+    await ZipBuilderChunked.addItemsInBatches(zip, baseItems, {
+      batchSize: EXPORT_BATCH_DEFAULTS.files,
+      yieldEveryMs: EXPORT_BATCH_DEFAULTS.yieldEveryMs,
+      onProgress: ({ completed, total }) => {
+        const percent = Math.round(20 + (completed / total) * 20);
+        reportExportProgress(percent, "zip_add_json", { completed, total });
+      },
+    });
+
+    const screenshotItems = [];
+    if (Array.isArray(data.screenshots)) {
+      data.screenshots.forEach((shot) => {
+        if (!shot || !shot.dataUrl) {
+          return;
+        }
+        const name =
+          shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
+        screenshotItems.push({
+          path: `screenshots/${name}`,
+          getData: () => dataUrlToBlob(shot.dataUrl),
+          options: { date: zipDate },
+        });
+      });
+    } else if (data.screenshotDataUrl) {
+      screenshotItems.push({
+        path: "screenshots/screenshot.png",
+        getData: () => dataUrlToBlob(data.screenshotDataUrl),
+        options: { date: zipDate },
+      });
+    }
+    if (screenshotItems.length > 0) {
+      logExportPhase("zip_add_screenshots", { count: screenshotItems.length });
+      await ZipBuilderChunked.addItemsInBatches(zip, screenshotItems, {
+        batchSize: EXPORT_BATCH_DEFAULTS.screenshots,
+        yieldEveryMs: EXPORT_BATCH_DEFAULTS.yieldEveryMs,
+        onProgress: ({ completed, total }) => {
+          const percent = Math.round(40 + (completed / total) * 30);
+          reportExportProgress(percent, "zip_add_screenshots", {
+            completed,
+            total,
+          });
+        },
+      });
+    } else {
+      reportExportProgress(70, "zip_add_screenshots", { completed: 0, total: 0 });
+    }
+
+    const exportTimestamp =
+      data.exportTimestamp || formatExportTimestamp(new Date());
+    let recordingBlob = null;
+    let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
+    if (data.video && data.video.blobUrl) {
+      try {
+        const response = await fetch(data.video.blobUrl);
+        recordingBlob = await response.blob();
+        if (data.video.fileName) {
+          recordingFileName = data.video.fileName;
+        }
+      } catch (error) {
+        recordingBlob = null;
+      }
+    }
+    if (!recordingBlob && (data.recordingDataUrl || data.recordingMimeType)) {
+      try {
+        await ensureOffscreenReady();
+        const exportResponse = await sendMessageToOffscreen({
+          type: "RECORDING_EXPORT_WEBM",
+        });
+        if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+          const response = await fetch(exportResponse.blobUrl);
+          recordingBlob = await response.blob();
+        } else if (data.recordingDataUrl) {
+          recordingBlob = dataUrlToBlob(data.recordingDataUrl);
+        }
+      } catch (error) {
+        recordingBlob = null;
+      }
+    }
+    if (recordingBlob) {
+      logExportPhase("zip_add_video", { bytes: recordingBlob.size });
+      zip.file(recordingFileName, recordingBlob, { date: zipDate });
+      reportExportProgress(75, "zip_add_video", {
+        bytes: recordingBlob.size,
+      });
+    } else {
+      reportExportProgress(75, "zip_add_video", { bytes: 0 });
+    }
+
+    reportExportProgress(78, "zip_generate_start");
+    const zipBlob = await ZipBuilderChunked.generateZipBlob(zip, {
+      compression: "STORE",
+      onUpdate: (metadata) => {
+        if (!metadata || typeof metadata.percent !== "number") {
+          return;
+        }
+        const percent = Math.round(78 + (metadata.percent / 100) * 17);
+        reportExportProgress(percent, "zip_generate", {
+          percent: metadata.percent,
+        });
+      },
+    });
+    logExportPhase("zip_generate_done", { bytes: zipBlob.size });
+    reportExportProgress(96, "zip_generate_done", { bytes: zipBlob.size });
+
+    const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+    await downloadBlob(zipBlob, filename);
+    reportExportProgress(100, "zip_download", { filename });
+    sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
+  } catch (error) {
+    console.error("[EXPORT] Failed", error && error.stack ? error.stack : error);
+    sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
+      userMessage: "Export failed. Check extension logs.",
+      debugCode: error && error.message ? error.message : "unknown",
+    });
+    throw error;
+  } finally {
+    if (exportJob) {
+      exportJob.active = false;
+    }
+  }
 }
 
 function sendMessageToTab(tabId, message) {
@@ -2416,11 +2923,33 @@ async function handleMessage(message, sender) {
       }
       result = { ok: true, data: await buildEvidenceExportData(normalizedMessage) };
       break;
+    case "EXPORT_EVIDENCE_ZIP_REQUEST":
+      if (exportJob && exportJob.active) {
+        result = { ok: false, accepted: false, error: "Export already running." };
+        break;
+      }
+      if (!session && !hasExportableArtifacts()) {
+        result = { ok: false, accepted: false, error: "No session to export yet." };
+        break;
+      }
+      result = { ok: true, accepted: true };
+      setTimeout(() => {
+        runEvidenceZipExport(normalizedMessage).catch(() => {});
+      }, 0);
+      break;
     case "DOWNLOAD_EVIDENCE_ZIP":
-      result = {
-        ok: false,
-        error: "Export is handled in the popup.",
-      };
+      if (exportJob && exportJob.active) {
+        result = { ok: false, accepted: false, error: "Export already running." };
+        break;
+      }
+      if (!session && !hasExportableArtifacts()) {
+        result = { ok: false, accepted: false, error: "No session to export yet." };
+        break;
+      }
+      result = { ok: true, accepted: true };
+      setTimeout(() => {
+        runEvidenceZipExport(normalizedMessage).catch(() => {});
+      }, 0);
       break;
     case "CONSOLE_LOG":
       if (

@@ -134,6 +134,15 @@ const MSG = {
   RESET_SESSION: "RESET_SESSION",
   NETWORK_RESET: "NETWORK_RESET",
 };
+const EXPORT_EVENTS = {
+  REQUEST: "EXPORT_EVIDENCE_ZIP_REQUEST",
+  PROGRESS: "EXPORT_EVIDENCE_ZIP_PROGRESS",
+  DONE: "EXPORT_EVIDENCE_ZIP_DONE",
+  ERROR: "EXPORT_EVIDENCE_ZIP_ERROR",
+};
+let exportInProgress = false;
+let exportProgressPercent = 0;
+let exportButtonLabel = null;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -170,13 +179,81 @@ function assertJsZipAvailable() {
   if (jszipAvailable) {
     return true;
   }
+  console.warn(JSZIP_LOAD_ERROR);
+  return false;
+}
+
+function getExportStageLabel(stage) {
+  switch (stage) {
+    case "export_start":
+      return "Starting";
+    case "prepare_data":
+    case "data_ready":
+    case "stringify_start":
+    case "stringify_done":
+      return "Preparing";
+    case "zip_add_json":
+      return "Packing JSON";
+    case "zip_add_screenshots":
+      return "Packing screenshots";
+    case "zip_add_video":
+      return "Adding video";
+    case "zip_generate_start":
+    case "zip_generate":
+    case "zip_generate_done":
+      return "Building ZIP";
+    case "zip_download":
+      return "Downloading";
+    default:
+      return "Exporting";
+  }
+}
+
+function startExportUI() {
+  exportInProgress = true;
+  exportProgressPercent = 0;
+  if (!exportButtonLabel && buttons.download) {
+    exportButtonLabel = buttons.download.textContent || "Export ZIP";
+  }
   if (buttons.download) {
     buttons.download.disabled = true;
+    buttons.download.textContent = "Exporting… (0%)";
   }
   if (statusElements.download) {
-    setStatus(statusElements.download, JSZIP_LOAD_ERROR, "error");
+    setStatus(statusElements.download, "Exporting… (0%)");
   }
-  return false;
+}
+
+function updateExportUI(percent, stage) {
+  if (!exportInProgress) {
+    startExportUI();
+  }
+  if (typeof percent === "number" && Number.isFinite(percent)) {
+    exportProgressPercent = Math.max(0, Math.min(100, Math.round(percent)));
+  }
+  const stageLabel = getExportStageLabel(stage);
+  const label = `Exporting… (${exportProgressPercent}%)`;
+  if (buttons.download) {
+    buttons.download.textContent = label;
+  }
+  if (statusElements.download) {
+    setStatus(statusElements.download, `${label} — ${stageLabel}`);
+  }
+}
+
+function finishExportUI(message, type = "success") {
+  exportInProgress = false;
+  exportProgressPercent = 0;
+  if (buttons.download) {
+    if (!exportButtonLabel) {
+      exportButtonLabel = buttons.download.textContent || "Export ZIP";
+    }
+    buttons.download.disabled = false;
+    buttons.download.textContent = exportButtonLabel;
+  }
+  if (message && statusElements.download) {
+    setStatus(statusElements.download, message, type);
+  }
 }
 
 function clearStatusError() {
@@ -1852,14 +1929,10 @@ async function addZipItemsInChunks(zip, items, options = {}) {
 }
 
 async function handleDownload() {
+  if (exportInProgress) {
+    return;
+  }
   let hadError = false;
-  buttons.download.disabled = true;
-  const originalLabel = buttons.download.textContent;
-  const setProgressLabel = (text) => {
-    buttons.download.textContent = text;
-    setStatus(statusElements.download, text);
-  };
-  setProgressLabel("Preparing ZIP...");
   try {
     const statusResponse = await send(MSG.GET_STATUS);
     if (!statusResponse.ok) {
@@ -1906,291 +1979,32 @@ async function handleDownload() {
       Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
     const viewportSnapshot = await getViewportSnapshot();
     const requestedExportTimestamp = formatExportTimestamp(new Date());
-    const exportResponse = await Promise.race([
-      send("GET_EVIDENCE_EXPORT_DATA", {
-        timezone,
-        exportTimestamp: requestedExportTimestamp,
-        devicePixelRatio: viewportSnapshot.devicePixelRatio,
-        viewport: viewportSnapshot.viewport,
-      }),
-      new Promise((resolve) =>
-        setTimeout(
-          () => resolve({ ok: false, error: "ZIP export timed out. Try again or reduce capture size." }),
-          10000
-        )
-      ),
-    ]);
-    if (!exportResponse.ok) {
+    startExportUI();
+    const exportResponse = await send(EXPORT_EVENTS.REQUEST, {
+      timezone,
+      exportTimestamp: requestedExportTimestamp,
+      devicePixelRatio: viewportSnapshot.devicePixelRatio,
+      viewport: viewportSnapshot.viewport,
+      sessionId:
+        statusResponse.state.session && statusResponse.state.session.session_id
+          ? statusResponse.state.session.session_id
+          : null,
+    });
+    if (!exportResponse.ok || exportResponse.accepted !== true) {
       setStatus(
         statusElements.download,
-        exportResponse.error || "Export data unavailable.",
+        exportResponse.error || "Export could not be started.",
         "error"
       );
       hadError = true;
       return;
     }
-
-    const data = exportResponse.data;
-    const exportTimestamp = data.exportTimestamp || requestedExportTimestamp;
-    const estimatedJsonBytes = [
-      JSON.stringify(data.networkLogs || {}).length,
-      JSON.stringify(data.consoleLogs || {}).length,
-      JSON.stringify(data.session || {}).length,
-      JSON.stringify(data.environment || {}).length,
-      data.qaSessionLog ? JSON.stringify(data.qaSessionLog).length : 0,
-      data.qaSummaryText ? data.qaSummaryText.length : 0,
-      data.exportMetadata ? JSON.stringify(data.exportMetadata).length : 0,
-    ].reduce((total, size) => total + size, 0);
-    const MAX_JSON_BYTES = 25 * 1024 * 1024;
-    if (estimatedJsonBytes > MAX_JSON_BYTES) {
-      setStatus(
-        statusElements.download,
-        "Export too large. Reduce capture size and try again.",
-        "error"
-      );
-      hadError = true;
-      return;
-    }
-    let recordingExport = null;
-    let recordingBlob = null;
-    let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
-    if (data.video && data.video.blobUrl) {
-      try {
-        const response = await fetch(data.video.blobUrl);
-        recordingBlob = await response.blob();
-        if (data.video.fileName) {
-          recordingFileName = data.video.fileName;
-        }
-      } catch (error) {
-        recordingBlob = null;
-      }
-    }
-    if (!recordingBlob && (data.recordingDataUrl || data.recordingMimeType)) {
-      try {
-        recordingExport = await send(MSG.RECORDING_EXPORT_WEBM);
-        if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
-          const response = await fetch(recordingExport.blobUrl);
-          recordingBlob = await response.blob();
-        } else if (data.recordingDataUrl) {
-          recordingBlob = await dataUrlToBlob(data.recordingDataUrl);
-        }
-      } catch (error) {
-        recordingExport = null;
-        recordingBlob = null;
-      }
-    }
-    const zip = new JSZip();
-    const baseItems = [
-      {
-        path: "network_logs.json",
-        getData: () =>
-          JSON.stringify(data.networkLogs || { version: "1.0", entries: [] }, null, 2),
-      },
-      {
-        path: "console_logs.json",
-        getData: () =>
-          JSON.stringify(data.consoleLogs || { version: "1.0", entries: [] }, null, 2),
-      },
-      {
-        path: "session.json",
-        getData: () => JSON.stringify(data.session || {}, null, 2),
-      },
-      {
-        path: "environment.json",
-        getData: () => JSON.stringify(data.environment || {}, null, 2),
-      },
-      {
-        path: "export_metadata.json",
-        getData: () => JSON.stringify(data.exportMetadata || {}, null, 2),
-      },
-    ];
-    if (data.qaSessionLog) {
-      baseItems.push({
-        path: "qa-session-log.json",
-        getData: () => JSON.stringify(data.qaSessionLog, null, 2),
-      });
-    }
-    if (data.qaSummaryText) {
-      baseItems.push({
-        path: "qa-summary.txt",
-        getData: () => data.qaSummaryText,
-      });
-    }
-
-    const screenshotItems = [];
-    if (Array.isArray(data.screenshots)) {
-      data.screenshots.forEach((shot) => {
-        if (!shot || !shot.dataUrl) {
-          return;
-        }
-        const name =
-          shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
-        screenshotItems.push({
-          path: `screenshots/${name}`,
-          getData: () => dataUrlToBlob(shot.dataUrl),
-        });
-      });
-    } else if (data.screenshotDataUrl) {
-      screenshotItems.push({
-        path: "screenshots/screenshot.png",
-        getData: () => dataUrlToBlob(data.screenshotDataUrl),
-      });
-    }
-
-    const totalItems = baseItems.length + screenshotItems.length + 1;
-    let addedItems = 0;
-    const reportProgress = () => {
-      const pct = Math.min(99, Math.round((addedItems / totalItems) * 100));
-      setProgressLabel(`Preparing ZIP… ${pct}%`);
-    };
-
-    try {
-      await addZipItemsInChunks(zip, baseItems, {
-        batchSize: 10,
-        onProgress: () => {
-          addedItems += 1;
-          reportProgress();
-        },
-      });
-
-      await addZipItemsInChunks(zip, screenshotItems, {
-        batchSize: 25,
-        onProgress: () => {
-          addedItems += 1;
-          reportProgress();
-        },
-      });
-
-      if (recordingBlob) {
-        zip.file(recordingFileName, recordingBlob);
-        addedItems += 1;
-        reportProgress();
-      } else if (data.recordingDataUrl) {
-        const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
-        zip.file(recordingFileName, recordingDataBlob);
-        addedItems += 1;
-        reportProgress();
-      } else {
-        addedItems += 1;
-        reportProgress();
-      }
-    } catch (error) {
-      console.error("[ZIP] chunked build failed", error);
-      setStatus(
-        statusElements.download,
-        "Export failed while packaging large session. Try stopping capture earlier.",
-        "error"
-      );
-      hadError = true;
-      return;
-    }
-
-    let zipError = null;
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        setProgressLabel("Finalizing ZIP…");
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error("ZIP export timed out. Try again or reduce capture size.")
-              ),
-            30000
-          )
-        );
-        await Promise.race([
-          (async () => {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            const zipBlob = await zip.generateAsync({
-              type: "blob",
-              compression: "STORE",
-            });
-            const url = URL.createObjectURL(zipBlob);
-            const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-            try {
-              await new Promise((resolve, reject) => {
-                chrome.downloads.download({ url, filename }, (downloadId) => {
-                  if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message));
-                    return;
-                  }
-                  resolve(downloadId);
-                });
-              });
-            } finally {
-              setTimeout(() => URL.revokeObjectURL(url), 2000);
-            }
-          })(),
-          timeoutPromise,
-        ]);
-        zipError = null;
-        break;
-      } catch (error) {
-        zipError = error;
-        if (attempt < 2) {
-          setStatus(statusElements.download, "Retrying ZIP...", "default");
-          await new Promise((resolve) => setTimeout(resolve, 400));
-        }
-      }
-    }
-    if (zipError) {
-      throw zipError;
-    }
-
-    if (recordingBlob) {
-      await downloadBlob(recordingBlob, recordingFileName);
-    } else if (recordingExport && recordingExport.ok && recordingExport.blobUrl) {
-      if (!chrome.downloads?.download) {
-        throw new Error("Downloads API unavailable.");
-      }
-      await new Promise((resolve, reject) => {
-        chrome.downloads.download(
-          {
-            url: recordingExport.blobUrl,
-            filename: recordingFileName,
-            saveAs: false,
-          },
-          (downloadId) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(downloadId);
-          }
-        );
-      });
-    } else if (data.recordingDataUrl) {
-      const recordingDataBlob = await dataUrlToBlob(data.recordingDataUrl);
-      await downloadBlob(
-        recordingDataBlob,
-        `qa-session-video-${exportTimestamp}.webm`
-      );
-    }
-    if (data.qaSessionLog) {
-      const logBlob = new Blob([JSON.stringify(data.qaSessionLog, null, 2)], {
-        type: "application/json",
-      });
-      await downloadBlob(logBlob, `qa-session-log-${exportTimestamp}.json`);
-    }
-    if (data.qaSummaryText) {
-      const summaryBlob = new Blob([data.qaSummaryText], { type: "text/plain" });
-      await downloadBlob(summaryBlob, `qa-summary-${exportTimestamp}.txt`);
-    }
-    if (Array.isArray(data.screenshots)) {
-      for (const shot of data.screenshots) {
-        if (!shot || !shot.dataUrl) {
-          continue;
-        }
-        const screenshotBlob = await dataUrlToBlob(shot.dataUrl);
-        const name =
-          shot.fileName ||
-          `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
-        await downloadBlob(screenshotBlob, name);
-      }
-    }
-
-    setStatus(statusElements.download, "Exported.", "success");
-    showToast("Exported");
+    updateExportUI(5, "export_start");
+    setStatus(
+      statusElements.download,
+      "Export started. You can close this window.",
+      "success"
+    );
   } catch (error) {
     hadError = true;
     setStatus(
@@ -2199,10 +2013,8 @@ async function handleDownload() {
       "error"
     );
   } finally {
-    buttons.download.disabled = false;
-    buttons.download.textContent = originalLabel;
-    if (!hadError) {
-      setStatus(statusElements.download, "Ready.");
+    if (hadError) {
+      finishExportUI("Export failed to start.", "error");
     }
     await refreshStatus();
   }
@@ -2598,6 +2410,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })().catch((error) =>
       sendResponse({ ok: false, error: error.message || "Update failed." })
     );
+    return true;
+  }
+  if (message.type === EXPORT_EVENTS.PROGRESS) {
+    updateExportUI(message.percent, message.stage);
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === EXPORT_EVENTS.DONE) {
+    finishExportUI("Export complete.", "success");
+    showToast("Exported");
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === EXPORT_EVENTS.ERROR) {
+    finishExportUI(message.userMessage || "Export failed.", "error");
+    sendResponse({ ok: true });
     return true;
   }
   return false;
