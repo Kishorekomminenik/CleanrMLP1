@@ -46,6 +46,13 @@ const EXPORT_BATCH_DEFAULTS = {
   screenshots: 10,
   yieldEveryMs: 0,
 };
+const EXPORT_SIZE_GUARDS = {
+  maxNetworkJsonBytes: 30 * 1024 * 1024,
+  maxConsoleJsonBytes: 12 * 1024 * 1024,
+  maxTotalJsonBytes: 50 * 1024 * 1024,
+  maxScreenshotBytes: 150 * 1024 * 1024,
+};
+const JSON_BUILD_YIELD_EVERY = 200;
 
 const state = {
   screenshot: {
@@ -425,6 +432,74 @@ function reportExportProgress(percent, stage, detail) {
 
 function isZipBuilderAvailable() {
   return Boolean(globalThis.JSZip) && Boolean(globalThis.ZipBuilderChunked);
+}
+
+function buildExportSizeError(message, debugCode) {
+  const error = new Error(message);
+  error.userMessage = message;
+  error.debugCode = debugCode || "size_guard";
+  return error;
+}
+
+async function yieldExport() {
+  if (globalThis.ZipBuilderChunked && globalThis.ZipBuilderChunked.delay) {
+    await globalThis.ZipBuilderChunked.delay(0);
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== "string") {
+    return 0;
+  }
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) {
+    return 0;
+  }
+  const base64Length = dataUrl.length - commaIndex - 1;
+  return Math.floor((base64Length * 3) / 4);
+}
+
+function isFullPageScreenshotFileName(name) {
+  if (!name || typeof name !== "string") {
+    return false;
+  }
+  return name.includes("fullpage");
+}
+
+async function buildEntriesJsonBlob(options) {
+  const entries = Array.isArray(options.entries) ? options.entries : [];
+  const version = options.version || "1.0";
+  const maxBytes =
+    typeof options.maxBytes === "number" ? options.maxBytes : null;
+  const yieldEvery =
+    typeof options.yieldEvery === "number" ? options.yieldEvery : JSON_BUILD_YIELD_EVERY;
+  const parts = [];
+  let size = 0;
+  const pushChunk = (chunk) => {
+    parts.push(chunk);
+    size += chunk.length;
+    if (maxBytes && size > maxBytes) {
+      throw buildExportSizeError(
+        `${options.label || "Export"} JSON exceeds size guard.`,
+        options.debugCode || "json_too_large"
+      );
+    }
+  };
+  pushChunk(`{"version":"${version}","entries":[`);
+  for (let i = 0; i < entries.length; i += 1) {
+    if (i > 0) {
+      pushChunk(",");
+    }
+    const entryJson = JSON.stringify(entries[i] || null);
+    pushChunk(entryJson);
+    if (yieldEvery > 0 && i % yieldEvery === 0) {
+      await yieldExport();
+    }
+  }
+  pushChunk("]}");
+  return { blob: new Blob(parts, { type: "application/json" }), size };
 }
 
 async function downloadBlob(blob, filename) {
@@ -1272,6 +1347,29 @@ async function runEvidenceZipExport(context) {
       consoleCount,
       screenshotCount,
     });
+    const screenshotCandidates = Array.isArray(data.screenshots)
+      ? data.screenshots.filter(
+          (shot) => shot && !isFullPageScreenshotFileName(shot.fileName)
+        )
+      : data.screenshotDataUrl
+        ? [{ dataUrl: data.screenshotDataUrl, fileName: "screenshot.png" }]
+        : [];
+    const skippedFullPage = Array.isArray(data.screenshots)
+      ? data.screenshots.length - screenshotCandidates.length
+      : 0;
+    if (skippedFullPage > 0) {
+      logExportPhase("skip_fullpage", { skipped: skippedFullPage });
+    }
+    const estimatedScreenshotBytes = screenshotCandidates.reduce(
+      (total, shot) => total + estimateDataUrlBytes(shot.dataUrl),
+      0
+    );
+    if (estimatedScreenshotBytes > EXPORT_SIZE_GUARDS.maxScreenshotBytes) {
+      throw buildExportSizeError(
+        "Export too large (screenshots). Reduce screenshots and try again.",
+        "screenshots_too_large"
+      );
+    }
     reportExportProgress(12, "stringify_start");
     const jsonSizes = {
       network_logs: 0,
@@ -1283,6 +1381,17 @@ async function runEvidenceZipExport(context) {
       export_truncation_report: 0,
       qa_summary: data.qaSummaryText ? data.qaSummaryText.length : 0,
     };
+    let totalJsonBytes = 0;
+    const trackJsonSize = (key, size) => {
+      jsonSizes[key] = size;
+      totalJsonBytes += size;
+      if (totalJsonBytes > EXPORT_SIZE_GUARDS.maxTotalJsonBytes) {
+        throw buildExportSizeError(
+          "Export too large (JSON). Reduce capture size and try again.",
+          "json_total_too_large"
+        );
+      }
+    };
     const zip = new JSZip();
     const zipDate =
       data.session && data.session.ended_at
@@ -1290,26 +1399,48 @@ async function runEvidenceZipExport(context) {
         : new Date();
     const toJsonWithSize = (value, key) => {
       const json = JSON.stringify(value || {}, null, 2);
-      jsonSizes[key] = json.length;
+      trackJsonSize(key, json.length);
       return json;
     };
     const baseItems = [
       {
         path: "network_logs.json",
-        getData: () =>
-          toJsonWithSize(
-            data.networkLogs || { version: "1.0", entries: [] },
-            "network_logs"
-          ),
+        getData: async () => {
+          const result = await buildEntriesJsonBlob({
+            entries:
+              data.networkLogs && Array.isArray(data.networkLogs.entries)
+                ? data.networkLogs.entries
+                : [],
+            version: data.networkLogs && data.networkLogs.version
+              ? data.networkLogs.version
+              : "1.0",
+            maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+            label: "Network logs",
+            debugCode: "network_json_too_large",
+          });
+          trackJsonSize("network_logs", result.size);
+          return result.blob;
+        },
         options: { date: zipDate },
       },
       {
         path: "console_logs.json",
-        getData: () =>
-          toJsonWithSize(
-            data.consoleLogs || { version: "1.0", entries: [] },
-            "console_logs"
-          ),
+        getData: async () => {
+          const result = await buildEntriesJsonBlob({
+            entries:
+              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                ? data.consoleLogs.entries
+                : [],
+            version: data.consoleLogs && data.consoleLogs.version
+              ? data.consoleLogs.version
+              : "1.0",
+            maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+            label: "Console logs",
+            debugCode: "console_json_too_large",
+          });
+          trackJsonSize("console_logs", result.size);
+          return result.blob;
+        },
         options: { date: zipDate },
       },
       {
@@ -1367,26 +1498,18 @@ async function runEvidenceZipExport(context) {
     logExportPhase("stringify_done", jsonSizes);
 
     const screenshotItems = [];
-    if (Array.isArray(data.screenshots)) {
-      data.screenshots.forEach((shot) => {
-        if (!shot || !shot.dataUrl) {
-          return;
-        }
-        const name =
-          shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
-        screenshotItems.push({
-          path: `screenshots/${name}`,
-          getData: () => dataUrlToBlob(shot.dataUrl),
-          options: { date: zipDate },
-        });
-      });
-    } else if (data.screenshotDataUrl) {
+    screenshotCandidates.forEach((shot) => {
+      if (!shot || !shot.dataUrl) {
+        return;
+      }
+      const name =
+        shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
       screenshotItems.push({
-        path: "screenshots/screenshot.png",
-        getData: () => dataUrlToBlob(data.screenshotDataUrl),
+        path: `screenshots/${name}`,
+        getData: () => dataUrlToBlob(shot.dataUrl),
         options: { date: zipDate },
       });
-    }
+    });
     if (screenshotItems.length > 0) {
       logExportPhase("zip_add_screenshots", { count: screenshotItems.length });
       await ZipBuilderChunked.addItemsInBatches(zip, screenshotItems, {
@@ -1446,6 +1569,7 @@ async function runEvidenceZipExport(context) {
     }
 
     reportExportProgress(78, "zip_generate_start");
+    await yieldExport();
     const zipBlob = await ZipBuilderChunked.generateZipBlob(zip, {
       compression: "STORE",
       streamFiles: true,
@@ -1469,8 +1593,16 @@ async function runEvidenceZipExport(context) {
   } catch (error) {
     console.error("[EXPORT] Failed", error && error.stack ? error.stack : error);
     sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
-      userMessage: "Export failed. Check extension logs.",
-      debugCode: error && error.message ? error.message : "unknown",
+      userMessage:
+        error && error.userMessage
+          ? error.userMessage
+          : "Export failed. Check extension logs.",
+      debugCode:
+        error && error.debugCode
+          ? error.debugCode
+          : error && error.message
+            ? error.message
+            : "unknown",
     });
     throw error;
   } finally {
