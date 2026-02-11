@@ -502,35 +502,42 @@ async function buildEntriesJsonBlob(options) {
   return { blob: new Blob(parts, { type: "application/json" }), size };
 }
 
-async function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  try {
-    const downloadId = await new Promise((resolve, reject) => {
-      chrome.downloads.download(
-        {
-          url,
-          filename,
-          saveAs: false,
-        },
-        (id) => {
-          if (chrome.runtime.lastError || !id) {
-            reject(
-              new Error(
-                chrome.runtime.lastError
-                  ? chrome.runtime.lastError.message
-                  : "Download failed."
-              )
-            );
-            return;
-          }
-          resolve(id);
+async function downloadBlob(blob, filename, opts = {}) {
+  // MV3 service worker safe download: no URL.createObjectURL
+  const saveAs = opts.saveAs !== undefined ? opts.saveAs : true;
+  const dataUrl = await new Promise((resolve, reject) => {
+    try {
+      const reader = new FileReader();
+      reader.onerror = () =>
+        reject(reader.error || new Error("FileReader failed"));
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      reject(error);
+    }
+  });
+  return await new Promise((resolve, reject) => {
+    chrome.downloads.download(
+      {
+        url: dataUrl,
+        filename,
+        saveAs,
+      },
+      (id) => {
+        if (chrome.runtime.lastError || !id) {
+          reject(
+            new Error(
+              chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : "Download failed."
+            )
+          );
+          return;
         }
-      );
-    });
-    return downloadId;
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
+        resolve(id);
+      }
+    );
+  });
 }
 
 function detectBrowser(userAgent) {
@@ -1587,7 +1594,7 @@ async function runEvidenceZipExport(context) {
     reportExportProgress(96, "zip_generate_done", { bytes: zipBlob.size });
 
     const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-    await downloadBlob(zipBlob, filename);
+    await downloadBlob(zipBlob, filename, { saveAs: false });
     reportExportProgress(100, "zip_download", { filename });
     sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
   } catch (error) {
