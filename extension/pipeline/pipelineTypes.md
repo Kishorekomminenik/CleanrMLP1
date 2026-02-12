@@ -12,7 +12,7 @@ to be stable and testable.
   "t_ms": 1234,
   "ts_iso": "2026-02-05T12:34:56.789Z",
   "source": "network|console|ui|system",
-  "kind": "action|request|response|error|warning|info|marker|screenshot",
+  "kind": "action|request|response|error|warning|info|screenshot",
   "level": "debug|info|warn|error",
   "msg": "string",
   "corr": {
@@ -82,14 +82,6 @@ to be stable and testable.
 }
 ```
 
-### Marker Data
-
-```
-{
-  "note": "string"
-}
-```
-
 ### Screenshot Data
 
 ```
@@ -123,6 +115,5 @@ to be stable and testable.
 - Top 5 failures (NetworkFailure + ConsoleError)
 - HTTP status counts (4xx, 5xx)
 - Top slow requests
-- Markers list with timestamps
 - Screenshots count
 - Truncation/skips/errors counts

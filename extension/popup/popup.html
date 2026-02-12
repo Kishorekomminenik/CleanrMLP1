@@ -52,7 +52,7 @@
           data-action="mode:network_console"
           data-mode="network_console"
         >
-          Net
+          Logs
         </button>
         <button
           type="button"
@@ -218,6 +218,73 @@
         </div>
       </section>
 
+      <section class="card mode-controls" data-mode="network_console">
+        <h2>Network + Console</h2>
+          <div class="toggle-row">
+            <span class="label">Auto-download on rollover</span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                id="toggle_auto_download_rollover"
+                data-action="part:auto_download"
+              />
+              <span id="autoDownloadStatus">OFF</span>
+            </label>
+          </div>
+          <p class="hint">
+            Downloads a completed part automatically when it reaches the cap or when you stop. Never downloads empty parts.
+          </p>
+          <div class="settings-row">
+            <label class="label" for="dropdown_part_cap_requests">Requests per part</label>
+            <select id="dropdown_part_cap_requests" data-action="part:cap_requests">
+              <option value="1000">1000</option>
+              <option value="2500">2500</option>
+              <option value="5000" selected>5000</option>
+              <option value="10000">10000</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="label" for="dropdown_max_body_kb">Max body size per request</label>
+            <select id="dropdown_max_body_kb" data-action="part:max_body">
+              <option value="50">50 KB</option>
+              <option value="200" selected>200 KB</option>
+              <option value="1024">1024 KB</option>
+            </select>
+          </div>
+          <p class="hint">
+            Request/response bodies larger than this are truncated but metadata is stored.
+          </p>
+          <div class="toggle-row">
+            <span class="label">Timestamp overlay</span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                id="toggle_timestamp_overlay"
+                data-action="overlay:toggle"
+              />
+              <span id="timestampOverlayStatus">OFF</span>
+            </label>
+          </div>
+          <p class="hint">
+            Adds timestamp overlay to screenshots and recordings (coming soon).
+          </p>
+          <p id="status_current_part" class="status-strip">
+            Part - — 0/0 requests
+          </p>
+          <div class="status-secondary">
+            <span id="status_export_queue">Export queue: 0</span>
+            <span id="status_auto_download">Auto-download: OFF</span>
+          </div>
+          <p id="status_download_help" class="hint is-hidden">
+            Stop to download the current part.
+          </p>
+          <div id="completed_parts_section" class="completed-parts">
+            <div class="completed-header">Completed parts</div>
+            <div id="completed_parts_empty" class="hint">No completed parts yet.</div>
+            <div id="completed_parts_list" class="completed-list"></div>
+          </div>
+      </section>
+
       <section class="card">
         <h2>Export</h2>
         <div class="toggle-row">
@@ -226,74 +293,6 @@
             <input type="checkbox" id="redactionToggle" data-action="redaction:toggle" />
             <span id="redactionStatus">ON</span>
           </label>
-        </div>
-        <div class="toggle-row">
-          <span class="label">Auto-download on rollover</span>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              id="toggle_auto_download_rollover"
-              data-action="part:auto_download"
-            />
-            <span id="autoDownloadStatus">OFF</span>
-          </label>
-        </div>
-        <p class="hint">
-          When a part reaches the cap, export Part N automatically and continue in
-          Part N+1. No timer-based downloads.
-        </p>
-        <div class="settings-row">
-          <label class="label" for="dropdown_part_cap_requests">Requests per part</label>
-          <select id="dropdown_part_cap_requests" data-action="part:cap_requests">
-            <option value="1000">1000</option>
-            <option value="2500">2500</option>
-            <option value="5000" selected>5000</option>
-            <option value="10000">10000</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <label class="label" for="dropdown_max_body_kb">Max body size per request</label>
-          <select id="dropdown_max_body_kb" data-action="part:max_body">
-            <option value="50">50 KB</option>
-            <option value="200" selected>200 KB</option>
-            <option value="1024">1024 KB</option>
-          </select>
-        </div>
-        <p class="hint">
-          Request/response bodies larger than this are truncated but metadata is stored.
-        </p>
-        <div class="toggle-row">
-          <span class="label">Timestamp overlay</span>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              id="toggle_timestamp_overlay"
-              data-action="overlay:toggle"
-            />
-            <span id="timestampOverlayStatus">OFF</span>
-          </label>
-        </div>
-        <p class="hint">
-          Adds timestamp overlay to screenshots and recordings (coming soon).
-        </p>
-        <p id="status_part_progress" class="status-strip">
-          Part 1 — 0/5000 requests
-        </p>
-        <div class="button-row">
-          <button
-            id="btn_download_current_part"
-            class="secondary"
-            data-action="export:part_current"
-          >
-            Download current part
-          </button>
-          <button
-            id="btn_download_last_completed_part"
-            class="secondary"
-            data-action="export:part_last"
-          >
-            Download last completed part
-          </button>
         </div>
         <div class="button-row" id="download_controls">
           <button id="btn_download_zip" class="primary" data-action="export:zip">
@@ -349,7 +348,7 @@
               <span class="help-desc">Capture video with logs</span>
             </div>
             <div class="help-line">
-              <span class="help-mode">Net</span>
+              <span class="help-mode">Logs</span>
               <span class="help-desc">Capture network and console only</span>
             </div>
           </div>
@@ -366,7 +365,8 @@
         <div class="help-section">
           <h3>Export rules</h3>
           <ul>
-            <li>ZIP is available only after Stop</li>
+            <li>ZIP is available after Stop for recordings and screenshots</li>
+            <li>Completed log parts can be downloaded while capture continues</li>
             <li>WebM = video only</li>
             <li>ZIP = logs, screenshots (+ video if recorded)</li>
           </ul>

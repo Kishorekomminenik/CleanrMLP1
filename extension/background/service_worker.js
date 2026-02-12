@@ -61,6 +61,15 @@ const CAPTURE_DEFAULTS = {
   autoDownloadOnRollover: false,
 };
 const MIN_REQUESTS_TO_EXPORT = 25;
+const MAX_COMPLETED_PARTS_RETAINED = 5;
+const PART_STATUS = {
+  ACTIVE: "active",
+  COMPLETED_READY: "completed_ready",
+  EXPORTING: "exporting",
+  DOWNLOADED: "downloaded",
+  DOWNLOAD_FAILED: "download_failed",
+  DELETED: "deleted",
+};
 const FLUSH_BATCH = {
   network: 100,
   console: 100,
@@ -113,6 +122,7 @@ const captureState = {
   bytesInPart: 0,
   consoleInPart: 0,
   errorsInPart: 0,
+  lastEventMs: null,
   totalRequests: 0,
   totalConsole: 0,
   totalErrors: 0,
@@ -123,14 +133,17 @@ const captureState = {
   lastCompletedPartId: null,
   lastCompletedPartNumber: null,
   partHasData: false,
+  completedPartsCount: 0,
 };
 const networkQueue = [];
 const consoleQueue = [];
 let flushTimer = null;
 let flushInProgress = false;
-const pendingAutoExports = [];
 const exportedPartIds = new Set();
 let rotationSuppressed = false;
+let rotationInProgress = false;
+const exportQueue = [];
+const exportQueueIds = new Set();
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -561,13 +574,14 @@ async function ensureSessionRecord(tab) {
   captureState.bytesInPart = 0;
   captureState.consoleInPart = 0;
   captureState.errorsInPart = 0;
-  captureState.errorsInPart = 0;
+  captureState.lastEventMs = null;
   captureState.totalRequests = 0;
   captureState.totalConsole = 0;
   captureState.totalErrors = 0;
   captureState.partHasData = false;
   captureState.lastCompletedPartId = null;
   captureState.lastCompletedPartNumber = null;
+  captureState.completedPartsCount = 0;
   const sessionRecord = {
     sessionId: session.session_id,
     createdAtMs,
@@ -590,16 +604,21 @@ async function startNewPart(reason) {
   captureState.requestsInPart = 0;
   captureState.bytesInPart = 0;
   captureState.consoleInPart = 0;
+  captureState.errorsInPart = 0;
   captureState.partHasData = false;
+  captureState.lastEventMs = null;
   const partRecord = {
     partId: captureState.partId,
     sessionId: captureState.sessionId,
     partNumber: captureState.partNumber,
-    status: "active",
+    status: PART_STATUS.ACTIVE,
     createdAtMs: captureState.partCreatedAtMs,
+    completedAtMs: null,
     requestCount: 0,
     consoleCount: 0,
+    errorCount: 0,
     bytesInPart: 0,
+    lastEventMs: null,
     reason: reason || null,
   };
   await ReproIdb.putOne("parts", partRecord);
@@ -614,13 +633,14 @@ async function completePart(partSnapshot) {
     partId: partSnapshot.partId,
     sessionId: captureState.sessionId,
     partNumber: partSnapshot.partNumber,
-    status: "completed",
+    status: PART_STATUS.COMPLETED_READY,
     createdAtMs: partSnapshot.createdAtMs || Date.now(),
-    endedAtMs: Date.now(),
+    completedAtMs: Date.now(),
     requestCount: partSnapshot.requestCount || 0,
     consoleCount: partSnapshot.consoleCount || 0,
     errorCount: partSnapshot.errorCount || 0,
     bytesInPart: partSnapshot.bytesInPart || 0,
+    lastEventMs: partSnapshot.lastEventMs || null,
     reason: partSnapshot.reason || null,
   };
   await ReproIdb.putOne("parts", partRecord);
@@ -634,12 +654,14 @@ async function persistActivePart() {
     partId: captureState.partId,
     sessionId: captureState.sessionId,
     partNumber: captureState.partNumber,
-    status: "active",
+    status: PART_STATUS.ACTIVE,
     createdAtMs: captureState.partCreatedAtMs || Date.now(),
+    completedAtMs: null,
     requestCount: captureState.requestsInPart,
     consoleCount: captureState.consoleInPart,
     errorCount: captureState.errorsInPart,
     bytesInPart: captureState.bytesInPart,
+    lastEventMs: captureState.lastEventMs,
   };
   await ReproIdb.putOne("parts", partRecord);
 }
@@ -654,6 +676,9 @@ function sendPartStatusUpdate(extra) {
     lastCompletedPartNumber: captureState.lastCompletedPartNumber,
     lastCompletedPartId: captureState.lastCompletedPartId,
     partHasData: captureState.partHasData,
+    completedPartsCount: captureState.completedPartsCount,
+    exportQueueLength: getExportQueueLength(),
+    autoDownloadOnRollover: captureState.autoDownloadOnRollover,
     ...extra,
   });
 }
@@ -693,37 +718,200 @@ async function flushQueues() {
   }
 }
 
-function queueAutoExport(part) {
-  if (!part || !part.partId) {
-    return;
-  }
-  if (exportedPartIds.has(part.partId)) {
-    return;
-  }
-  pendingAutoExports.push(part);
-  setTimeout(() => {
-    void processPendingAutoExports();
-  }, 0);
+function getExportQueueLength() {
+  const active = exportJob && exportJob.active && exportJob.partId ? 1 : 0;
+  return exportQueue.length + active;
 }
 
-async function processPendingAutoExports() {
+function sendExportQueueUpdate() {
+  sendExportEvent("EXPORT_QUEUE_UPDATE", {
+    queueLength: getExportQueueLength(),
+  });
+}
+
+async function updatePartStatus(partId, status, extra = {}) {
+  if (!partId || !isIdbAvailable()) {
+    return;
+  }
+  const record = await ReproIdb.getByKey("parts", partId);
+  if (!record) {
+    return;
+  }
+  record.status = status;
+  if (status === PART_STATUS.DOWNLOADED) {
+    record.downloadedAtMs = Date.now();
+  }
+  if (status === PART_STATUS.DOWNLOAD_FAILED) {
+    record.downloadFailedAtMs = Date.now();
+  }
+  Object.assign(record, extra);
+  await ReproIdb.putOne("parts", record);
+}
+
+async function refreshCompletedPartsCount() {
+  if (!captureState.sessionId || !isIdbAvailable()) {
+    captureState.completedPartsCount = 0;
+    return 0;
+  }
+  const parts = await ReproIdb.getAllByIndex(
+    "parts",
+    "sessionId",
+    IDBKeyRange.only(captureState.sessionId)
+  );
+  const count = parts.filter(
+    (part) =>
+      part &&
+      part.status &&
+      part.status !== PART_STATUS.ACTIVE &&
+      part.status !== PART_STATUS.DELETED
+  ).length;
+  captureState.completedPartsCount = count;
+  return count;
+}
+
+async function hydrateCaptureStateFromIdb() {
+  if (captureState.sessionId || !isIdbAvailable()) {
+    return;
+  }
+  const sessions = await ReproIdb.getAllByIndex(
+    "sessions",
+    "createdAtMs",
+    null,
+    { limit: 1, direction: "prev" }
+  );
+  const latest = Array.isArray(sessions) && sessions.length ? sessions[0] : null;
+  if (!latest) {
+    return;
+  }
+  await loadCaptureSettings();
+  captureState.sessionId = latest.sessionId;
+  const parts = await ReproIdb.getAllByIndex(
+    "parts",
+    "sessionId",
+    IDBKeyRange.only(latest.sessionId)
+  );
+  let activePart = null;
+  let maxPartNumber = 0;
+  let totalRequests = 0;
+  let totalConsole = 0;
+  let totalErrors = 0;
+  parts.forEach((part) => {
+    if (!part) {
+      return;
+    }
+    if (typeof part.partNumber === "number") {
+      maxPartNumber = Math.max(maxPartNumber, part.partNumber);
+    }
+    if (part.status !== PART_STATUS.DELETED) {
+      totalRequests += part.requestCount || 0;
+      totalConsole += part.consoleCount || 0;
+      totalErrors += part.errorCount || 0;
+    }
+    if (part.status === PART_STATUS.ACTIVE) {
+      activePart = part;
+    }
+  });
+  captureState.totalRequests = totalRequests;
+  captureState.totalConsole = totalConsole;
+  captureState.totalErrors = totalErrors;
+  if (activePart) {
+    captureState.partId = activePart.partId;
+    captureState.partNumber = activePart.partNumber || maxPartNumber || 1;
+    captureState.partCreatedAtMs = activePart.createdAtMs || null;
+    captureState.requestsInPart = activePart.requestCount || 0;
+    captureState.consoleInPart = activePart.consoleCount || 0;
+    captureState.errorsInPart = activePart.errorCount || 0;
+    captureState.bytesInPart = activePart.bytesInPart || 0;
+    captureState.lastEventMs = activePart.lastEventMs || null;
+    captureState.partHasData =
+      (activePart.requestCount || 0) > 0 || (activePart.consoleCount || 0) > 0;
+  } else {
+    captureState.partId = null;
+    captureState.partNumber = maxPartNumber;
+    captureState.partCreatedAtMs = null;
+    captureState.requestsInPart = 0;
+    captureState.consoleInPart = 0;
+    captureState.errorsInPart = 0;
+    captureState.bytesInPart = 0;
+    captureState.lastEventMs = null;
+    captureState.partHasData = false;
+  }
+  await refreshLastCompletedPart();
+}
+
+async function enqueueExport(partSnapshot, options = {}) {
+  if (!partSnapshot || !partSnapshot.partId) {
+    return { ok: false, error: "No part available to export." };
+  }
+  const requestCount = partSnapshot.requestCount || 0;
+  if (requestCount < MIN_REQUESTS_TO_EXPORT) {
+    return {
+      ok: false,
+      error: `Not enough requests to export yet (need ${MIN_REQUESTS_TO_EXPORT}+).`,
+    };
+  }
+  const alreadyExported = await isPartExported(partSnapshot.partId);
+  if (alreadyExported && !options.allowDuplicate) {
+    return { ok: false, error: "Part already exported." };
+  }
+  if (exportQueueIds.has(partSnapshot.partId)) {
+    return { ok: false, error: "Part already queued for export." };
+  }
+  exportQueue.push({
+    partId: partSnapshot.partId,
+    partNumber: partSnapshot.partNumber,
+    auto: options.auto === true,
+    reason: options.reason || null,
+  });
+  exportQueueIds.add(partSnapshot.partId);
+  sendExportQueueUpdate();
+  setTimeout(() => {
+    void processExportQueue();
+  }, 0);
+  return { ok: true, queued: true };
+}
+
+async function processExportQueue() {
   if (exportJob && exportJob.active) {
     return;
   }
-  if (pendingAutoExports.length === 0) {
+  if (exportQueue.length === 0) {
     return;
   }
   await flushQueues();
-  const next = pendingAutoExports.shift();
+  const next = exportQueue.shift();
   if (!next) {
     return;
   }
-  await runEvidenceZipExport({ partId: next.partId, partNumber: next.partNumber });
-  await markPartExported(next.partId);
-  if (pendingAutoExports.length > 0) {
-    setTimeout(() => {
-      void processPendingAutoExports();
-    }, 0);
+  exportQueueIds.delete(next.partId);
+  sendExportQueueUpdate();
+  await updatePartStatus(next.partId, PART_STATUS.EXPORTING);
+  try {
+    await runEvidenceZipExport({
+      partId: next.partId,
+      partNumber: next.partNumber,
+    });
+    await markPartExported(next.partId);
+    await updatePartStatus(next.partId, PART_STATUS.DOWNLOADED);
+  } catch (error) {
+    await updatePartStatus(next.partId, PART_STATUS.DOWNLOAD_FAILED);
+    const userMessage =
+      next.auto === true
+        ? `Auto-download was blocked by the browser. Part ${next.partNumber} is ready—click Download.`
+        : "Download failed. Try again.";
+    setStatusMessage(userMessage, "error");
+    sendExportEvent("EXPORT_PART_FAILED", {
+      partId: next.partId,
+      partNumber: next.partNumber,
+      userMessage,
+    });
+  } finally {
+    sendExportQueueUpdate();
+    if (exportQueue.length > 0) {
+      setTimeout(() => {
+        void processExportQueue();
+      }, 0);
+    }
   }
 }
 
@@ -1245,6 +1433,7 @@ function getStatusSnapshot() {
     recordingStatus: state.recording.status,
     recordingCapturedAt: state.recording.capturedAt,
     networkActive: state.network.active,
+    logsState: state.network.active ? "capturing" : "idle",
     networkCount: captureState.sessionId
       ? captureState.totalRequests
       : Object.keys(state.network.requests).length,
@@ -1263,6 +1452,8 @@ function getStatusSnapshot() {
       lastCompletedPartNumber: captureState.lastCompletedPartNumber,
       lastCompletedPartId: captureState.lastCompletedPartId,
       partHasData: captureState.partHasData,
+      completedPartsCount: captureState.completedPartsCount,
+      exportQueueLength: getExportQueueLength(),
       exportInProgress: exportJob ? exportJob.active === true : false,
     },
     session,
@@ -1437,6 +1628,10 @@ async function buildPartExportData(context) {
     zip_created_at_utc: exportCreatedAt.toISOString(),
     zip_created_at_local: exportCreatedAt.toString(),
     zip_created_at_epoch_ms: exportCreatedAt.getTime(),
+    timezone_offset_minutes:
+      environment && typeof environment.timezone_offset_minutes === "number"
+        ? environment.timezone_offset_minutes
+        : new Date().getTimezoneOffset(),
     zip_builder_version: extensionVersion || null,
     redaction_enabled:
       typeof redactionEnabled === "boolean" ? redactionEnabled : null,
@@ -1705,6 +1900,10 @@ async function buildEvidenceExportData(context) {
     zip_created_at_utc: exportCreatedAt.toISOString(),
     zip_created_at_local: exportCreatedAt.toString(),
     zip_created_at_epoch_ms: exportCreatedAt.getTime(),
+    timezone_offset_minutes:
+      environment && typeof environment.timezone_offset_minutes === "number"
+        ? environment.timezone_offset_minutes
+        : new Date().getTimezoneOffset(),
     zip_builder_version: extensionVersion || null,
     redaction_enabled:
       typeof redactionEnabled === "boolean" ? redactionEnabled : null,
@@ -2023,6 +2222,7 @@ async function runEvidenceZipExport(context) {
     active: true,
     startedAt: Date.now(),
     lastProgress: 0,
+    partId: usePartExport ? context.partId : null,
   };
   const exportStartIso = nowIso();
   reportExportProgress(1, "export_start", { startedAt: exportStartIso });
@@ -2451,19 +2651,6 @@ async function runEvidenceZipExport(context) {
     reportExportProgress(100, "zip_download", { filename });
     sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
   } catch (error) {
-    const isSizeError =
-      error &&
-      (error.debugCode || "").toString().includes("too_large");
-    if (usePartExport && !metadataOnly && isSizeError) {
-      console.warn("[EXPORT] Size guard hit. Falling back to metadata-only.");
-      if (exportJob) {
-        exportJob.active = false;
-      }
-      return await runEvidenceZipExport({
-        ...context,
-        metadataOnly: true,
-      });
-    }
     console.error("[EXPORT] Failed", error && error.stack ? error.stack : error);
     sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
       userMessage:
@@ -2481,10 +2668,11 @@ async function runEvidenceZipExport(context) {
   } finally {
     if (exportJob) {
       exportJob.active = false;
+      exportJob.partId = null;
     }
-    if (pendingAutoExports.length > 0) {
+    if (exportQueue.length > 0) {
       setTimeout(() => {
-        void processPendingAutoExports();
+        void processExportQueue();
       }, 0);
     }
   }
@@ -2521,30 +2709,77 @@ async function markPartExported(partId) {
   exportedPartIds.add(partId);
 }
 
-async function validatePartExport(partId, requestCount) {
-  if (!partId) {
-    return { ok: false, error: "No part available to export." };
+async function listCompletedParts() {
+  if (!captureState.sessionId || !isIdbAvailable()) {
+    return [];
   }
-  if (exportJob && exportJob.active) {
-    return { ok: false, error: "Export already running." };
-  }
-  if (await isPartExported(partId)) {
-    return { ok: false, error: "Part already exported." };
-  }
-  if (typeof requestCount === "number" && requestCount < MIN_REQUESTS_TO_EXPORT) {
-    return { ok: false, error: "Not enough data to export yet." };
-  }
-  return { ok: true };
+  const parts = await ReproIdb.getAllByIndex(
+    "parts",
+    "sessionId",
+    IDBKeyRange.only(captureState.sessionId)
+  );
+  return parts
+    .filter(
+      (part) =>
+        part &&
+        part.status &&
+        part.status !== PART_STATUS.ACTIVE &&
+        part.status !== PART_STATUS.DELETED
+    )
+    .sort((a, b) => (a.partNumber || 0) - (b.partNumber || 0))
+    .map((part) => ({
+      partId: part.partId,
+      partNumber: part.partNumber,
+      status:
+        part.status === "completed" ? PART_STATUS.COMPLETED_READY : part.status,
+      requestCount: part.requestCount || 0,
+      consoleCount: part.consoleCount || 0,
+      errorCount: part.errorCount || 0,
+      completedAtMs: part.completedAtMs || null,
+      downloadedAtMs: part.downloadedAtMs || null,
+      downloadFailedAtMs: part.downloadFailedAtMs || null,
+      exportInProgress: exportJob ? exportJob.partId === part.partId : false,
+      queuedForExport: exportQueueIds.has(part.partId),
+    }));
 }
 
-function schedulePartExport(partId, partNumber) {
-  setTimeout(() => {
-    runEvidenceZipExport({ partId, partNumber })
-      .then(() => {
-        return markPartExported(partId);
-      })
-      .catch(() => {});
-  }, 0);
+async function refreshLastCompletedPart() {
+  const parts = await listCompletedParts();
+  const last = parts.length ? parts[parts.length - 1] : null;
+  captureState.lastCompletedPartId = last ? last.partId : null;
+  captureState.lastCompletedPartNumber = last ? last.partNumber : null;
+  captureState.completedPartsCount = parts.length;
+}
+
+async function deletePart(partId) {
+  if (!partId || !isIdbAvailable()) {
+    return { ok: false, error: "Part not found." };
+  }
+  if (exportJob && exportJob.partId === partId) {
+    return { ok: false, error: "Part is exporting." };
+  }
+  if (exportQueueIds.has(partId)) {
+    return { ok: false, error: "Part is queued for export." };
+  }
+  const record = await ReproIdb.getByKey("parts", partId);
+  if (!record || record.status === PART_STATUS.ACTIVE) {
+    return { ok: false, error: "Cannot delete active part." };
+  }
+  await ReproIdb.deleteAllByIndex(
+    "network_entries",
+    "partId",
+    IDBKeyRange.only(partId)
+  );
+  await ReproIdb.deleteAllByIndex(
+    "console_entries",
+    "partId",
+    IDBKeyRange.only(partId)
+  );
+  record.status = PART_STATUS.DELETED;
+  record.deletedAtMs = Date.now();
+  await ReproIdb.putOne("parts", record);
+  await refreshLastCompletedPart();
+  return { ok: true };
 }
 
 function sendMessageToTab(tabId, message) {
@@ -3094,6 +3329,7 @@ async function stopNetworkCapture() {
       errorCount: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
       createdAtMs: captureState.partCreatedAtMs || Date.now(),
+      lastEventMs: captureState.lastEventMs,
       reason: "manual_stop",
     };
     captureState.lastCompletedPartId = captureState.partId;
@@ -3101,10 +3337,21 @@ async function stopNetworkCapture() {
     captureState.partId = null;
     captureState.partHasData = false;
     await completePart(completedPart);
+    captureState.completedPartsCount += 1;
     await flushQueues();
-    setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "success");
+    let stopMessage = `Part ${completedPart.partNumber} ready to download.`;
+    let stopLevel = "success";
+    if (completedPart.requestCount < MIN_REQUESTS_TO_EXPORT) {
+      stopMessage = `Stopped. Not enough requests to export yet (need ${MIN_REQUESTS_TO_EXPORT}+).`;
+      stopLevel = "info";
+    } else if (captureState.autoDownloadOnRollover) {
+      await enqueueExport(completedPart, { auto: true, reason: "stop" });
+      stopMessage = `Stopped. Auto-downloading Part ${completedPart.partNumber}.`;
+      stopLevel = "info";
+    }
+    setStatusMessage(stopMessage, stopLevel);
     sendPartStatusUpdate({
-      message: `Part ${completedPart.partNumber} ready to download.`,
+      message: stopMessage,
     });
   }
 
@@ -3354,6 +3601,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
       errorCount: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
       createdAtMs: captureState.partCreatedAtMs || Date.now(),
+      lastEventMs: captureState.lastEventMs,
       reason: "debugger_detached",
     };
     captureState.lastCompletedPartId = captureState.partId;
@@ -3361,6 +3609,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     captureState.partId = null;
     captureState.partHasData = false;
     void completePart(completedPart);
+    captureState.completedPartsCount += 1;
     void flushQueues();
     setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "error");
     sendPartStatusUpdate({
@@ -3451,15 +3700,19 @@ function resetCaptureState() {
   captureState.lastCompletedPartId = null;
   captureState.lastCompletedPartNumber = null;
   captureState.partHasData = false;
+  captureState.completedPartsCount = 0;
   networkQueue.length = 0;
   consoleQueue.length = 0;
-  pendingAutoExports.length = 0;
+  exportedPartIds.clear();
+  exportQueue.length = 0;
+  exportQueueIds.clear();
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
   flushInProgress = false;
   rotationSuppressed = false;
+  rotationInProgress = false;
 }
 
 function getByteLength(value) {
@@ -3620,6 +3873,10 @@ function queueNetworkRecord(record) {
     return;
   }
   networkQueue.push(record);
+  captureState.lastEventMs =
+    record.entry && typeof record.entry.timestamp_epoch_ms === "number"
+      ? record.entry.timestamp_epoch_ms
+      : Date.now();
   captureState.requestsInPart += 1;
   captureState.totalRequests += 1;
   if (record.entry_bytes) {
@@ -3628,7 +3885,7 @@ function queueNetworkRecord(record) {
   captureState.partHasData = true;
   updateSessionCounts();
   scheduleFlush();
-  maybeRotatePart();
+  void maybeRotatePart();
 }
 
 function queueConsoleRecord(record) {
@@ -3636,6 +3893,10 @@ function queueConsoleRecord(record) {
     return;
   }
   consoleQueue.push(record);
+  captureState.lastEventMs =
+    record.entry && typeof record.entry.timestamp_epoch_ms === "number"
+      ? record.entry.timestamp_epoch_ms
+      : Date.now();
   captureState.consoleInPart += 1;
   captureState.totalConsole += 1;
   if (record.level === "error") {
@@ -3647,11 +3908,14 @@ function queueConsoleRecord(record) {
   scheduleFlush();
 }
 
-function maybeRotatePart() {
+async function maybeRotatePart() {
   if (!captureState.partId) {
     return;
   }
   if (rotationSuppressed) {
+    return;
+  }
+  if (rotationInProgress) {
     return;
   }
   const shouldRotate =
@@ -3660,37 +3924,55 @@ function maybeRotatePart() {
   if (!shouldRotate) {
     return;
   }
-  const completedPart = {
-    partId: captureState.partId,
-    partNumber: captureState.partNumber,
-    requestCount: captureState.requestsInPart,
-    consoleCount: captureState.consoleInPart,
-    errorCount: captureState.errorsInPart,
-    bytesInPart: captureState.bytesInPart,
-    createdAtMs: captureState.partCreatedAtMs || Date.now(),
-    reason: "cap_reached",
-  };
-  captureState.lastCompletedPartId = captureState.partId;
-  captureState.lastCompletedPartNumber = captureState.partNumber;
-  void completePart(completedPart);
-  void startNewPart("rollover");
-  const rolloverMessage = `Reached ${captureState.capRequests} requests. Continuing in Part ${captureState.partNumber}. Part ${completedPart.partNumber} ready to download.`;
-  setStatusMessage(rolloverMessage, "success");
-  sendPartStatusUpdate({
-    rollover: true,
-    message: rolloverMessage,
-  });
-  if (
-    captureState.autoDownloadOnRollover &&
-    completedPart.requestCount >= MIN_REQUESTS_TO_EXPORT
-  ) {
-    queueAutoExport(completedPart);
-    const autoMessage = `Auto-downloading Part ${completedPart.partNumber}… continuing capture in Part ${captureState.partNumber}.`;
-    setStatusMessage(autoMessage, "info");
+  rotationInProgress = true;
+  try {
+    const completedCount = await refreshCompletedPartsCount();
+    if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
+      const message =
+        "Storage limit reached. Download or delete a completed part to continue.";
+      setStatusMessage(message, "error");
+      sendPartStatusUpdate({
+        rolloverBlocked: true,
+        message,
+      });
+      return;
+    }
+    const completedPart = {
+      partId: captureState.partId,
+      partNumber: captureState.partNumber,
+      requestCount: captureState.requestsInPart,
+      consoleCount: captureState.consoleInPart,
+      errorCount: captureState.errorsInPart,
+      bytesInPart: captureState.bytesInPart,
+      createdAtMs: captureState.partCreatedAtMs || Date.now(),
+      lastEventMs: captureState.lastEventMs,
+      reason: "cap_reached",
+    };
+    captureState.lastCompletedPartId = captureState.partId;
+    captureState.lastCompletedPartNumber = captureState.partNumber;
+    await completePart(completedPart);
+    captureState.completedPartsCount += 1;
+    await startNewPart("rollover");
+    const rolloverMessage = `Reached ${captureState.capRequests} requests. Continuing in Part ${captureState.partNumber}. Part ${completedPart.partNumber} ready to download.`;
+    setStatusMessage(rolloverMessage, "success");
     sendPartStatusUpdate({
-      autoDownload: true,
-      message: autoMessage,
+      rollover: true,
+      message: rolloverMessage,
     });
+    if (
+      captureState.autoDownloadOnRollover &&
+      completedPart.requestCount >= MIN_REQUESTS_TO_EXPORT
+    ) {
+      await enqueueExport(completedPart, { auto: true, reason: "rollover" });
+      const autoMessage = `Auto-downloading Part ${completedPart.partNumber}… continuing capture in Part ${captureState.partNumber}.`;
+      setStatusMessage(autoMessage, "info");
+      sendPartStatusUpdate({
+        autoDownload: true,
+        message: autoMessage,
+      });
+    }
+  } finally {
+    rotationInProgress = false;
   }
 }
 
@@ -3907,6 +4189,12 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "GET_STATUS":
+      if (!captureState.sessionId) {
+        await hydrateCaptureStateFromIdb();
+      }
+      if (captureState.sessionId) {
+        await refreshLastCompletedPart();
+      }
       result = { ok: true, state: getStatusSnapshot() };
       break;
     case "GET_CAPABILITIES":
@@ -4245,48 +4533,57 @@ async function handleMessage(message, sender) {
         },
       };
       break;
-    case "EXPORT_CURRENT_PART":
+    case "GET_COMPLETED_PARTS":
+      if (!captureState.sessionId) {
+        await hydrateCaptureStateFromIdb();
+      }
+      result = { ok: true, parts: await listCompletedParts() };
+      break;
+    case "EXPORT_PART":
       {
-        const validation = await validatePartExport(
-          captureState.partId,
-          captureState.requestsInPart
-        );
-        if (!validation.ok) {
-          result = { ok: false, error: validation.error };
+        const partId = normalizedMessage.partId;
+        if (!partId || !isIdbAvailable()) {
+          result = { ok: false, error: "Part not found." };
+          break;
+        }
+        const record = await ReproIdb.getByKey("parts", partId);
+        if (!record) {
+          result = { ok: false, error: "Part not found." };
+          break;
+        }
+        if (
+          record.status === PART_STATUS.EXPORTING ||
+          (exportJob && exportJob.partId === partId) ||
+          exportQueueIds.has(partId)
+        ) {
+          result = { ok: false, error: "Part is already exporting." };
+          break;
+        }
+        if (record.status === PART_STATUS.ACTIVE) {
+          result = { ok: false, error: "Stop to download the current part." };
           break;
         }
         await flushQueues();
-        result = { ok: true, accepted: true };
-        schedulePartExport(captureState.partId, captureState.partNumber);
+        const enqueueResult = await enqueueExport(
+          {
+            partId: record.partId,
+            partNumber: record.partNumber,
+            requestCount: record.requestCount || 0,
+          },
+          { allowDuplicate: true, auto: false, reason: "manual" }
+        );
+        result = enqueueResult.ok
+          ? { ok: true, accepted: true }
+          : { ok: false, error: enqueueResult.error };
       }
       break;
-    case "EXPORT_LAST_COMPLETED_PART":
+    case "DELETE_PART":
       {
-        let lastPartCount = 0;
-        if (captureState.lastCompletedPartId && isIdbAvailable()) {
-          const partRecord = await ReproIdb.getByKey(
-            "parts",
-            captureState.lastCompletedPartId
-          );
-          lastPartCount =
-            partRecord && typeof partRecord.requestCount === "number"
-              ? partRecord.requestCount
-              : 0;
-        }
-        const validation = await validatePartExport(
-          captureState.lastCompletedPartId,
-          lastPartCount
-        );
-        if (!validation.ok) {
-          result = { ok: false, error: validation.error };
-          break;
-        }
-        await flushQueues();
-        result = { ok: true, accepted: true };
-        schedulePartExport(
-          captureState.lastCompletedPartId,
-          captureState.lastCompletedPartNumber
-        );
+        const partId = normalizedMessage.partId;
+        const deleteResult = await deletePart(partId);
+        result = deleteResult.ok
+          ? { ok: true }
+          : { ok: false, error: deleteResult.error };
       }
       break;
     case "EXPORT_EVIDENCE_ZIP_REQUEST":

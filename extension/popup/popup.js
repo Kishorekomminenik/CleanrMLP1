@@ -36,10 +36,6 @@ const buttons = {
   fullPageScreenshotMode: document.getElementById("btn_fullpage_screenshot_mode"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
-  downloadCurrentPart: document.getElementById("btn_download_current_part"),
-  downloadLastCompletedPart: document.getElementById(
-    "btn_download_last_completed_part"
-  ),
   reset: document.getElementById("btn_reset_session"),
 };
 
@@ -80,7 +76,12 @@ const partCapSelect = document.getElementById("dropdown_part_cap_requests");
 const maxBodySelect = document.getElementById("dropdown_max_body_kb");
 const timestampOverlayToggle = document.getElementById("toggle_timestamp_overlay");
 const timestampOverlayStatus = document.getElementById("timestampOverlayStatus");
-const partProgressStatus = document.getElementById("status_part_progress");
+const partProgressStatus = document.getElementById("status_current_part");
+const exportQueueStatus = document.getElementById("status_export_queue");
+const autoDownloadStatusLine = document.getElementById("status_auto_download");
+const downloadHelp = document.getElementById("status_download_help");
+const completedPartsList = document.getElementById("completed_parts_list");
+const completedPartsEmpty = document.getElementById("completed_parts_empty");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -199,6 +200,11 @@ function applyCaptureSettingsToUI() {
       ? "ON"
       : "OFF";
   }
+  if (autoDownloadStatusLine) {
+    autoDownloadStatusLine.textContent = `Auto-download: ${
+      captureSettings.autoDownloadOnRollover ? "ON" : "OFF"
+    }`;
+  }
   if (partCapSelect) {
     partCapSelect.value = String(captureSettings.partCapRequests);
   }
@@ -213,6 +219,96 @@ function applyCaptureSettingsToUI() {
       ? "ON"
       : "OFF";
   }
+}
+
+function getStatusBadge(status) {
+  switch (status) {
+    case "queued":
+      return { label: "Queued", className: "info" };
+    case "completed_ready":
+      return { label: "Ready", className: "info" };
+    case "exporting":
+      return { label: "Exporting", className: "info" };
+    case "downloaded":
+      return { label: "Downloaded", className: "success" };
+    case "download_failed":
+      return { label: "Download failed", className: "error" };
+    default:
+      return { label: "Ready", className: "info" };
+  }
+}
+
+function renderCompletedParts(parts) {
+  if (!completedPartsList || !completedPartsEmpty) {
+    return;
+  }
+  completedPartsList.innerHTML = "";
+  if (!Array.isArray(parts) || parts.length === 0) {
+    completedPartsEmpty.classList.remove("is-hidden");
+    return;
+  }
+  completedPartsEmpty.classList.add("is-hidden");
+  parts.forEach((part) => {
+    const item = document.createElement("div");
+    item.className = "completed-item";
+
+    const info = document.createElement("div");
+    info.className = "completed-item-info";
+    const line = document.createElement("div");
+    line.textContent = `Part ${part.partNumber} — ${part.requestCount} req`;
+    const badge = document.createElement("span");
+    let badgeStatus = part.exportInProgress ? "exporting" : part.status;
+    if (!part.exportInProgress && part.queuedForExport) {
+      badgeStatus = "queued";
+    }
+    const badgeInfo = getStatusBadge(badgeStatus);
+    badge.className = `status-badge ${badgeInfo.className}`;
+    badge.textContent = badgeInfo.label;
+    info.appendChild(line);
+    info.appendChild(badge);
+
+    const actions = document.createElement("div");
+    actions.className = "part-actions";
+    const downloadBtn = document.createElement("button");
+    downloadBtn.className = "secondary mini";
+    downloadBtn.dataset.action = "part:download";
+    downloadBtn.dataset.partId = part.partId;
+    downloadBtn.textContent =
+      part.status === "downloaded" ? "Download again" : "Download";
+    const tooSmall = part.requestCount < MIN_REQUESTS_TO_EXPORT;
+    const canDownload =
+      ["completed_ready", "download_failed", "downloaded"].includes(part.status) &&
+      !part.exportInProgress &&
+      !part.queuedForExport &&
+      !tooSmall;
+    downloadBtn.disabled = !canDownload;
+    if (tooSmall) {
+      downloadBtn.title = `Need ${MIN_REQUESTS_TO_EXPORT}+ requests to export.`;
+    }
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "ghost mini";
+    deleteBtn.dataset.action = "part:delete";
+    deleteBtn.dataset.partId = part.partId;
+    deleteBtn.dataset.partNumber = part.partNumber;
+    deleteBtn.textContent = "Delete";
+    deleteBtn.disabled = Boolean(part.exportInProgress || part.queuedForExport);
+
+    actions.appendChild(downloadBtn);
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(info);
+    item.appendChild(actions);
+    completedPartsList.appendChild(item);
+  });
+}
+
+async function refreshCompletedParts() {
+  const response = await send("GET_COMPLETED_PARTS");
+  if (!response.ok) {
+    return;
+  }
+  renderCompletedParts(response.parts);
 }
 
 async function loadCaptureSettings() {
@@ -292,12 +388,6 @@ function startExportUI() {
     buttons.download.disabled = true;
     buttons.download.textContent = "Exporting… (0%)";
   }
-  if (buttons.downloadCurrentPart) {
-    buttons.downloadCurrentPart.disabled = true;
-  }
-  if (buttons.downloadLastCompletedPart) {
-    buttons.downloadLastCompletedPart.disabled = true;
-  }
   if (statusElements.download) {
     setStatus(statusElements.download, "Exporting… (0%)");
   }
@@ -329,12 +419,6 @@ function finishExportUI(message, type = "success") {
     }
     buttons.download.disabled = false;
     buttons.download.textContent = exportButtonLabel;
-  }
-  if (buttons.downloadCurrentPart) {
-    buttons.downloadCurrentPart.disabled = false;
-  }
-  if (buttons.downloadLastCompletedPart) {
-    buttons.downloadLastCompletedPart.disabled = false;
   }
   if (message && statusElements.download) {
     setStatus(statusElements.download, message, type);
@@ -1356,7 +1440,7 @@ function updateStatusUI(state) {
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabelMap = {
     recording: "Record",
-    network_console: "Net",
+    network_console: "Logs",
     screenshot: "Shot",
   };
   const modeLabel = sessionMode ? modeLabelMap[sessionMode] || sessionMode : "-";
@@ -1382,6 +1466,14 @@ function updateStatusUI(state) {
     } else {
       partProgressStatus.textContent = "Part - — 0/0 requests";
     }
+  }
+  if (exportQueueStatus) {
+    const queueLength = state.part ? state.part.exportQueueLength || 0 : 0;
+    exportQueueStatus.textContent = `Export queue: ${queueLength}`;
+  }
+  if (autoDownloadStatusLine) {
+    const enabled = state.part ? state.part.autoDownloadOnRollover : false;
+    autoDownloadStatusLine.textContent = `Auto-download: ${enabled ? "ON" : "OFF"}`;
   }
   if (sessionMeta) {
     const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
@@ -1458,23 +1550,16 @@ function updateStatusUI(state) {
   }
   if (exportHint) {
     if (sessionMode === "network_console") {
-      exportHint.textContent = "Use the part download buttons for network capture.";
+      exportHint.textContent =
+        "Use Completed Parts to download network capture.";
       exportHint.classList.remove("is-hidden");
     } else {
       exportHint.classList.add("is-hidden");
     }
   }
-  if (buttons.downloadCurrentPart) {
-    const partRequests = state.part ? state.part.requestsInPart || 0 : 0;
-    const partHasData = state.part ? state.part.partHasData : false;
-    const exportBusy = state.part ? state.part.exportInProgress : false;
-    buttons.downloadCurrentPart.disabled =
-      !partHasData || partRequests < MIN_REQUESTS_TO_EXPORT || exportBusy;
-  }
-  if (buttons.downloadLastCompletedPart) {
-    const lastPartExists = state.part && Boolean(state.part.lastCompletedPartId);
-    const exportBusy = state.part ? state.part.exportInProgress : false;
-    buttons.downloadLastCompletedPart.disabled = !lastPartExists || exportBusy;
+  if (downloadHelp) {
+    const showHelp = sessionMode === "network_console" && sessionState === "capturing";
+    downloadHelp.classList.toggle("is-hidden", !showHelp);
   }
   if (buttons.fullPageScreenshotMode) {
     buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
@@ -1565,6 +1650,7 @@ async function refreshStatus() {
     recordingLiveState = null;
   }
   updateStatusUI(response.state);
+  await refreshCompletedParts();
   if (!jszipAvailable) {
     assertJsZipAvailable();
   }
@@ -2132,13 +2218,13 @@ async function handleDownload() {
   }
 }
 
-async function handleDownloadCurrentPart() {
-  if (exportInProgress) {
+async function handleDownloadPart(partId) {
+  if (!partId || exportInProgress) {
     return;
   }
   startExportUI();
   try {
-    const response = await send("EXPORT_CURRENT_PART");
+    const response = await send("EXPORT_PART", { partId });
     if (!response.ok) {
       finishExportUI(response.error || "Export could not be started.", "error");
       return;
@@ -2157,29 +2243,28 @@ async function handleDownloadCurrentPart() {
   }
 }
 
-async function handleDownloadLastCompletedPart() {
-  if (exportInProgress) {
+async function handleDeletePart(partId, partNumber) {
+  if (!partId || exportInProgress) {
     return;
   }
-  startExportUI();
-  try {
-    const response = await send("EXPORT_LAST_COMPLETED_PART");
-    if (!response.ok) {
-      finishExportUI(response.error || "Export could not be started.", "error");
-      return;
-    }
-    updateExportUI(5, "export_start");
+  const confirmDelete = window.confirm(
+    `Delete Part ${partNumber || ""} from local storage? This cannot be undone.`
+  );
+  if (!confirmDelete) {
+    return;
+  }
+  const response = await send("DELETE_PART", { partId });
+  if (!response.ok) {
     setStatus(
-      statusElements.download,
-      "Export started. You can close this window.",
-      "success"
-    );
-  } catch (error) {
-    finishExportUI(
-      error && error.message ? error.message : "Export failed to start.",
+      statusElements.message,
+      response.error || "Failed to delete part.",
       "error"
     );
+    return;
   }
+  await refreshCompletedParts();
+  await refreshStatus();
+  setStatus(statusElements.message, "Part deleted.", "success");
 }
 
 async function handleRecordingDownload() {
@@ -2337,11 +2422,11 @@ function routeAction(action, el) {
     case "screenshot:full":
       handleFullPageScreenshot();
       break;
-    case "export:part_current":
-      handleDownloadCurrentPart();
+    case "part:download":
+      handleDownloadPart(el.dataset.partId);
       break;
-    case "export:part_last":
-      handleDownloadLastCompletedPart();
+    case "part:delete":
+      handleDeletePart(el.dataset.partId, el.dataset.partNumber);
       break;
     case "export:zip":
       handleDownload();
@@ -2591,11 +2676,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === EXPORT_EVENTS.DONE) {
     finishExportUI("Export complete.", "success");
     showToast("Exported");
+    refreshCompletedParts();
     sendResponse({ ok: true });
     return true;
   }
   if (message.type === EXPORT_EVENTS.ERROR) {
     finishExportUI(message.userMessage || "Export failed.", "error");
+    refreshCompletedParts();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "CAPTURE_PART_STATUS") {
+    (async () => {
+      await refreshStatus();
+      sendResponse({ ok: true });
+    })().catch((error) =>
+      sendResponse({ ok: false, error: error.message || "Update failed." })
+    );
+    return true;
+  }
+  if (message.type === "EXPORT_QUEUE_UPDATE") {
+    (async () => {
+      await refreshStatus();
+      sendResponse({ ok: true });
+    })().catch((error) =>
+      sendResponse({ ok: false, error: error.message || "Update failed." })
+    );
+    return true;
+  }
+  if (message.type === "EXPORT_PART_FAILED") {
+    finishExportUI(message.userMessage || "Download failed.", "error");
+    (async () => {
+      await refreshCompletedParts();
+    })();
     sendResponse({ ok: true });
     return true;
   }

@@ -1,6 +1,6 @@
 (function () {
   const DB_NAME = "repro_evidence_db";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function requestToPromise(request) {
@@ -22,11 +22,19 @@
           const store = db.createObjectStore("sessions", { keyPath: "sessionId" });
           store.createIndex("createdAtMs", "createdAtMs", { unique: false });
         }
+        let partStore;
         if (!db.objectStoreNames.contains("parts")) {
-          const store = db.createObjectStore("parts", { keyPath: "partId" });
-          store.createIndex("sessionId", "sessionId", { unique: false });
-          store.createIndex("partNumber", "partNumber", { unique: false });
-          store.createIndex("status", "status", { unique: false });
+          partStore = db.createObjectStore("parts", { keyPath: "partId" });
+          partStore.createIndex("sessionId", "sessionId", { unique: false });
+          partStore.createIndex("partNumber", "partNumber", { unique: false });
+          partStore.createIndex("status", "status", { unique: false });
+        } else {
+          partStore = request.transaction.objectStore("parts");
+        }
+        if (partStore && !partStore.indexNames.contains("completedAtMs")) {
+          partStore.createIndex("completedAtMs", "completedAtMs", {
+            unique: false,
+          });
         }
         if (!db.objectStoreNames.contains("network_entries")) {
           const store = db.createObjectStore("network_entries", { keyPath: "id" });
@@ -163,6 +171,25 @@
     });
   }
 
+  function deleteAllByIndex(storeName, indexName, keyRange) {
+    return withStore(storeName, "readwrite", (store) => {
+      const index = store.index(indexName);
+      return new Promise((resolve, reject) => {
+        const request = index.openCursor(keyRange);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          cursor.delete();
+          cursor.continue();
+        };
+      });
+    });
+  }
+
   function iterateByIndex(storeName, indexName, keyRange, options, onItem) {
     const direction = options && options.direction ? options.direction : "next";
     const limit = options && typeof options.limit === "number" ? options.limit : null;
@@ -210,6 +237,7 @@
     deleteByKey,
     getAllByIndex,
     getBatchByIndex,
+    deleteAllByIndex,
     iterateByIndex,
   };
 })();
