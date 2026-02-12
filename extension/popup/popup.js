@@ -1051,7 +1051,11 @@ function setModeButtonDisabled(mode, disabled) {
 function setMode(mode) {
   currentMode = mode;
   getModeControls().forEach((block) => {
-    const isActive = block.dataset.mode === mode;
+    const modes = (block.dataset.mode || "")
+      .split(" ")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const isActive = modes.includes(mode);
     block.classList.toggle("active", isActive);
   });
   setActiveModeButton(mode);
@@ -2689,10 +2693,15 @@ async function routeChange(action, el) {
       await chrome.storage.local.set({
         timestampOverlay: captureSettings.timestampOverlay,
       });
+      await send("SET_TIMESTAMP_OVERLAY", {
+        enabled: captureSettings.timestampOverlay,
+      });
       setStatus(
         statusElements.message,
-        "Timestamp overlay will apply in a future update.",
-        "info"
+        captureSettings.timestampOverlay
+          ? "Timestamp overlay enabled."
+          : "Timestamp overlay disabled.",
+        "success"
       );
       break;
     case "annotation:style":

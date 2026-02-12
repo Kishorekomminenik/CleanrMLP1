@@ -101,6 +101,22 @@
           </div>
           <p id="controlsStatus" class="status-strip">-</p>
         </div>
+        <div class="mode-controls" data-mode="screenshot recording">
+          <div class="toggle-row">
+            <span class="label">Timestamp overlay</span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                id="toggle_timestamp_overlay"
+                data-action="overlay:toggle"
+              />
+              <span id="timestampOverlayStatus">OFF</span>
+            </label>
+          </div>
+          <p class="hint">
+            Adds a small timestamp to screenshots and recordings. OFF keeps evidence clean.
+          </p>
+        </div>
         <div class="mode-controls" data-mode="network_console">
           <p class="hint">Configure and manage logs below.</p>
         </div>
@@ -239,20 +255,6 @@
           </div>
           <p class="hint">
             Request/response bodies larger than this are truncated but metadata is stored.
-          </p>
-          <div class="toggle-row">
-            <span class="label">Timestamp overlay</span>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                id="toggle_timestamp_overlay"
-                data-action="overlay:toggle"
-              />
-              <span id="timestampOverlayStatus">OFF</span>
-            </label>
-          </div>
-          <p class="hint">
-            Adds timestamp overlay to screenshots and recordings (coming soon).
           </p>
           <p id="status_current_part" class="status-strip">
             Part - — 0/0 requests

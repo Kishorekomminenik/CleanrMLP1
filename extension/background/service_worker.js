@@ -160,6 +160,14 @@ const brokerState = {
   tabId: null,
   ready: false,
 };
+let timestampOverlayEnabled = false;
+const recordingOverlayState = {
+  startMs: null,
+  paused: false,
+  pauseStartedAt: null,
+  totalPausedMs: 0,
+  tabId: null,
+};
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -299,6 +307,100 @@ async function dataUrlToImageBitmap(dataUrl) {
     throw new Error("Invalid screenshot data.");
   }
   return createImageBitmap(blob);
+}
+
+function formatOverlayTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function formatElapsedMs(ms) {
+  if (typeof ms !== "number" || Number.isNaN(ms)) {
+    return null;
+  }
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function computeRecordingElapsedMs(nowMs) {
+  if (!recordingOverlayState.startMs) {
+    return null;
+  }
+  const endMs =
+    recordingOverlayState.paused && recordingOverlayState.pauseStartedAt
+      ? recordingOverlayState.pauseStartedAt
+      : nowMs;
+  return Math.max(
+    0,
+    endMs - recordingOverlayState.startMs - recordingOverlayState.totalPausedMs
+  );
+}
+
+function drawOverlayBadge(ctx, text, width, height) {
+  if (!text) {
+    return;
+  }
+  const fontSize = Math.max(12, Math.round(width * 0.012));
+  ctx.font = `${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+  ctx.textBaseline = "top";
+  const paddingX = 8;
+  const paddingY = 6;
+  const metrics = ctx.measureText(text);
+  const textWidth = metrics.width;
+  const textHeight = fontSize * 1.2;
+  const boxWidth = textWidth + paddingX * 2;
+  const boxHeight = textHeight + paddingY * 2;
+  const margin = 10;
+  const x = Math.max(margin, width - boxWidth - margin);
+  const y = Math.max(margin, height - boxHeight - margin);
+  const radius = 8;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + boxWidth, y, x + boxWidth, y + boxHeight, radius);
+  ctx.arcTo(x + boxWidth, y + boxHeight, x, y + boxHeight, radius);
+  ctx.arcTo(x, y + boxHeight, x, y, radius);
+  ctx.arcTo(x, y, x + boxWidth, y, radius);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, x + paddingX, y + paddingY);
+}
+
+async function applyTimestampOverlayToDataUrl(dataUrl, options = {}) {
+  if (!dataUrl) {
+    return { dataUrl, blob: null };
+  }
+  if (
+    typeof OffscreenCanvas === "undefined" ||
+    typeof createImageBitmap !== "function"
+  ) {
+    return { dataUrl, blob: null };
+  }
+  const overlayText = options.text;
+  if (!overlayText) {
+    return { dataUrl, blob: null };
+  }
+  try {
+    const bitmap = await dataUrlToImageBitmap(dataUrl);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0);
+    drawOverlayBadge(ctx, overlayText, bitmap.width, bitmap.height);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const nextDataUrl = await blobToDataUrl(blob);
+    return { dataUrl: nextDataUrl || dataUrl, blob };
+  } catch (error) {
+    console.warn("Failed to apply timestamp overlay:", error);
+    return { dataUrl, blob: null };
+  }
 }
 
 function truncateToBytes(value, maxBytes) {
@@ -626,6 +728,14 @@ async function loadCaptureSettings() {
   captureState.autoDownloadOnRollover = settings.autoDownloadOnRollover === true;
 }
 
+async function loadTimestampOverlaySetting() {
+  const settings = await chrome.storage.local.get({
+    timestampOverlay: false,
+  });
+  timestampOverlayEnabled = settings.timestampOverlay === true;
+  return timestampOverlayEnabled;
+}
+
 async function ensureSessionRecord(tab) {
   if (!session) {
     return;
@@ -891,6 +1001,205 @@ async function brokerDownload(blob, filename, mimeType) {
     throw new Error(response && response.error ? response.error : "Download failed.");
   }
   return true;
+}
+
+function overlayBootstrap() {
+  if (window.__reproTimestampOverlay) {
+    return;
+  }
+  const overlay = document.createElement("div");
+  overlay.id = "repro-timestamp-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.right = "10px";
+  overlay.style.bottom = "10px";
+  overlay.style.padding = "6px 8px";
+  overlay.style.background = "rgba(0, 0, 0, 0.55)";
+  overlay.style.color = "#ffffff";
+  overlay.style.font = "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+  overlay.style.borderRadius = "8px";
+  overlay.style.zIndex = "2147483647";
+  overlay.style.pointerEvents = "none";
+  overlay.style.whiteSpace = "nowrap";
+  document.documentElement.appendChild(overlay);
+
+  const state = {
+    enabled: false,
+    startMs: null,
+    paused: false,
+    pauseStartedAt: null,
+    totalPausedMs: 0,
+  };
+
+  const formatTimestamp = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  };
+
+  const formatElapsed = (ms) => {
+    if (typeof ms !== "number") {
+      return null;
+    }
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  };
+
+  const computeElapsedMs = (nowMs) => {
+    if (!state.startMs) {
+      return null;
+    }
+    const endMs =
+      state.paused && state.pauseStartedAt ? state.pauseStartedAt : nowMs;
+    return Math.max(0, endMs - state.startMs - (state.totalPausedMs || 0));
+  };
+
+  const updateText = () => {
+    if (!state.enabled) {
+      overlay.style.display = "none";
+      return;
+    }
+    overlay.style.display = "block";
+    const nowMs = Date.now();
+    let text = formatTimestamp(new Date(nowMs));
+    const elapsed = computeElapsedMs(nowMs);
+    if (elapsed !== null) {
+      const elapsedText = formatElapsed(elapsed);
+      if (elapsedText) {
+        text += ` • +${elapsedText}`;
+      }
+    }
+    overlay.textContent = text;
+  };
+
+  const applyState = (next) => {
+    if (!next) {
+      return;
+    }
+    if (typeof next.enabled === "boolean") {
+      state.enabled = next.enabled;
+    }
+    if (typeof next.startMs === "number") {
+      state.startMs = next.startMs;
+    }
+    if (typeof next.totalPausedMs === "number") {
+      state.totalPausedMs = next.totalPausedMs;
+    }
+    if (typeof next.paused === "boolean") {
+      state.paused = next.paused;
+    }
+    if (typeof next.pauseStartedAt === "number") {
+      state.pauseStartedAt = next.pauseStartedAt;
+    }
+    updateText();
+  };
+
+  const timer = setInterval(updateText, 1000);
+  updateText();
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || message.type !== "TIMESTAMP_OVERLAY_COMMAND") {
+      return false;
+    }
+    if (message.action === "update") {
+      applyState(message.state || {});
+      return false;
+    }
+    if (message.action === "remove") {
+      clearInterval(timer);
+      overlay.remove();
+      delete window.__reproTimestampOverlay;
+      return false;
+    }
+    return false;
+  });
+
+  window.__reproTimestampOverlay = { applyState };
+}
+
+function sendMessageToTab(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function ensureTimestampOverlayInjected(tabId) {
+  if (!chrome.scripting || !chrome.scripting.executeScript) {
+    throw new Error("Scripting API unavailable.");
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: overlayBootstrap,
+  });
+}
+
+async function sendTimestampOverlayUpdate(tabId, state) {
+  try {
+    await sendMessageToTab(tabId, {
+      type: "TIMESTAMP_OVERLAY_COMMAND",
+      action: "update",
+      state,
+    });
+    return;
+  } catch (error) {
+    await ensureTimestampOverlayInjected(tabId);
+    await sendMessageToTab(tabId, {
+      type: "TIMESTAMP_OVERLAY_COMMAND",
+      action: "update",
+      state,
+    });
+  }
+}
+
+async function removeTimestampOverlay(tabId) {
+  if (!tabId) {
+    return;
+  }
+  try {
+    await sendMessageToTab(tabId, {
+      type: "TIMESTAMP_OVERLAY_COMMAND",
+      action: "remove",
+    });
+  } catch (error) {
+    // Ignore if overlay was never injected.
+  }
+}
+
+function getRecordingOverlayPayload() {
+  return {
+    enabled: timestampOverlayEnabled,
+    startMs: recordingOverlayState.startMs,
+    paused: recordingOverlayState.paused,
+    pauseStartedAt: recordingOverlayState.pauseStartedAt,
+    totalPausedMs: recordingOverlayState.totalPausedMs,
+  };
+}
+
+async function applyRecordingTimestampOverlay() {
+  const tabId = recordingOverlayState.tabId;
+  if (!tabId) {
+    return;
+  }
+  if (!timestampOverlayEnabled) {
+    await removeTimestampOverlay(tabId);
+    return;
+  }
+  try {
+    await sendTimestampOverlayUpdate(tabId, getRecordingOverlayPayload());
+  } catch (error) {
+    setStatusMessage("Timestamp overlay not supported on this page.", "info");
+  }
 }
 
 async function updatePartStatus(partId, status, extra = {}) {
@@ -3218,8 +3527,26 @@ async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
   try {
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+    let dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
     const timestampIso = nowIso();
+    await loadTimestampOverlaySetting();
+    if (timestampOverlayEnabled) {
+      const nowMs = Date.now();
+      const elapsedMs = computeRecordingElapsedMs(nowMs);
+      let overlayText = formatOverlayTimestamp(new Date(nowMs));
+      if (typeof elapsedMs === "number") {
+        const elapsedText = formatElapsedMs(elapsedMs);
+        if (elapsedText) {
+          overlayText += ` • +${elapsedText}`;
+        }
+      }
+      const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
+        text: overlayText,
+      });
+      if (overlayResult && overlayResult.dataUrl) {
+        dataUrl = overlayResult.dataUrl;
+      }
+    }
     state.screenshot.dataUrl = dataUrl;
     state.screenshot.capturedAt = timestampIso;
     if (session) {
@@ -3353,7 +3680,28 @@ async function captureFullPageScreenshot(requestedTabId) {
     err.details = error && error.message ? error.message : String(error);
     throw err;
   }
-  const dataUrl = await blobToDataUrl(blob);
+  let dataUrl = await blobToDataUrl(blob);
+  await loadTimestampOverlaySetting();
+  if (timestampOverlayEnabled) {
+    const nowMs = Date.now();
+    const elapsedMs = computeRecordingElapsedMs(nowMs);
+    let overlayText = formatOverlayTimestamp(new Date(nowMs));
+    if (typeof elapsedMs === "number") {
+      const elapsedText = formatElapsedMs(elapsedMs);
+      if (elapsedText) {
+        overlayText += ` • +${elapsedText}`;
+      }
+    }
+    const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
+      text: overlayText,
+    });
+    if (overlayResult && overlayResult.dataUrl) {
+      dataUrl = overlayResult.dataUrl;
+      if (overlayResult.blob) {
+        blob = overlayResult.blob;
+      }
+    }
+  }
   console.log("[FULL][SW]", { step: "stitch_ok" });
   state.screenshot.dataUrl = dataUrl;
   state.screenshot.capturedAt = triggerTimestampIso;
@@ -3437,6 +3785,18 @@ async function startRecording(streamId, tabId, mimeType) {
       }
       state.recording.videoEndEpochMs = null;
     }
+    recordingOverlayState.startMs =
+      typeof state.recording.videoStartEpochMs === "number"
+        ? state.recording.videoStartEpochMs
+        : Date.now();
+    recordingOverlayState.paused = false;
+    recordingOverlayState.pauseStartedAt = null;
+    recordingOverlayState.totalPausedMs = 0;
+    recordingOverlayState.tabId = tab.id;
+    await loadTimestampOverlaySetting();
+    if (timestampOverlayEnabled) {
+      await applyRecordingTimestampOverlay();
+    }
     clearStatusMessage();
     return response;
   } catch (error) {
@@ -3461,6 +3821,13 @@ async function pauseRecording() {
   if (state.recording.status === "paused") {
     setSessionState("paused");
   }
+  if (!recordingOverlayState.paused) {
+    recordingOverlayState.paused = true;
+    recordingOverlayState.pauseStartedAt = Date.now();
+  }
+  if (timestampOverlayEnabled) {
+    await applyRecordingTimestampOverlay();
+  }
   clearStatusMessage();
   return response;
 }
@@ -3478,6 +3845,15 @@ async function resumeRecording() {
   if (state.recording.status === "recording") {
     setSessionState("capturing");
   }
+  if (recordingOverlayState.paused && recordingOverlayState.pauseStartedAt) {
+    recordingOverlayState.totalPausedMs +=
+      Date.now() - recordingOverlayState.pauseStartedAt;
+  }
+  recordingOverlayState.paused = false;
+  recordingOverlayState.pauseStartedAt = null;
+  if (timestampOverlayEnabled) {
+    await applyRecordingTimestampOverlay();
+  }
   clearStatusMessage();
   return response;
 }
@@ -3494,6 +3870,14 @@ async function stopRecording() {
   if (state.recording.status === "idle") {
     markSessionStopped();
   }
+  if (recordingOverlayState.tabId) {
+    await removeTimestampOverlay(recordingOverlayState.tabId);
+  }
+  recordingOverlayState.startMs = null;
+  recordingOverlayState.paused = false;
+  recordingOverlayState.pauseStartedAt = null;
+  recordingOverlayState.totalPausedMs = 0;
+  recordingOverlayState.tabId = null;
   if (state.recording.hasData && !state.recording.videoBlobUrl) {
     try {
       await ensureOffscreenReady();
@@ -4984,6 +5368,30 @@ async function handleMessage(message, sender) {
           maxBodyKb: Math.round(captureState.maxBodyBytes / 1024),
         },
       };
+      break;
+    case "SET_TIMESTAMP_OVERLAY":
+      await chrome.storage.local.set({
+        timestampOverlay: normalizedMessage.enabled === true,
+      });
+      timestampOverlayEnabled = normalizedMessage.enabled === true;
+      if (
+        state.recording.status === "recording" ||
+        state.recording.status === "paused"
+      ) {
+        if (!recordingOverlayState.startMs) {
+          recordingOverlayState.startMs =
+            typeof state.recording.videoStartEpochMs === "number"
+              ? state.recording.videoStartEpochMs
+              : Date.now();
+        }
+        if (!recordingOverlayState.tabId && session && session.active_tab) {
+          recordingOverlayState.tabId = session.active_tab.tab_id;
+        }
+        await applyRecordingTimestampOverlay();
+      } else if (recordingOverlayState.tabId) {
+        await removeTimestampOverlay(recordingOverlayState.tabId);
+      }
+      result = { ok: true, enabled: timestampOverlayEnabled };
       break;
     case "GET_COMPLETED_PARTS":
       if (!captureState.sessionId) {
