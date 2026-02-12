@@ -34,7 +34,6 @@ const buttons = {
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
   fullPageScreenshotMode: document.getElementById("btn_fullpage_screenshot_mode"),
-  fullPageCancel: document.getElementById("btn_fullpage_cancel"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
   reset: document.getElementById("btn_reset_session"),
@@ -45,7 +44,6 @@ const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
 const screenshotHint = document.getElementById("screenshotHint");
 const recordingDownloadHint = document.getElementById("recordingDownloadHint");
-const fullPageProgress = document.getElementById("fullPageProgress");
 const statusTimerRow = document.getElementById("status_timer_row");
 const statusCountsRow = document.getElementById("status_counts_row");
 const downloadControls = document.getElementById("download_controls");
@@ -192,11 +190,6 @@ let captureFilters = {
   filters_panel_collapsed: true,
 };
 let filtersLocked = false;
-let fullPageState = {
-  inProgress: false,
-  jobId: null,
-  total: 0,
-};
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -607,40 +600,6 @@ function setDownloadBanner(message, type = "info") {
   downloadBanner.classList.remove("is-hidden");
   downloadBanner.classList.toggle("is-error", type === "error");
   downloadBanner.classList.toggle("is-info", type === "info");
-}
-
-function setFullPageInProgress(active) {
-  fullPageState.inProgress = active;
-  if (buttons.fullPageScreenshotMode) {
-    buttons.fullPageScreenshotMode.disabled = active;
-  }
-  if (buttons.fullPageCancel) {
-    buttons.fullPageCancel.classList.toggle("is-hidden", !active);
-  }
-  if (!active && fullPageProgress) {
-    fullPageProgress.classList.add("is-hidden");
-    fullPageProgress.textContent = "";
-  }
-}
-
-function updateFullPageProgress(stage, current, total) {
-  if (!fullPageProgress) {
-    return;
-  }
-  const label =
-    stage === "plan"
-      ? "Preparing"
-      : stage === "stitch"
-        ? "Stitching"
-        : stage === "tile"
-          ? "Tiling"
-          : "Capturing";
-  const progressText =
-    total && current
-      ? `Full capture ${current}/${total}… (${label})`
-      : `Full capture… (${label})`;
-  fullPageProgress.textContent = progressText;
-  fullPageProgress.classList.remove("is-hidden");
 }
 
 function showStorageLimitModal(state) {
@@ -2173,8 +2132,7 @@ function updateStatusUI(state) {
   }
   updateExportProgressUI();
   if (buttons.fullPageScreenshotMode) {
-    buttons.fullPageScreenshotMode.disabled =
-      !allowScreenshots || fullPageState.inProgress;
+    buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
   }
   if (quickActions) {
     const showQuickActions = currentMode === "screenshot" || sessionActive;
@@ -2336,9 +2294,6 @@ async function handleScreenshot() {
 
 async function handleFullPageScreenshot() {
   console.log("[FULL] start");
-  if (fullPageState.inProgress) {
-    return;
-  }
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.id || !tab.url) {
@@ -2359,9 +2314,8 @@ async function handleFullPageScreenshot() {
   } catch (error) {
     const message =
       error && error.message ? error.message : "Unable to read active tab.";
-    const codeSuffix = code ? ` (${code})` : "";
     setStatus(statusElements.message, message, "error");
-    showToast(`${message}${codeSuffix}`, "error");
+    showToast(message, "error");
     return;
   }
   const statusResponse = await send(MSG.GET_STATUS);
@@ -2389,8 +2343,6 @@ async function handleFullPageScreenshot() {
     "Capturing full page… please don’t scroll.",
     "default"
   );
-  setFullPageInProgress(true);
-  updateFullPageProgress("capture", 0, 0);
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const response = await send(MSG.CAPTURE_FULLPAGE, {
     tabId: activeTab && activeTab.id ? activeTab.id : null,
@@ -2403,72 +2355,38 @@ async function handleFullPageScreenshot() {
       message =
         errorInfo.message ||
         "Full capture isn’t supported on this page. Open a regular website tab and try again.";
-    } else if (code === "CANCELLED") {
-      message = "Full capture cancelled.";
     } else if (code === "PAGE_TOO_LARGE") {
       message =
         "This page is large. Full capture may take a moment.";
-    } else if (code === "SCROLL_MISMATCH") {
-      message =
-        "Page layout changed during capture. Try again or use Snap.";
     } else if (code === "INJECT_FAILED" || code === "PLAN_FAILED") {
       message = "Full capture failed. Try again, or use Snap.";
-    } else if (code === "FP_CANVAS_LIMIT") {
-      message =
-        "Page too large to stitch into one image. Exported in parts.";
     } else if (errorInfo.message && typeof errorInfo.message === "string") {
       message = errorInfo.message;
     }
     setStatus(statusElements.message, message, "error");
     showToast(message, "error");
-    setFullPageInProgress(false);
     await refreshStatus();
     return;
   }
-  if (response.parts && Array.isArray(response.parts)) {
-    const names = response.parts.map((part) => part.fileName).filter(Boolean);
-    const message = `Full capture exported in parts: ${names.join(", ")}`;
-    setStatus(statusElements.message, message, "success");
-    showToast("Full capture exported");
-    setFullPageInProgress(false);
-    await refreshStatus();
-    return;
-  }
-  if (response.dataUrl && typeof response.dataUrl === "string") {
+  if (response.pngDataUrl && typeof response.pngDataUrl === "string") {
     try {
-      await chrome.storage.session.set({
-        latestScreenshotDataUrl: response.dataUrl,
-        latestScreenshotAnnotationStyle: getAnnotationStyleFromUi(),
-      });
-      await chrome.tabs.create({
-        url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
-      });
+      const blob = await dataUrlToBlob(response.pngDataUrl);
+      const filename = `qa-screenshot-fullpage-${formatExportTimestamp(
+        new Date()
+      )}.png`;
+      await downloadBlob(blob, filename);
     } catch (error) {
       const message =
-        error && error.message ? error.message : "Failed to open viewer.";
+        error && error.message ? error.message : "Download failed.";
       setStatus(statusElements.message, message, "error");
       showToast(message, "error");
-      setFullPageInProgress(false);
       await refreshStatus();
       return;
     }
   }
   setStatus(statusElements.message, "Full page screenshot captured.", "success");
   showToast("Full captured");
-  setFullPageInProgress(false);
   await refreshStatus();
-}
-
-async function handleFullPageCancel() {
-  if (!fullPageState.inProgress) {
-    return;
-  }
-  setStatus(statusElements.message, "Cancelling full capture…", "default");
-  try {
-    await send("CAPTURE_FULLPAGE_CANCEL");
-  } catch (error) {
-    // Ignore cancel errors.
-  }
 }
 
 async function handleRecordingStart() {
@@ -3115,9 +3033,6 @@ function routeAction(action, el) {
     case "screenshot:full":
       handleFullPageScreenshot();
       break;
-    case "screenshot:full_cancel":
-      handleFullPageCancel();
-      break;
     case "part:download":
       handleDownloadPart(el.dataset.partId);
       break;
@@ -3430,14 +3345,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     };
     updateExportProgressUI();
     setStatus(statusElements.download, "Export started.", "success");
-    sendResponse({ ok: true });
-    return true;
-  }
-  if (message.type === "FULLPAGE_PROGRESS") {
-    if (!fullPageState.inProgress) {
-      setFullPageInProgress(true);
-    }
-    updateFullPageProgress(message.stage, message.current, message.total);
     sendResponse({ ok: true });
     return true;
   }
