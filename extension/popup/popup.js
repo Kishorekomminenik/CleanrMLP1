@@ -684,42 +684,6 @@ async function persistCaptureFilters() {
   });
 }
 
-function applyFiltersToUI() {
-  if (filterRequestType) {
-    filterRequestType.value = captureFilters.filter_request_type;
-  }
-  if (filterStatusMode) {
-    filterStatusMode.value = captureFilters.filter_status_mode;
-  }
-  if (filterStatusCustomList) {
-    filterStatusCustomList.value = captureFilters.filter_status_custom_list;
-  }
-  if (filterUrlContains) {
-    filterUrlContains.value = captureFilters.filter_url_contains;
-  }
-  if (filterUrlExcludes) {
-    filterUrlExcludes.value = captureFilters.filter_url_excludes;
-  }
-  if (filterCaptureMode) {
-    const radios = filterCaptureMode.querySelectorAll("input[type='radio']");
-    radios.forEach((radio) => {
-      radio.checked = radio.value === captureFilters.filter_capture_mode;
-    });
-  }
-  const showCustom = captureFilters.filter_status_mode === "custom";
-  if (filterStatusCustomWrap) {
-    filterStatusCustomWrap.classList.toggle("is-hidden", !showCustom);
-  }
-  if (filtersBody) {
-    const collapsed = Boolean(captureFilters.filters_panel_collapsed);
-    filtersBody.classList.toggle("collapsed", collapsed);
-    if (filtersChevron) {
-      filtersChevron.textContent = collapsed ? "▸" : "▾";
-      filtersToggle?.classList.toggle("open", !collapsed);
-    }
-  }
-}
-
 function parseCustomStatusList(value) {
   const tokens = String(value || "")
     .split(",")
