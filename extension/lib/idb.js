@@ -1,6 +1,6 @@
 (function () {
   const DB_NAME = "repro_evidence_db";
-  const DB_VERSION = 2;
+  const DB_VERSION = 1;
   let dbPromise = null;
 
   function requestToPromise(request) {
@@ -14,49 +14,86 @@
     if (dbPromise) {
       return dbPromise;
     }
-    dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains("sessions")) {
-          const store = db.createObjectStore("sessions", { keyPath: "sessionId" });
-          store.createIndex("createdAtMs", "createdAtMs", { unique: false });
+
+    function applySchema(db, transaction) {
+      if (!db.objectStoreNames.contains("sessions")) {
+        const store = db.createObjectStore("sessions", { keyPath: "sessionId" });
+        store.createIndex("createdAtMs", "createdAtMs", { unique: false });
+      }
+      let partStore;
+      if (!db.objectStoreNames.contains("parts")) {
+        partStore = db.createObjectStore("parts", { keyPath: "partId" });
+        partStore.createIndex("sessionId", "sessionId", { unique: false });
+        partStore.createIndex("partNumber", "partNumber", { unique: false });
+        partStore.createIndex("status", "status", { unique: false });
+      } else {
+        partStore = transaction.objectStore("parts");
+      }
+      if (partStore && !partStore.indexNames.contains("completedAtMs")) {
+        partStore.createIndex("completedAtMs", "completedAtMs", {
+          unique: false,
+        });
+      }
+      if (!db.objectStoreNames.contains("network_entries")) {
+        const store = db.createObjectStore("network_entries", { keyPath: "id" });
+        store.createIndex("sessionId", "sessionId", { unique: false });
+        store.createIndex("partId", "partId", { unique: false });
+        store.createIndex("t_ms", "t_ms", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("console_entries")) {
+        const store = db.createObjectStore("console_entries", { keyPath: "id" });
+        store.createIndex("sessionId", "sessionId", { unique: false });
+        store.createIndex("partId", "partId", { unique: false });
+        store.createIndex("t_ms", "t_ms", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("meta")) {
+        db.createObjectStore("meta", { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains("counters")) {
+        db.createObjectStore("counters", { keyPath: "key" });
+      }
+    }
+
+    function openWithVersion(version) {
+      return new Promise((resolve, reject) => {
+        const request =
+          typeof version === "number"
+            ? indexedDB.open(DB_NAME, version)
+            : indexedDB.open(DB_NAME);
+        request.onupgradeneeded = () => {
+          applySchema(request.result, request.transaction);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    dbPromise = (async () => {
+      try {
+        return await openWithVersion(DB_VERSION);
+      } catch (error) {
+        if (error && error.name === "VersionError") {
+          const db = await openWithVersion();
+          const needsMeta = !db.objectStoreNames.contains("meta");
+          let needsCompletedIndex = false;
+          if (db.objectStoreNames.contains("parts")) {
+            needsCompletedIndex = !db
+              .transaction("parts", "readonly")
+              .objectStore("parts")
+              .indexNames.contains("completedAtMs");
+          } else {
+            needsCompletedIndex = true;
+          }
+          if (needsMeta || needsCompletedIndex) {
+            const nextVersion = db.version + 1;
+            db.close();
+            return await openWithVersion(nextVersion);
+          }
+          return db;
         }
-        let partStore;
-        if (!db.objectStoreNames.contains("parts")) {
-          partStore = db.createObjectStore("parts", { keyPath: "partId" });
-          partStore.createIndex("sessionId", "sessionId", { unique: false });
-          partStore.createIndex("partNumber", "partNumber", { unique: false });
-          partStore.createIndex("status", "status", { unique: false });
-        } else {
-          partStore = request.transaction.objectStore("parts");
-        }
-        if (partStore && !partStore.indexNames.contains("completedAtMs")) {
-          partStore.createIndex("completedAtMs", "completedAtMs", {
-            unique: false,
-          });
-        }
-        if (!db.objectStoreNames.contains("network_entries")) {
-          const store = db.createObjectStore("network_entries", { keyPath: "id" });
-          store.createIndex("sessionId", "sessionId", { unique: false });
-          store.createIndex("partId", "partId", { unique: false });
-          store.createIndex("t_ms", "t_ms", { unique: false });
-          store.createIndex("type", "type", { unique: false });
-        }
-        if (!db.objectStoreNames.contains("console_entries")) {
-          const store = db.createObjectStore("console_entries", { keyPath: "id" });
-          store.createIndex("sessionId", "sessionId", { unique: false });
-          store.createIndex("partId", "partId", { unique: false });
-          store.createIndex("t_ms", "t_ms", { unique: false });
-          store.createIndex("level", "level", { unique: false });
-        }
-        if (!db.objectStoreNames.contains("counters")) {
-          db.createObjectStore("counters", { keyPath: "key" });
-        }
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+        throw error;
+      }
+    })();
     return dbPromise;
   }
 
@@ -190,6 +227,10 @@
     });
   }
 
+  function clearStore(storeName) {
+    return withStore(storeName, "readwrite", (store) => store.clear());
+  }
+
   function iterateByIndex(storeName, indexName, keyRange, options, onItem) {
     const direction = options && options.direction ? options.direction : "next";
     const limit = options && typeof options.limit === "number" ? options.limit : null;
@@ -238,6 +279,7 @@
     getAllByIndex,
     getBatchByIndex,
     deleteAllByIndex,
+    clearStore,
     iterateByIndex,
   };
 })();

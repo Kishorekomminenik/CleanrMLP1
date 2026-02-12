@@ -20,7 +20,9 @@ try {
   importScripts(
     chrome.runtime.getURL("lib/jszip.min.js"),
     chrome.runtime.getURL("lib/zipBuilderChunked.js"),
-    chrome.runtime.getURL("lib/idb.js")
+    chrome.runtime.getURL("lib/idb.js"),
+    chrome.runtime.getURL("lib/export_ndjson.js"),
+    chrome.runtime.getURL("lib/download_broker.js")
   );
 } catch (error) {
   console.warn("Zip builder unavailable:", error);
@@ -56,12 +58,14 @@ const EXPORT_SIZE_GUARDS = {
 const JSON_BUILD_YIELD_EVERY = 200;
 const CAPTURE_DEFAULTS = {
   partCapRequests: 5000,
-  partCapBytes: 250000000,
+  partCapBytes: DEFAULT_PART_CAP_BYTES,
   maxBodyBytes: 200 * 1024,
   autoDownloadOnRollover: false,
 };
 const MIN_REQUESTS_TO_EXPORT = 25;
-const MAX_COMPLETED_PARTS_RETAINED = 5;
+const MAX_COMPLETED_PARTS_RETAINED = 3;
+const DEFAULT_PART_CAP_BYTES = 75000000;
+const RESOURCE_TYPES_DEFAULT = ["xhr", "fetch"];
 const PART_STATUS = {
   ACTIVE: "active",
   COMPLETED_READY: "completed_ready",
@@ -120,6 +124,8 @@ const captureState = {
   partCreatedAtMs: null,
   requestsInPart: 0,
   bytesInPart: 0,
+  networkBytesInPart: 0,
+  consoleBytesInPart: 0,
   consoleInPart: 0,
   errorsInPart: 0,
   lastEventMs: null,
@@ -134,6 +140,10 @@ const captureState = {
   lastCompletedPartNumber: null,
   partHasData: false,
   completedPartsCount: 0,
+  pausedForStorageLimit: false,
+  rolloverPending: false,
+  pendingFinalizePart: null,
+  pendingFinalizeStartNewPart: false,
 };
 const networkQueue = [];
 const consoleQueue = [];
@@ -534,8 +544,20 @@ function isIdbAvailable() {
   return Boolean(globalThis.ReproIdb);
 }
 
+function isNdjsonAvailable() {
+  return Boolean(globalThis.NdjsonExporter);
+}
+
 function buildPartId(sessionId, partNumber) {
   return `${sessionId}_part_${partNumber}`;
+}
+
+function isAllowedResourceType(resourceType) {
+  if (!resourceType) {
+    return true;
+  }
+  const normalized = String(resourceType).toLowerCase();
+  return RESOURCE_TYPES_DEFAULT.includes(normalized);
 }
 
 async function loadCaptureSettings() {
@@ -582,6 +604,12 @@ async function ensureSessionRecord(tab) {
   captureState.lastCompletedPartId = null;
   captureState.lastCompletedPartNumber = null;
   captureState.completedPartsCount = 0;
+  captureState.networkBytesInPart = 0;
+  captureState.consoleBytesInPart = 0;
+  captureState.pausedForStorageLimit = false;
+  captureState.rolloverPending = false;
+  captureState.pendingFinalizePart = null;
+  captureState.pendingFinalizeStartNewPart = false;
   const sessionRecord = {
     sessionId: session.session_id,
     createdAtMs,
@@ -603,6 +631,8 @@ async function startNewPart(reason) {
   captureState.partCreatedAtMs = Date.now();
   captureState.requestsInPart = 0;
   captureState.bytesInPart = 0;
+  captureState.networkBytesInPart = 0;
+  captureState.consoleBytesInPart = 0;
   captureState.consoleInPart = 0;
   captureState.errorsInPart = 0;
   captureState.partHasData = false;
@@ -618,6 +648,8 @@ async function startNewPart(reason) {
     consoleCount: 0,
     errorCount: 0,
     bytesInPart: 0,
+    networkBytes: 0,
+    consoleBytes: 0,
     lastEventMs: null,
     reason: reason || null,
   };
@@ -640,6 +672,8 @@ async function completePart(partSnapshot) {
     consoleCount: partSnapshot.consoleCount || 0,
     errorCount: partSnapshot.errorCount || 0,
     bytesInPart: partSnapshot.bytesInPart || 0,
+    networkBytes: partSnapshot.networkBytes || 0,
+    consoleBytes: partSnapshot.consoleBytes || 0,
     lastEventMs: partSnapshot.lastEventMs || null,
     reason: partSnapshot.reason || null,
   };
@@ -661,6 +695,8 @@ async function persistActivePart() {
     consoleCount: captureState.consoleInPart,
     errorCount: captureState.errorsInPart,
     bytesInPart: captureState.bytesInPart,
+    networkBytes: captureState.networkBytesInPart,
+    consoleBytes: captureState.consoleBytesInPart,
     lastEventMs: captureState.lastEventMs,
   };
   await ReproIdb.putOne("parts", partRecord);
@@ -679,6 +715,7 @@ function sendPartStatusUpdate(extra) {
     completedPartsCount: captureState.completedPartsCount,
     exportQueueLength: getExportQueueLength(),
     autoDownloadOnRollover: captureState.autoDownloadOnRollover,
+    pausedForStorageLimit: captureState.pausedForStorageLimit,
     ...extra,
   });
 }
@@ -822,6 +859,8 @@ async function hydrateCaptureStateFromIdb() {
     captureState.consoleInPart = activePart.consoleCount || 0;
     captureState.errorsInPart = activePart.errorCount || 0;
     captureState.bytesInPart = activePart.bytesInPart || 0;
+    captureState.networkBytesInPart = activePart.networkBytes || 0;
+    captureState.consoleBytesInPart = activePart.consoleBytes || 0;
     captureState.lastEventMs = activePart.lastEventMs || null;
     captureState.partHasData =
       (activePart.requestCount || 0) > 0 || (activePart.consoleCount || 0) > 0;
@@ -833,6 +872,8 @@ async function hydrateCaptureStateFromIdb() {
     captureState.consoleInPart = 0;
     captureState.errorsInPart = 0;
     captureState.bytesInPart = 0;
+    captureState.networkBytesInPart = 0;
+    captureState.consoleBytesInPart = 0;
     captureState.lastEventMs = null;
     captureState.partHasData = false;
   }
@@ -1080,8 +1121,15 @@ async function loadLimitedEntriesFromIdb(options) {
 }
 
 async function downloadBlob(blob, filename, opts = {}) {
-  // MV3 service worker safe download: no URL.createObjectURL
   const saveAs = opts.saveAs !== undefined ? opts.saveAs : true;
+  if (globalThis.DownloadBroker && typeof DownloadBroker.downloadBlob === "function") {
+    try {
+      return await DownloadBroker.downloadBlob(blob, filename, { saveAs });
+    } catch (error) {
+      console.warn("Download broker failed, falling back:", error);
+    }
+  }
+  // MV3 service worker safe download: no URL.createObjectURL
   const dataUrl = await new Promise((resolve, reject) => {
     try {
       const reader = new FileReader();
@@ -1433,7 +1481,11 @@ function getStatusSnapshot() {
     recordingStatus: state.recording.status,
     recordingCapturedAt: state.recording.capturedAt,
     networkActive: state.network.active,
-    logsState: state.network.active ? "capturing" : "idle",
+    logsState: captureState.pausedForStorageLimit
+      ? "paused"
+      : state.network.active
+        ? "capturing"
+        : "idle",
     networkCount: captureState.sessionId
       ? captureState.totalRequests
       : Object.keys(state.network.requests).length,
@@ -1447,6 +1499,8 @@ function getStatusSnapshot() {
       capRequests: captureState.capRequests,
       errorsInPart: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
+      networkBytesInPart: captureState.networkBytesInPart,
+      consoleBytesInPart: captureState.consoleBytesInPart,
       maxBodyBytes: captureState.maxBodyBytes,
       autoDownloadOnRollover: captureState.autoDownloadOnRollover,
       lastCompletedPartNumber: captureState.lastCompletedPartNumber,
@@ -1454,6 +1508,8 @@ function getStatusSnapshot() {
       partHasData: captureState.partHasData,
       completedPartsCount: captureState.completedPartsCount,
       exportQueueLength: getExportQueueLength(),
+      maxCompletedParts: MAX_COMPLETED_PARTS_RETAINED,
+      pausedForStorageLimit: captureState.pausedForStorageLimit,
       exportInProgress: exportJob ? exportJob.active === true : false,
     },
     session,
@@ -1624,18 +1680,6 @@ async function buildPartExportData(context) {
       ? environment.extension_version
       : getExtensionVersion();
   const exportCreatedAt = new Date();
-  const exportMetadata = {
-    zip_created_at_utc: exportCreatedAt.toISOString(),
-    zip_created_at_local: exportCreatedAt.toString(),
-    zip_created_at_epoch_ms: exportCreatedAt.getTime(),
-    timezone_offset_minutes:
-      environment && typeof environment.timezone_offset_minutes === "number"
-        ? environment.timezone_offset_minutes
-        : new Date().getTimezoneOffset(),
-    zip_builder_version: extensionVersion || null,
-    redaction_enabled:
-      typeof redactionEnabled === "boolean" ? redactionEnabled : null,
-  };
   let sessionExport = buildSessionExport();
   if (!sessionExport && hasExportableArtifacts()) {
     const tab = await getActiveTab();
@@ -1671,6 +1715,44 @@ async function buildPartExportData(context) {
     requestCount: captureState.requestsInPart,
     consoleCount: captureState.consoleInPart,
     errorCount: captureState.errorsInPart,
+    networkBytes: captureState.networkBytesInPart,
+    consoleBytes: captureState.consoleBytesInPart,
+    bytesInPart: captureState.bytesInPart,
+  };
+  const exportMetadata = {
+    created_at_utc: exportCreatedAt.toISOString(),
+    created_at_local: exportCreatedAt.toString(),
+    timezone_offset_minutes:
+      environment && typeof environment.timezone_offset_minutes === "number"
+        ? environment.timezone_offset_minutes
+        : new Date().getTimezoneOffset(),
+    extension_version: extensionVersion || null,
+    schema_version: QA_SESSION_LOG_SCHEMA_VERSION,
+    sessionId: sessionExport ? sessionExport.session_id : null,
+    partNumber:
+      context && context.partNumber
+        ? context.partNumber
+        : captureState.partNumber,
+    counts: {
+      network: typeof partInfo.requestCount === "number" ? partInfo.requestCount : 0,
+      console: typeof partInfo.consoleCount === "number" ? partInfo.consoleCount : 0,
+    },
+    bytes: {
+      networkBytes:
+        typeof partInfo.networkBytes === "number"
+          ? partInfo.networkBytes
+          : captureState.networkBytesInPart,
+      consoleBytes:
+        typeof partInfo.consoleBytes === "number"
+          ? partInfo.consoleBytes
+          : captureState.consoleBytesInPart,
+      totalBytes:
+        typeof partInfo.bytesInPart === "number"
+          ? partInfo.bytesInPart
+          : captureState.bytesInPart,
+    },
+    redaction_enabled:
+      typeof redactionEnabled === "boolean" ? redactionEnabled : null,
   };
   const sessionId = sessionExport ? sessionExport.session_id : null;
   const startedAtIso = sessionExport ? sessionExport.created_at : null;
@@ -1763,18 +1845,6 @@ async function buildPartExportData(context) {
         keyRange,
         limit: exportLimits.maxConsoleEntries,
       });
-  const redactedNetworkEntries =
-    redactionEnabled && globalThis.RedactUtils
-      ? limitedNetworkEntries.map((entry) =>
-          globalThis.RedactUtils.redactNetworkEntry(entry)
-        )
-      : limitedNetworkEntries;
-  const redactedConsoleEntries =
-    redactionEnabled && globalThis.RedactUtils
-      ? limitedConsoleEntries.map((entry) =>
-          globalThis.RedactUtils.redactConsoleEntry(entry)
-        )
-      : limitedConsoleEntries;
   const networkLimit = {
     total: partInfo && typeof partInfo.requestCount === "number"
       ? partInfo.requestCount
@@ -1806,63 +1876,7 @@ async function buildPartExportData(context) {
     ? "Metadata-only export created due to size limits."
     : truncationResult.note;
   const qaSummaryText = buildPartSummaryText(partInfo, metadataNote);
-  let qaSessionLog = null;
-  let normalizedEvents = [];
-  let signals = [];
-  if (
-    !metadataOnly &&
-    globalThis.PipelineNormalizer &&
-    globalThis.PipelineActionGrouper &&
-    globalThis.PipelineSignalReducer
-  ) {
-    const normalized = globalThis.PipelineNormalizer.normalizeSession(
-      {
-        session: {
-          sessionId: sessionExport ? sessionExport.session_id : null,
-          startedAt: sessionExport ? sessionExport.created_at : null,
-          endedAt: sessionExport ? sessionExport.ended_at : null,
-          tabId:
-            sessionExport && sessionExport.active_tab
-              ? sessionExport.active_tab.tab_id
-              : null,
-          mode: sessionExport ? sessionExport.mode : null,
-        },
-        rawNetwork: redactedNetworkEntries,
-        markers: [],
-        screenshots: [],
-        consoleEvents: redactedConsoleEntries,
-        uiActions: [],
-      },
-      pipelineConfig
-    );
-    const grouped = globalThis.PipelineActionGrouper.groupByActions(
-      normalized.normalizedEvents,
-      pipelineConfig
-    );
-    const reduced = globalThis.PipelineSignalReducer.reduceToSignals(
-      grouped.normalizedEventsWithActionIds,
-      pipelineConfig,
-      {
-        rawNetworkCount: networkLimit.total,
-        networkCapped: networkLimit.dropped > 0,
-      }
-    );
-    normalizedEvents = grouped.normalizedEventsWithActionIds;
-    signals = reduced.signals || [];
-  }
-  qaSessionLog = {
-    schema_version: QA_SESSION_LOG_SCHEMA_VERSION,
-    session: qaSessionLogSession,
-    raw: {
-      network: redactedNetworkEntries,
-      console: redactedConsoleEntries,
-      markers: [],
-      screenshots: [],
-    },
-    normalizedEvents,
-    signals,
-    config: pipelineConfig,
-  };
+  const qaSessionLog = null;
   return {
     networkLogsSource: "idb",
     consoleLogsSource: "idb",
@@ -2218,6 +2232,9 @@ async function runEvidenceZipExport(context) {
   }
   const usePartExport = Boolean(context && context.partId);
   const metadataOnly = Boolean(context && context.metadataOnly);
+  if (usePartExport && !isNdjsonAvailable()) {
+    throw new Error("NDJSON exporter unavailable.");
+  }
   exportJob = {
     active: true,
     startedAt: Date.now(),
@@ -2301,6 +2318,8 @@ async function runEvidenceZipExport(context) {
     const jsonSizes = {
       network_logs: 0,
       console_logs: 0,
+      network_ndjson: 0,
+      console_ndjson: 0,
       session: 0,
       environment: 0,
       qa_session_log: 0,
@@ -2383,32 +2402,32 @@ async function runEvidenceZipExport(context) {
       data.exportTruncationReport = truncationResult.report;
       data.qaSummaryText = buildPartSummaryText(partInfo, truncationResult.note);
     };
-    const baseItems = [
-      {
-        path: "network_logs.json",
-        getData: async () => {
-          if (metadataOnly) {
-            const result = await buildEntriesJsonBlob({
-              entries: [],
-              version: "1.0",
-              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-              label: "Network logs",
-              debugCode: "network_json_too_large",
-            });
-            trackJsonSize("network_logs", result.size);
-            networkBuilt = true;
-            finalizePartTruncationReport();
-            return result.blob;
-          }
-          if (usePartExport && data.partId) {
-            const result = await buildEntriesJsonBlobFromIdb({
+    let baseItems = [];
+    if (usePartExport && data.partId) {
+      baseItems = [
+        {
+          path: "network.ndjson",
+          getData: async () => {
+            if (metadataOnly) {
+              const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
+                {
+                  storeName: "network_entries",
+                  indexName: "partId",
+                  keyRange: IDBKeyRange.only(data.partId),
+                  maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+                  redactEntry: redactNetworkEntry,
+                }
+              );
+              trackJsonSize("network_ndjson", result.size);
+              networkBuilt = true;
+              finalizePartTruncationReport();
+              return result.blob;
+            }
+            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
               storeName: "network_entries",
               indexName: "partId",
               keyRange: IDBKeyRange.only(data.partId),
-              version: "1.0",
               maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-              label: "Network logs",
-              debugCode: "network_json_too_large",
               redactEntry: redactNetworkEntry,
               onEntry: (entry) => {
                 if (entry.request_body_truncated) {
@@ -2419,95 +2438,149 @@ async function runEvidenceZipExport(context) {
                 }
               },
             });
-            trackJsonSize("network_logs", result.size);
+            trackJsonSize("network_ndjson", result.size);
             networkBuilt = true;
             finalizePartTruncationReport();
             return result.blob;
-          }
-          const result = await buildEntriesJsonBlob({
-            entries:
-              data.networkLogs && Array.isArray(data.networkLogs.entries)
-                ? data.networkLogs.entries
-                : [],
-            version: data.networkLogs && data.networkLogs.version
-              ? data.networkLogs.version
-              : "1.0",
-            maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-            label: "Network logs",
-            debugCode: "network_json_too_large",
-          });
-          trackJsonSize("network_logs", result.size);
-          return result.blob;
+          },
+          options: { date: zipDate },
         },
-        options: { date: zipDate },
-      },
-      {
-        path: "console_logs.json",
-        getData: async () => {
-          if (metadataOnly) {
-            const result = await buildEntriesJsonBlob({
-              entries: [],
-              version: "1.0",
-              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-              label: "Console logs",
-              debugCode: "console_json_too_large",
-            });
-            trackJsonSize("console_logs", result.size);
-            consoleBuilt = true;
-            finalizePartTruncationReport();
-            return result.blob;
-          }
-          if (usePartExport && data.partId) {
-            const result = await buildEntriesJsonBlobFromIdb({
+        {
+          path: "console.ndjson",
+          getData: async () => {
+            if (metadataOnly) {
+              const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
+                {
+                  storeName: "console_entries",
+                  indexName: "partId",
+                  keyRange: IDBKeyRange.only(data.partId),
+                  maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+                  redactEntry: redactConsoleEntry,
+                }
+              );
+              trackJsonSize("console_ndjson", result.size);
+              consoleBuilt = true;
+              finalizePartTruncationReport();
+              return result.blob;
+            }
+            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
               storeName: "console_entries",
               indexName: "partId",
               keyRange: IDBKeyRange.only(data.partId),
-              version: "1.0",
               maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-              label: "Console logs",
-              debugCode: "console_json_too_large",
               redactEntry: redactConsoleEntry,
             });
-            trackJsonSize("console_logs", result.size);
+            trackJsonSize("console_ndjson", result.size);
             consoleBuilt = true;
             finalizePartTruncationReport();
             return result.blob;
-          }
-          const result = await buildEntriesJsonBlob({
-            entries:
-              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-                ? data.consoleLogs.entries
-                : [],
-            version: data.consoleLogs && data.consoleLogs.version
-              ? data.consoleLogs.version
-              : "1.0",
-            maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-            label: "Console logs",
-            debugCode: "console_json_too_large",
-          });
-          trackJsonSize("console_logs", result.size);
-          return result.blob;
+          },
+          options: { date: zipDate },
         },
-        options: { date: zipDate },
-      },
-      {
-        path: "session.json",
-        getData: () => toJsonWithSize(data.session || {}, "session"),
-        options: { date: zipDate },
-      },
-      {
-        path: "environment.json",
-        getData: () => toJsonWithSize(data.environment || {}, "environment"),
-        options: { date: zipDate },
-      },
-      {
-        path: "export_metadata.json",
-        getData: () =>
-          toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
-        options: { date: zipDate },
-      },
-    ];
-    if (data.qaSessionLog) {
+        {
+          path: "session.json",
+          getData: () => toJsonWithSize(data.session || {}, "session"),
+          options: { date: zipDate },
+        },
+        {
+          path: "environment.json",
+          getData: () => toJsonWithSize(data.environment || {}, "environment"),
+          options: { date: zipDate },
+        },
+        {
+          path: "export_metadata.json",
+          getData: () =>
+            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
+          options: { date: zipDate },
+        },
+      ];
+    } else {
+      baseItems = [
+        {
+          path: "network_logs.json",
+          getData: async () => {
+            if (metadataOnly) {
+              const result = await buildEntriesJsonBlob({
+                entries: [],
+                version: "1.0",
+                maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+                label: "Network logs",
+                debugCode: "network_json_too_large",
+              });
+              trackJsonSize("network_logs", result.size);
+              networkBuilt = true;
+              finalizePartTruncationReport();
+              return result.blob;
+            }
+            const result = await buildEntriesJsonBlob({
+              entries:
+                data.networkLogs && Array.isArray(data.networkLogs.entries)
+                  ? data.networkLogs.entries
+                  : [],
+              version: data.networkLogs && data.networkLogs.version
+                ? data.networkLogs.version
+                : "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+              label: "Network logs",
+              debugCode: "network_json_too_large",
+            });
+            trackJsonSize("network_logs", result.size);
+            return result.blob;
+          },
+          options: { date: zipDate },
+        },
+        {
+          path: "console_logs.json",
+          getData: async () => {
+            if (metadataOnly) {
+              const result = await buildEntriesJsonBlob({
+                entries: [],
+                version: "1.0",
+                maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+                label: "Console logs",
+                debugCode: "console_json_too_large",
+              });
+              trackJsonSize("console_logs", result.size);
+              consoleBuilt = true;
+              finalizePartTruncationReport();
+              return result.blob;
+            }
+            const result = await buildEntriesJsonBlob({
+              entries:
+                data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                  ? data.consoleLogs.entries
+                  : [],
+              version: data.consoleLogs && data.consoleLogs.version
+                ? data.consoleLogs.version
+                : "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+              label: "Console logs",
+              debugCode: "console_json_too_large",
+            });
+            trackJsonSize("console_logs", result.size);
+            return result.blob;
+          },
+          options: { date: zipDate },
+        },
+        {
+          path: "session.json",
+          getData: () => toJsonWithSize(data.session || {}, "session"),
+          options: { date: zipDate },
+        },
+        {
+          path: "environment.json",
+          getData: () => toJsonWithSize(data.environment || {}, "environment"),
+          options: { date: zipDate },
+        },
+        {
+          path: "export_metadata.json",
+          getData: () =>
+            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
+          options: { date: zipDate },
+        },
+      ];
+    }
+    if (!usePartExport && data.qaSessionLog) {
       baseItems.push({
         path: "qa-session-log.json",
         getData: () =>
@@ -2523,15 +2596,17 @@ async function runEvidenceZipExport(context) {
       });
     }
     if (data.exportTruncationReport) {
-      baseItems.push({
-        path: "export_truncation_report.json",
-        getData: () =>
-          toJsonWithSize(
-            data.exportTruncationReport || {},
-            "export_truncation_report"
-          ),
-        options: { date: zipDate },
-      });
+      if (!usePartExport) {
+        baseItems.push({
+          path: "export_truncation_report.json",
+          getData: () =>
+            toJsonWithSize(
+              data.exportTruncationReport || {},
+              "export_truncation_report"
+            ),
+          options: { date: zipDate },
+        });
+      }
       baseItems.push({
         path: "truncation_report.json",
         getData: () =>
@@ -2735,6 +2810,9 @@ async function listCompletedParts() {
       requestCount: part.requestCount || 0,
       consoleCount: part.consoleCount || 0,
       errorCount: part.errorCount || 0,
+      bytesInPart: part.bytesInPart || 0,
+      networkBytes: part.networkBytes || 0,
+      consoleBytes: part.consoleBytes || 0,
       completedAtMs: part.completedAtMs || null,
       downloadedAtMs: part.downloadedAtMs || null,
       downloadFailedAtMs: part.downloadFailedAtMs || null,
@@ -2779,6 +2857,36 @@ async function deletePart(partId) {
   record.deletedAtMs = Date.now();
   await ReproIdb.putOne("parts", record);
   await refreshLastCompletedPart();
+  await resumeCaptureAfterStorageLimit();
+  return { ok: true };
+}
+
+async function clearAllCaptureData() {
+  if (!isIdbAvailable()) {
+    return { ok: false, error: "Storage unavailable." };
+  }
+  const safeClear = async (storeName) => {
+    try {
+      await ReproIdb.clearStore(storeName);
+    } catch (error) {
+      // Ignore missing store errors.
+    }
+  };
+  await safeClear("parts");
+  await safeClear("network_entries");
+  await safeClear("console_entries");
+  await safeClear("meta");
+  await safeClear("sessions");
+  await safeClear("counters");
+  const wasActive = state.network.active;
+  const tab = wasActive ? await getActiveTab() : null;
+  resetCaptureState();
+  state.network.requests = {};
+  state.network.order = [];
+  if (wasActive && tab) {
+    await loadCaptureSettings();
+    await ensureSessionRecord(tab);
+  }
   return { ok: true };
 }
 
@@ -3213,6 +3321,10 @@ async function startNetworkCapture() {
   await loadCaptureSettings();
   await ensureSessionRecord(tab);
   rotationSuppressed = false;
+  captureState.pausedForStorageLimit = false;
+  captureState.rolloverPending = false;
+  captureState.pendingFinalizePart = null;
+  captureState.pendingFinalizeStartNewPart = false;
   let attached = false;
   try {
     await attachDebugger(tab.id);
@@ -3321,6 +3433,24 @@ async function stopNetworkCapture() {
     });
   }
   if (captureState.partId) {
+    const completedCount = await refreshCompletedPartsCount();
+    if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
+      const pendingPart = {
+        partId: captureState.partId,
+        partNumber: captureState.partNumber,
+        requestCount: captureState.requestsInPart,
+        consoleCount: captureState.consoleInPart,
+        errorCount: captureState.errorsInPart,
+        bytesInPart: captureState.bytesInPart,
+        networkBytes: captureState.networkBytesInPart,
+        consoleBytes: captureState.consoleBytesInPart,
+        createdAtMs: captureState.partCreatedAtMs || Date.now(),
+        lastEventMs: captureState.lastEventMs,
+        reason: "manual_stop",
+      };
+      pauseCaptureForStorageLimit(pendingPart, false);
+      await flushQueues();
+    } else {
     const completedPart = {
       partId: captureState.partId,
       partNumber: captureState.partNumber,
@@ -3328,6 +3458,8 @@ async function stopNetworkCapture() {
       consoleCount: captureState.consoleInPart,
       errorCount: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
+      networkBytes: captureState.networkBytesInPart,
+      consoleBytes: captureState.consoleBytesInPart,
       createdAtMs: captureState.partCreatedAtMs || Date.now(),
       lastEventMs: captureState.lastEventMs,
       reason: "manual_stop",
@@ -3353,6 +3485,7 @@ async function stopNetworkCapture() {
     sendPartStatusUpdate({
       message: stopMessage,
     });
+    }
   }
 
   if (tabId) {
@@ -3365,14 +3498,20 @@ async function stopNetworkCapture() {
       });
     }
   }
-  clearStatusMessage();
+  if (!captureState.pausedForStorageLimit) {
+    clearStatusMessage();
+  }
 }
 
-function updateRequestEntry(requestId, updates) {
+function updateRequestEntry(requestId, updates, options = {}) {
   if (!requestId) {
     return;
   }
+  const allowCreate = options.allowCreate !== false;
   if (!state.network.requests[requestId]) {
+    if (!allowCreate) {
+      return;
+    }
     state.network.requests[requestId] = {
       id: requestId,
       timestampIso: null,
@@ -3400,6 +3539,9 @@ function finalizeNetworkEntry(requestId) {
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.network.active || source.tabId !== state.network.tabId) {
+    return;
+  }
+  if (captureState.pausedForStorageLimit) {
     return;
   }
 
@@ -3480,6 +3622,13 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   }
 
   if (method === "Network.requestWillBeSent") {
+    const resourceType = params.type ? String(params.type).toLowerCase() : null;
+    if (
+      resourceType &&
+      !RESOURCE_TYPES_DEFAULT.includes(resourceType.toLowerCase())
+    ) {
+      return;
+    }
     updateRequestEntry(params.requestId, {
       url: params.request.url,
       method: params.request.method,
@@ -3488,6 +3637,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       requestTime: params.timestamp,
       timestampIso: nowIso(),
       initiator: params.initiator,
+      resourceType: resourceType || null,
     });
   }
 
@@ -3497,7 +3647,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         ...state.network.requests[params.requestId]?.requestHeaders,
         ...normalizeHeaders(params.headers),
       },
-    });
+    }, { allowCreate: false });
   }
 
   if (method === "Network.responseReceived") {
@@ -3518,7 +3668,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         typeof params.response.fromServiceWorker === "boolean"
           ? params.response.fromServiceWorker
           : null,
-    });
+    }, { allowCreate: false });
   }
 
   if (method === "Network.responseReceivedExtraInfo") {
@@ -3527,14 +3677,14 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
         ...state.network.requests[params.requestId]?.responseHeaders,
         ...normalizeHeaders(params.headers),
       },
-    });
+    }, { allowCreate: false });
   }
 
   if (method === "Network.loadingFinished") {
     updateRequestEntry(params.requestId, {
       encodedDataLength: params.encodedDataLength,
       endTime: params.timestamp,
-    });
+    }, { allowCreate: false });
     const entry = state.network.requests[params.requestId];
     if (entry && entry.requestTime) {
       entry.durationMs = Math.round(
@@ -3568,7 +3718,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       errorText: params.errorText,
       canceled: params.canceled,
       endTime: params.timestamp,
-    });
+    }, { allowCreate: false });
     finalizeNetworkEntry(params.requestId);
   }
 });
@@ -3600,21 +3750,31 @@ chrome.debugger.onDetach.addListener((source, reason) => {
       consoleCount: captureState.consoleInPart,
       errorCount: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
+      networkBytes: captureState.networkBytesInPart,
+      consoleBytes: captureState.consoleBytesInPart,
       createdAtMs: captureState.partCreatedAtMs || Date.now(),
       lastEventMs: captureState.lastEventMs,
       reason: "debugger_detached",
     };
-    captureState.lastCompletedPartId = captureState.partId;
-    captureState.lastCompletedPartNumber = captureState.partNumber;
-    captureState.partId = null;
-    captureState.partHasData = false;
-    void completePart(completedPart);
-    captureState.completedPartsCount += 1;
-    void flushQueues();
-    setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "error");
-    sendPartStatusUpdate({
-      message: `Part ${completedPart.partNumber} ready to download.`,
-    });
+    void (async () => {
+      const completedCount = await refreshCompletedPartsCount();
+      if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
+        pauseCaptureForStorageLimit(completedPart, false);
+        await flushQueues();
+        return;
+      }
+      captureState.lastCompletedPartId = captureState.partId;
+      captureState.lastCompletedPartNumber = captureState.partNumber;
+      captureState.partId = null;
+      captureState.partHasData = false;
+      await completePart(completedPart);
+      captureState.completedPartsCount += 1;
+      await flushQueues();
+      setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "error");
+      sendPartStatusUpdate({
+        message: `Part ${completedPart.partNumber} ready to download.`,
+      });
+    })();
   }
 });
 
@@ -3689,7 +3849,11 @@ function resetCaptureState() {
   captureState.partCreatedAtMs = null;
   captureState.requestsInPart = 0;
   captureState.bytesInPart = 0;
+  captureState.networkBytesInPart = 0;
+  captureState.consoleBytesInPart = 0;
   captureState.consoleInPart = 0;
+  captureState.errorsInPart = 0;
+  captureState.lastEventMs = null;
   captureState.totalRequests = 0;
   captureState.totalConsole = 0;
   captureState.totalErrors = 0;
@@ -3701,6 +3865,10 @@ function resetCaptureState() {
   captureState.lastCompletedPartNumber = null;
   captureState.partHasData = false;
   captureState.completedPartsCount = 0;
+  captureState.pausedForStorageLimit = false;
+  captureState.rolloverPending = false;
+  captureState.pendingFinalizePart = null;
+  captureState.pendingFinalizeStartNewPart = false;
   networkQueue.length = 0;
   consoleQueue.length = 0;
   exportedPartIds.clear();
@@ -3823,8 +3991,7 @@ function buildNetworkStorageRecord(entry) {
     request_body_original_bytes: requestBodyMeta.originalBytes,
     response_body_original_bytes: responseBodyMeta.originalBytes,
   };
-  const entryBytes =
-    (requestBodyMeta.originalBytes || 0) + (responseBodyMeta.originalBytes || 0);
+  const entryBytes = getByteLength(JSON.stringify(exportEntry));
   return {
     id: `net_${captureState.partId}_${entry.id || crypto.randomUUID()}`,
     sessionId: captureState.sessionId,
@@ -3856,6 +4023,7 @@ function buildConsoleStorageRecord(entry) {
     column: typeof entry.column === "number" ? entry.column : null,
     stack: entry.stack || null,
   };
+  const entryBytes = getByteLength(JSON.stringify(exportEntry));
   return {
     id: `con_${captureState.partId}_${crypto.randomUUID()}`,
     sessionId: captureState.sessionId,
@@ -3864,6 +4032,7 @@ function buildConsoleStorageRecord(entry) {
     t_ms: computeSessionOffsetMs(timestampIso),
     level: exportEntry.level,
     entry: exportEntry,
+    entry_bytes: entryBytes,
     createdAtMs: Date.now(),
   };
 }
@@ -3880,8 +4049,10 @@ function queueNetworkRecord(record) {
   captureState.requestsInPart += 1;
   captureState.totalRequests += 1;
   if (record.entry_bytes) {
-    captureState.bytesInPart += record.entry_bytes;
+    captureState.networkBytesInPart += record.entry_bytes;
   }
+  captureState.bytesInPart =
+    captureState.networkBytesInPart + captureState.consoleBytesInPart;
   captureState.partHasData = true;
   updateSessionCounts();
   scheduleFlush();
@@ -3899,6 +4070,11 @@ function queueConsoleRecord(record) {
       : Date.now();
   captureState.consoleInPart += 1;
   captureState.totalConsole += 1;
+  if (record.entry_bytes) {
+    captureState.consoleBytesInPart += record.entry_bytes;
+  }
+  captureState.bytesInPart =
+    captureState.networkBytesInPart + captureState.consoleBytesInPart;
   if (record.level === "error") {
     captureState.totalErrors += 1;
     captureState.errorsInPart += 1;
@@ -3908,11 +4084,68 @@ function queueConsoleRecord(record) {
   scheduleFlush();
 }
 
+function pauseCaptureForStorageLimit(completedPart, startNewPartAfter) {
+  captureState.pausedForStorageLimit = true;
+  captureState.rolloverPending = true;
+  captureState.pendingFinalizePart = completedPart;
+  captureState.pendingFinalizeStartNewPart = Boolean(startNewPartAfter);
+  state.network.requests = {};
+  state.network.order = [];
+  const message =
+    "Storage limit reached. Download or delete a completed part to continue.";
+  setStatusMessage(message, "error");
+  sendPartStatusUpdate({
+    storageLimitPaused: true,
+    message,
+  });
+}
+
+async function resumeCaptureAfterStorageLimit() {
+  if (!captureState.pausedForStorageLimit) {
+    return;
+  }
+  const completedCount = await refreshCompletedPartsCount();
+  if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
+    return;
+  }
+  captureState.pausedForStorageLimit = false;
+  const pendingPart = captureState.pendingFinalizePart;
+  const shouldStartNewPart = captureState.pendingFinalizeStartNewPart;
+  captureState.rolloverPending = false;
+  captureState.pendingFinalizePart = null;
+  captureState.pendingFinalizeStartNewPart = false;
+  if (pendingPart) {
+    await completePart(pendingPart);
+    captureState.completedPartsCount += 1;
+    if (
+      captureState.autoDownloadOnRollover &&
+      pendingPart.requestCount >= MIN_REQUESTS_TO_EXPORT
+    ) {
+      await enqueueExport(pendingPart, { auto: true, reason: "resume" });
+    }
+    if (shouldStartNewPart && state.network.active) {
+      await startNewPart("rollover");
+      const message = `Part ${pendingPart.partNumber} complete. Continuing in Part ${captureState.partNumber}.`;
+      setStatusMessage(message, "success");
+      sendPartStatusUpdate({ message });
+    } else {
+      captureState.partId = null;
+      captureState.partHasData = false;
+      const message = `Part ${pendingPart.partNumber} ready to download.`;
+      setStatusMessage(message, "success");
+      sendPartStatusUpdate({ message });
+    }
+  }
+}
+
 async function maybeRotatePart() {
   if (!captureState.partId) {
     return;
   }
   if (rotationSuppressed) {
+    return;
+  }
+  if (captureState.pausedForStorageLimit) {
     return;
   }
   if (rotationInProgress) {
@@ -3928,13 +4161,20 @@ async function maybeRotatePart() {
   try {
     const completedCount = await refreshCompletedPartsCount();
     if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
-      const message =
-        "Storage limit reached. Download or delete a completed part to continue.";
-      setStatusMessage(message, "error");
-      sendPartStatusUpdate({
-        rolloverBlocked: true,
-        message,
-      });
+      const pendingPart = {
+        partId: captureState.partId,
+        partNumber: captureState.partNumber,
+        requestCount: captureState.requestsInPart,
+        consoleCount: captureState.consoleInPart,
+        errorCount: captureState.errorsInPart,
+        bytesInPart: captureState.bytesInPart,
+        networkBytes: captureState.networkBytesInPart,
+        consoleBytes: captureState.consoleBytesInPart,
+        createdAtMs: captureState.partCreatedAtMs || Date.now(),
+        lastEventMs: captureState.lastEventMs,
+        reason: "cap_reached",
+      };
+      pauseCaptureForStorageLimit(pendingPart, true);
       return;
     }
     const completedPart = {
@@ -3944,6 +4184,8 @@ async function maybeRotatePart() {
       consoleCount: captureState.consoleInPart,
       errorCount: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
+      networkBytes: captureState.networkBytesInPart,
+      consoleBytes: captureState.consoleBytesInPart,
       createdAtMs: captureState.partCreatedAtMs || Date.now(),
       lastEventMs: captureState.lastEventMs,
       reason: "cap_reached",
@@ -4584,6 +4826,14 @@ async function handleMessage(message, sender) {
         result = deleteResult.ok
           ? { ok: true }
           : { ok: false, error: deleteResult.error };
+      }
+      break;
+    case "CLEAR_ALL_CAPTURE_DATA":
+      {
+        const clearResult = await clearAllCaptureData();
+        result = clearResult.ok
+          ? { ok: true }
+          : { ok: false, error: clearResult.error };
       }
       break;
     case "EXPORT_EVIDENCE_ZIP_REQUEST":

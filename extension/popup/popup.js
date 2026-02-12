@@ -82,6 +82,8 @@ const autoDownloadStatusLine = document.getElementById("status_auto_download");
 const downloadHelp = document.getElementById("status_download_help");
 const completedPartsList = document.getElementById("completed_parts_list");
 const completedPartsEmpty = document.getElementById("completed_parts_empty");
+const storageLimitModal = document.getElementById("modal_storage_limit");
+const storageLimitBody = document.getElementById("storage_limit_body");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -255,7 +257,8 @@ function renderCompletedParts(parts) {
     const info = document.createElement("div");
     info.className = "completed-item-info";
     const line = document.createElement("div");
-    line.textContent = `Part ${part.partNumber} — ${part.requestCount} req`;
+    const bytesMb = ((part.bytesInPart || 0) / (1024 * 1024)).toFixed(1);
+    line.textContent = `Part ${part.partNumber} — ${part.requestCount} req — ${bytesMb}MB`;
     const badge = document.createElement("span");
     let badgeStatus = part.exportInProgress ? "exporting" : part.status;
     if (!part.exportInProgress && part.queuedForExport) {
@@ -309,6 +312,36 @@ async function refreshCompletedParts() {
     return;
   }
   renderCompletedParts(response.parts);
+}
+
+function showStorageLimitModal(state) {
+  if (!storageLimitModal) {
+    return;
+  }
+  const completedCount = state.part ? state.part.completedPartsCount || 0 : 0;
+  const maxCompleted = state.part ? state.part.maxCompletedParts || 0 : 0;
+  if (storageLimitBody) {
+    storageLimitBody.textContent =
+      `You have ${completedCount} completed parts saved locally (max ${maxCompleted}). ` +
+      "Download or delete a completed part to continue capturing.";
+  }
+  storageLimitModal.classList.remove("hidden");
+  storageLimitModal.setAttribute("aria-hidden", "false");
+}
+
+function hideStorageLimitModal() {
+  if (!storageLimitModal) {
+    return;
+  }
+  storageLimitModal.classList.add("hidden");
+  storageLimitModal.setAttribute("aria-hidden", "true");
+}
+
+function focusCompletedPartsList() {
+  if (!completedPartsList) {
+    return;
+  }
+  completedPartsList.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function loadCaptureSettings() {
@@ -1430,9 +1463,12 @@ function updateStatusUI(state) {
   const sessionMode =
     (state.session && state.session.mode) ||
     (hasLiveRecording ? "recording" : hasLiveNetwork ? "network_console" : null);
-  const sessionState = hasLiveRecording
+  let sessionState = hasLiveRecording
     ? recordingLiveState.state
     : sessionStateRaw || (hasLiveNetwork ? "capturing" : "idle");
+  if (state.logsState === "paused") {
+    sessionState = "paused";
+  }
   const sessionActive =
     sessionState === "capturing" ||
     sessionState === "paused" ||
@@ -1462,7 +1498,12 @@ function updateStatusUI(state) {
       const partNumber = state.part.partNumber || 1;
       const capRequests = state.part.capRequests || captureSettings.partCapRequests;
       const partRequests = state.part.requestsInPart || 0;
-      partProgressStatus.textContent = `Part ${partNumber} — ${partRequests}/${capRequests} requests`;
+      const bytesMb = ((state.part.bytesInPart || 0) / (1024 * 1024)).toFixed(1);
+      const completedCount = state.part.completedPartsCount || 0;
+      const maxCompleted = state.part.maxCompletedParts || 0;
+      partProgressStatus.textContent =
+        `Part ${partNumber} — ${partRequests}/${capRequests} req ` +
+        `• Stored: ${bytesMb}MB • Completed: ${completedCount}/${maxCompleted}`;
     } else {
       partProgressStatus.textContent = "Part - — 0/0 requests";
     }
@@ -1558,8 +1599,15 @@ function updateStatusUI(state) {
     }
   }
   if (downloadHelp) {
-    const showHelp = sessionMode === "network_console" && sessionState === "capturing";
+    const showHelp =
+      sessionMode === "network_console" &&
+      (sessionState === "capturing" || sessionState === "paused");
     downloadHelp.classList.toggle("is-hidden", !showHelp);
+  }
+  if (state.part && state.part.pausedForStorageLimit) {
+    showStorageLimitModal(state);
+  } else {
+    hideStorageLimitModal();
   }
   if (buttons.fullPageScreenshotMode) {
     buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
@@ -2267,6 +2315,28 @@ async function handleDeletePart(partId, partNumber) {
   setStatus(statusElements.message, "Part deleted.", "success");
 }
 
+async function handleClearAll() {
+  hideStorageLimitModal();
+  const confirmClear = window.confirm(
+    "Clear all locally stored capture data (all parts)? This cannot be undone."
+  );
+  if (!confirmClear) {
+    return;
+  }
+  const response = await send("CLEAR_ALL_CAPTURE_DATA");
+  if (!response.ok) {
+    setStatus(
+      statusElements.message,
+      response.error || "Failed to clear data.",
+      "error"
+    );
+    return;
+  }
+  await refreshCompletedParts();
+  await refreshStatus();
+  setStatus(statusElements.message, "Cleared local capture data.", "success");
+}
+
 async function handleRecordingDownload() {
   clearStatusError();
   const live = await send(MSG.RECORDING_GET_STATE);
@@ -2427,6 +2497,24 @@ function routeAction(action, el) {
       break;
     case "part:delete":
       handleDeletePart(el.dataset.partId, el.dataset.partNumber);
+      break;
+    case "storage:download":
+      hideStorageLimitModal();
+      focusCompletedPartsList();
+      break;
+    case "storage:delete":
+      hideStorageLimitModal();
+      focusCompletedPartsList();
+      break;
+    case "storage:clear":
+      hideStorageLimitModal();
+      handleClearAll();
+      break;
+    case "storage:clear_all":
+      handleClearAll();
+      break;
+    case "storage:close":
+      hideStorageLimitModal();
       break;
     case "export:zip":
       handleDownload();

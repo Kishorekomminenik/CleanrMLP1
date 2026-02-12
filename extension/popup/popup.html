@@ -70,7 +70,7 @@
           Recording unavailable due to browser/enterprise policy. Use Shot or Net.
         </div>
         <div id="network-disabled-msg" class="capability-msg hidden">
-          Net blocked by enterprise policy.
+          Logs blocked by enterprise policy.
         </div>
       </div>
 
@@ -102,21 +102,7 @@
           <p id="controlsStatus" class="status-strip">-</p>
         </div>
         <div class="mode-controls" data-mode="network_console">
-          <div class="button-row control-grid">
-            <button id="btn_start_capture" class="primary" data-action="network:start">
-              Start
-            </button>
-            <button id="btn_stop_capture" class="danger" data-action="network:stop" disabled>
-              Stop
-            </button>
-            <button id="refreshTabBtn" class="secondary" data-action="network:refresh" disabled>
-              Refresh
-            </button>
-          </div>
-          <p id="networkGuidance" class="hint is-hidden">
-            Capture started - now Refresh (Ctrl+R) or click a link to capture requests.
-          </p>
-          <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
+          <p class="hint">Configure and manage logs below.</p>
         </div>
       </section>
 
@@ -278,10 +264,35 @@
           <p id="status_download_help" class="hint is-hidden">
             Stop to download the current part.
           </p>
+          <div class="button-row control-grid">
+            <button id="btn_start_capture" class="primary" data-action="network:start">
+              Start
+            </button>
+            <button id="btn_stop_capture" class="danger" data-action="network:stop" disabled>
+              Stop
+            </button>
+            <button
+              id="refreshTabBtn"
+              class="secondary"
+              data-action="network:refresh"
+              disabled
+            >
+              Refresh
+            </button>
+          </div>
+          <p id="networkGuidance" class="hint is-hidden">
+            Capture started - now Refresh (Ctrl+R) or click a link to capture requests.
+          </p>
+          <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
           <div id="completed_parts_section" class="completed-parts">
             <div class="completed-header">Completed parts</div>
             <div id="completed_parts_empty" class="hint">No completed parts yet.</div>
             <div id="completed_parts_list" class="completed-list"></div>
+          </div>
+          <div class="button-row">
+            <button id="btn_clear_all" class="danger" data-action="storage:clear_all">
+              Clear all
+            </button>
           </div>
       </section>
 
@@ -389,6 +400,43 @@
             data-action="help:gotit"
           >
             Got it
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal_storage_limit" class="help-modal hidden" aria-hidden="true">
+      <div class="help-backdrop" data-action="storage:close"></div>
+      <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="storage_limit_title">
+        <div class="help-header">
+          <div>
+            <h2 id="storage_limit_title">Storage limit reached</h2>
+            <p class="help-subtitle" id="storage_limit_body">
+              You have 3 completed parts saved locally (max 3). Download or delete a completed part to continue capturing.
+            </p>
+          </div>
+        </div>
+        <div class="help-footer">
+          <button
+            class="primary"
+            type="button"
+            data-action="storage:download"
+          >
+            Download a part
+          </button>
+          <button
+            class="danger"
+            type="button"
+            data-action="storage:delete"
+          >
+            Delete a part
+          </button>
+          <button
+            class="danger"
+            type="button"
+            data-action="storage:clear"
+          >
+            Clear all
           </button>
         </div>
       </div>

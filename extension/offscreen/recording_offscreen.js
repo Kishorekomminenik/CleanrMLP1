@@ -674,6 +674,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     "RECORDING_STOP",
     "RECORDING_EXPORT_WEBM",
     "RECORDING_RESET",
+    "DOWNLOAD_BLOB",
   ]);
   if (!handledTypes.has(message.type)) {
     if (
@@ -718,6 +719,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           resetRecording();
           result = { ok: true };
           break;
+        case "DOWNLOAD_BLOB": {
+          const blob = message.blob;
+          const filename = message.filename || "download.bin";
+          const saveAs = message.saveAs === true;
+          if (!blob) {
+            result = { ok: false, error: "Missing blob for download." };
+            break;
+          }
+          const url = URL.createObjectURL(blob);
+          result = await new Promise((resolve) => {
+            chrome.downloads.download(
+              {
+                url,
+                filename,
+                saveAs,
+              },
+              (downloadId) => {
+                if (chrome.runtime.lastError || !downloadId) {
+                  resolve({
+                    ok: false,
+                    error: chrome.runtime.lastError
+                      ? chrome.runtime.lastError.message
+                      : "Download failed.",
+                  });
+                  return;
+                }
+                resolve({ ok: true, downloadId });
+              }
+            );
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+          });
+          break;
+        }
         default:
           result = { ok: false, error: "Unknown message type." };
           break;
