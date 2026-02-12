@@ -162,6 +162,7 @@ const EXPORT_EVENTS = {
 let exportInProgress = false;
 let exportProgressPercent = 0;
 let exportButtonLabel = null;
+let lastExportResultAt = 0;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -2245,10 +2246,9 @@ async function handleDownload() {
       hadError = true;
       return;
     }
-    updateExportUI(5, "export_start");
     setStatus(
       statusElements.download,
-      "Export started. You can close this window.",
+      "Export queued…",
       "success"
     );
   } catch (error) {
@@ -2277,10 +2277,9 @@ async function handleDownloadPart(partId) {
       finishExportUI(response.error || "Export could not be started.", "error");
       return;
     }
-    updateExportUI(5, "export_start");
     setStatus(
       statusElements.download,
-      "Export started. You can close this window.",
+      "Export queued…",
       "success"
     );
   } catch (error) {
@@ -2756,21 +2755,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     );
     return true;
   }
+  if (message.type === "EXPORT_STARTED") {
+    if (!exportInProgress) {
+      startExportUI();
+    }
+    setStatus(statusElements.download, "Export started.", "success");
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "EXPORT_DONE") {
+    finishExportUI("Export complete.", "success");
+    showToast("Exported");
+    refreshCompletedParts();
+    lastExportResultAt = Date.now();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "EXPORT_FAILED") {
+    finishExportUI(message.userMessage || "Export failed.", "error");
+    refreshCompletedParts();
+    lastExportResultAt = Date.now();
+    sendResponse({ ok: true });
+    return true;
+  }
   if (message.type === EXPORT_EVENTS.PROGRESS) {
     updateExportUI(message.percent, message.stage);
     sendResponse({ ok: true });
     return true;
   }
   if (message.type === EXPORT_EVENTS.DONE) {
+    if (Date.now() - lastExportResultAt < 1000) {
+      sendResponse({ ok: true });
+      return true;
+    }
     finishExportUI("Export complete.", "success");
     showToast("Exported");
     refreshCompletedParts();
+    lastExportResultAt = Date.now();
     sendResponse({ ok: true });
     return true;
   }
   if (message.type === EXPORT_EVENTS.ERROR) {
+    if (Date.now() - lastExportResultAt < 1000) {
+      sendResponse({ ok: true });
+      return true;
+    }
     finishExportUI(message.userMessage || "Export failed.", "error");
     refreshCompletedParts();
+    lastExportResultAt = Date.now();
     sendResponse({ ok: true });
     return true;
   }

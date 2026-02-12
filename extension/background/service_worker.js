@@ -21,8 +21,7 @@ try {
     chrome.runtime.getURL("lib/jszip.min.js"),
     chrome.runtime.getURL("lib/zipBuilderChunked.js"),
     chrome.runtime.getURL("lib/idb.js"),
-    chrome.runtime.getURL("lib/export_ndjson.js"),
-    chrome.runtime.getURL("lib/download_broker.js")
+    chrome.runtime.getURL("lib/export_ndjson.js")
   );
 } catch (error) {
   console.warn("Zip builder unavailable:", error);
@@ -154,6 +153,12 @@ let rotationSuppressed = false;
 let rotationInProgress = false;
 const exportQueue = [];
 const exportQueueIds = new Set();
+let exportRunning = false;
+let exportRunningJob = null;
+const brokerState = {
+  tabId: null,
+  ready: false,
+};
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -756,14 +761,93 @@ async function flushQueues() {
 }
 
 function getExportQueueLength() {
-  const active = exportJob && exportJob.active && exportJob.partId ? 1 : 0;
-  return exportQueue.length + active;
+  const active = exportRunning || (exportJob && exportJob.active);
+  return exportQueue.length + (active ? 1 : 0);
 }
 
 function sendExportQueueUpdate() {
   sendExportEvent("EXPORT_QUEUE_UPDATE", {
     queueLength: getExportQueueLength(),
   });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureBrokerTabOrOffscreen() {
+  if (brokerState.tabId) {
+    try {
+      await chrome.tabs.get(brokerState.tabId);
+      return brokerState.tabId;
+    } catch (error) {
+      brokerState.tabId = null;
+      brokerState.ready = false;
+    }
+  }
+  const url = chrome.runtime.getURL("background/download_broker.html");
+  const tab = await chrome.tabs.create({ url, active: false });
+  brokerState.tabId = tab.id;
+  brokerState.ready = false;
+  return tab.id;
+}
+
+async function ensureBrokerReady() {
+  if (brokerState.ready) {
+    return;
+  }
+  await ensureBrokerTabOrOffscreen();
+  let attempts = 0;
+  while (attempts < 10) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type: "BROKER_PING" }, (reply) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(reply);
+        });
+      });
+      if (response && response.ok) {
+        brokerState.ready = true;
+        return;
+      }
+    } catch (error) {
+      // Retry until broker is ready.
+    }
+    attempts += 1;
+    await delay(200);
+  }
+  throw new Error("Download broker not ready.");
+}
+
+async function brokerDownload(blob, filename, mimeType) {
+  await ensureBrokerReady();
+  const arrayBuffer = await blob.arrayBuffer();
+  const response = await new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "BROKER_DOWNLOAD_BLOB",
+        payload: {
+          arrayBuffer,
+          filename,
+          mimeType: mimeType || blob.type || "application/octet-stream",
+        },
+      },
+      (reply) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(reply);
+      }
+    );
+  });
+  if (!response || !response.ok) {
+    throw new Error(response && response.error ? response.error : "Download failed.");
+  }
+  return true;
 }
 
 async function updatePartStatus(partId, status, extra = {}) {
@@ -880,6 +964,37 @@ async function hydrateCaptureStateFromIdb() {
   await refreshLastCompletedPart();
 }
 
+function buildExportJobId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+async function enqueueExportJob(job) {
+  if (!job || typeof job.run !== "function") {
+    return { ok: false, error: "Invalid export job." };
+  }
+  if (job.dedupeId) {
+    if (exportQueueIds.has(job.dedupeId)) {
+      return { ok: false, error: "Part already queued for export." };
+    }
+    if (
+      exportRunningJob &&
+      exportRunningJob.dedupeId &&
+      exportRunningJob.dedupeId === job.dedupeId
+    ) {
+      return { ok: false, error: "Export already running." };
+    }
+  }
+  exportQueue.push(job);
+  if (job.dedupeId) {
+    exportQueueIds.add(job.dedupeId);
+  }
+  sendExportQueueUpdate();
+  setTimeout(() => {
+    void processExportQueue();
+  }, 0);
+  return { ok: true, queued: true, jobId: job.jobId };
+}
+
 async function enqueueExport(partSnapshot, options = {}) {
   if (!partSnapshot || !partSnapshot.partId) {
     return { ok: false, error: "No part available to export." };
@@ -895,25 +1010,24 @@ async function enqueueExport(partSnapshot, options = {}) {
   if (alreadyExported && !options.allowDuplicate) {
     return { ok: false, error: "Part already exported." };
   }
-  if (exportQueueIds.has(partSnapshot.partId)) {
-    return { ok: false, error: "Part already queued for export." };
-  }
-  exportQueue.push({
+  const job = {
+    jobId: buildExportJobId("part"),
+    kind: "export_zip",
     partId: partSnapshot.partId,
     partNumber: partSnapshot.partNumber,
     auto: options.auto === true,
-    reason: options.reason || null,
-  });
-  exportQueueIds.add(partSnapshot.partId);
-  sendExportQueueUpdate();
-  setTimeout(() => {
-    void processExportQueue();
-  }, 0);
-  return { ok: true, queued: true };
+    dedupeId: partSnapshot.partId,
+    run: async () =>
+      runEvidenceZipExport({
+        partId: partSnapshot.partId,
+        partNumber: partSnapshot.partNumber,
+      }),
+  };
+  return await enqueueExportJob(job);
 }
 
 async function processExportQueue() {
-  if (exportJob && exportJob.active) {
+  if (exportRunning) {
     return;
   }
   if (exportQueue.length === 0) {
@@ -924,29 +1038,50 @@ async function processExportQueue() {
   if (!next) {
     return;
   }
-  exportQueueIds.delete(next.partId);
+  if (next.dedupeId) {
+    exportQueueIds.delete(next.dedupeId);
+  }
+  exportRunning = true;
+  exportRunningJob = next;
   sendExportQueueUpdate();
-  await updatePartStatus(next.partId, PART_STATUS.EXPORTING);
+  if (next.partId) {
+    await updatePartStatus(next.partId, PART_STATUS.EXPORTING);
+  }
+  sendExportEvent("EXPORT_STARTED", {
+    jobId: next.jobId,
+    partId: next.partId || null,
+    partNumber: next.partNumber || null,
+    kind: next.kind || "export_zip",
+  });
   try {
-    await runEvidenceZipExport({
-      partId: next.partId,
-      partNumber: next.partNumber,
+    await next.run();
+    if (next.partId) {
+      await markPartExported(next.partId);
+      await updatePartStatus(next.partId, PART_STATUS.DOWNLOADED);
+    }
+    sendExportEvent("EXPORT_DONE", {
+      jobId: next.jobId,
+      partId: next.partId || null,
+      partNumber: next.partNumber || null,
     });
-    await markPartExported(next.partId);
-    await updatePartStatus(next.partId, PART_STATUS.DOWNLOADED);
   } catch (error) {
-    await updatePartStatus(next.partId, PART_STATUS.DOWNLOAD_FAILED);
+    if (next.partId) {
+      await updatePartStatus(next.partId, PART_STATUS.DOWNLOAD_FAILED);
+    }
     const userMessage =
-      next.auto === true
+      next.auto === true && next.partNumber
         ? `Auto-download was blocked by the browser. Part ${next.partNumber} is ready—click Download.`
         : "Download failed. Try again.";
     setStatusMessage(userMessage, "error");
-    sendExportEvent("EXPORT_PART_FAILED", {
-      partId: next.partId,
-      partNumber: next.partNumber,
+    sendExportEvent("EXPORT_FAILED", {
+      jobId: next.jobId,
+      partId: next.partId || null,
+      partNumber: next.partNumber || null,
       userMessage,
     });
   } finally {
+    exportRunning = false;
+    exportRunningJob = null;
     sendExportQueueUpdate();
     if (exportQueue.length > 0) {
       setTimeout(() => {
@@ -1122,47 +1257,11 @@ async function loadLimitedEntriesFromIdb(options) {
 
 async function downloadBlob(blob, filename, opts = {}) {
   const saveAs = opts.saveAs !== undefined ? opts.saveAs : true;
-  if (globalThis.DownloadBroker && typeof DownloadBroker.downloadBlob === "function") {
-    try {
-      return await DownloadBroker.downloadBlob(blob, filename, { saveAs });
-    } catch (error) {
-      console.warn("Download broker failed, falling back:", error);
-    }
+  await brokerDownload(blob, filename, blob.type || "application/octet-stream");
+  if (saveAs) {
+    return true;
   }
-  // MV3 service worker safe download: no URL.createObjectURL
-  const dataUrl = await new Promise((resolve, reject) => {
-    try {
-      const reader = new FileReader();
-      reader.onerror = () =>
-        reject(reader.error || new Error("FileReader failed"));
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    } catch (error) {
-      reject(error);
-    }
-  });
-  return await new Promise((resolve, reject) => {
-    chrome.downloads.download(
-      {
-        url: dataUrl,
-        filename,
-        saveAs,
-      },
-      (id) => {
-        if (chrome.runtime.lastError || !id) {
-          reject(
-            new Error(
-              chrome.runtime.lastError
-                ? chrome.runtime.lastError.message
-                : "Download failed."
-            )
-          );
-          return;
-        }
-        resolve(id);
-      }
-    );
-  });
+  return true;
 }
 
 function detectBrowser(userAgent) {
@@ -4837,32 +4936,38 @@ async function handleMessage(message, sender) {
       }
       break;
     case "EXPORT_EVIDENCE_ZIP_REQUEST":
-      if (exportJob && exportJob.active) {
-        result = { ok: false, accepted: false, error: "Export already running." };
-        break;
-      }
       if (!session && !hasExportableArtifacts()) {
         result = { ok: false, accepted: false, error: "No session to export yet." };
         break;
       }
-      result = { ok: true, accepted: true };
-      setTimeout(() => {
-        runEvidenceZipExport(normalizedMessage).catch(() => {});
-      }, 0);
+      {
+        const job = {
+          jobId: buildExportJobId("evidence"),
+          kind: "export_zip",
+          run: async () => runEvidenceZipExport(normalizedMessage),
+        };
+        const enqueueResult = await enqueueExportJob(job);
+        result = enqueueResult.ok
+          ? { ok: true, accepted: true, queued: true }
+          : { ok: false, accepted: false, error: enqueueResult.error };
+      }
       break;
     case "DOWNLOAD_EVIDENCE_ZIP":
-      if (exportJob && exportJob.active) {
-        result = { ok: false, accepted: false, error: "Export already running." };
-        break;
-      }
       if (!session && !hasExportableArtifacts()) {
         result = { ok: false, accepted: false, error: "No session to export yet." };
         break;
       }
-      result = { ok: true, accepted: true };
-      setTimeout(() => {
-        runEvidenceZipExport(normalizedMessage).catch(() => {});
-      }, 0);
+      {
+        const job = {
+          jobId: buildExportJobId("evidence"),
+          kind: "export_zip",
+          run: async () => runEvidenceZipExport(normalizedMessage),
+        };
+        const enqueueResult = await enqueueExportJob(job);
+        result = enqueueResult.ok
+          ? { ok: true, accepted: true, queued: true }
+          : { ok: false, accepted: false, error: enqueueResult.error };
+      }
       break;
     case "CONSOLE_LOG":
       if (
