@@ -32,7 +32,6 @@ const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRY_BYTES = 50000;
-const FULLPAGE_MAX_HEIGHT = 30000;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -177,6 +176,25 @@ const recordingOverlayState = {
   tabId: null,
 };
 let activeFilters = { ...FILTER_DEFAULTS };
+const FULLPAGE_LIMITS = {
+  maxSingleHeightPx: 25000,
+  maxWidthPx: 16000,
+  maxAreaPx: 16000 * 16000,
+  tileHeightPx: 12000,
+};
+const fullPageCaptureState = {
+  jobId: null,
+  tabId: null,
+  cancelled: false,
+  inProgress: false,
+};
+
+function resetFullPageCaptureState() {
+  fullPageCaptureState.jobId = null;
+  fullPageCaptureState.tabId = null;
+  fullPageCaptureState.cancelled = false;
+  fullPageCaptureState.inProgress = false;
+}
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -826,6 +844,24 @@ function sendExportEvent(type, payload) {
   } catch (error) {
     console.warn("[EXPORT] Failed to send event", type, error);
   }
+}
+
+function sendFullPageEvent(type, payload) {
+  try {
+    chrome.runtime.sendMessage({ type, ...payload });
+  } catch (error) {
+    console.warn("[FULL] Failed to send event", type, error);
+  }
+}
+
+function sendFullPageProgress(stage, current, total, detail) {
+  sendFullPageEvent("FULLPAGE_PROGRESS", {
+    stage,
+    current,
+    total,
+    detail,
+    jobId: fullPageCaptureState.jobId,
+  });
 }
 
 function reportExportProgress(percent, stage, detail) {
@@ -3817,6 +3853,18 @@ async function captureFullPageScreenshot(requestedTabId) {
     session && (session.state === "capturing" || session.state === "paused");
   const triggerTimestampIso = nowIso();
   const triggerTms = computeSessionOffsetMs(triggerTimestampIso);
+  const debugBundle = {
+    stage: "init",
+    shotsCaptured: 0,
+    viewportW: null,
+    viewportH: null,
+    scrollHeightStart: null,
+    scrollHeightEnd: null,
+    finalW: null,
+    finalH: null,
+    tileCount: 0,
+    errorCode: null,
+  };
   const activeTabId =
     sessionActive && session.active_tab ? session.active_tab.tab_id : null;
   const tab = requestedTabId
@@ -3853,6 +3901,12 @@ async function captureFullPageScreenshot(requestedTabId) {
   }
 
   try {
+    fullPageCaptureState.jobId = `full_${Date.now()}`;
+    fullPageCaptureState.tabId = tabId;
+    fullPageCaptureState.cancelled = false;
+    fullPageCaptureState.inProgress = true;
+    debugBundle.stage = "plan";
+    sendFullPageProgress("plan", 0, 0);
     console.log("[FULL][SW]", { step: "received", tabId, url: tab.url });
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -3862,63 +3916,144 @@ async function captureFullPageScreenshot(requestedTabId) {
     console.log("[FULL][SW]", { step: "inject_failed", error: error?.message });
     const err = new Error("Not supported on this page.");
     err.code = "INJECT_FAILED";
-    err.details = error && error.message ? error.message : String(error);
+    err.details = {
+      ...debugBundle,
+      errorCode: err.code,
+      error: error && error.message ? error.message : String(error),
+    };
+    resetFullPageCaptureState();
     throw err;
   }
   console.log("[FULL][SW]", { step: "inject_ok" });
 
   const captureResult = await sendMessageToTabWithResponse(tabId, {
     type: "FP_CAPTURE_ALL",
+    jobId: fullPageCaptureState.jobId,
   });
   if (!captureResult || captureResult.ok === false) {
+    const errorInfo = captureResult && captureResult.error ? captureResult.error : {};
     const message =
-      captureResult && captureResult.error
-        ? captureResult.error
+      errorInfo && errorInfo.message
+        ? errorInfo.message
         : "Unable to prepare full page capture.";
-    const code =
-      captureResult && captureResult.code ? captureResult.code : "PLAN_FAILED";
+    const code = errorInfo.code || "PLAN_FAILED";
     console.log("[FULL][SW]", { step: "plan_failed", error: message });
     const err = new Error(message);
     err.code = code;
+    err.details = { ...debugBundle, errorCode: err.code };
+    resetFullPageCaptureState();
     throw err;
   }
   const frames = Array.isArray(captureResult.frames) ? captureResult.frames : [];
   const totalHeight =
     typeof captureResult.totalHeight === "number" ? captureResult.totalHeight : 0;
   const width = typeof captureResult.width === "number" ? captureResult.width : 0;
-  const dpr =
-    typeof captureResult.devicePixelRatio === "number"
-      ? captureResult.devicePixelRatio
-      : 1;
+  const scrollHeightStart =
+    typeof captureResult.scrollHeightStart === "number"
+      ? captureResult.scrollHeightStart
+      : null;
+  const scrollHeightEnd =
+    typeof captureResult.scrollHeightEnd === "number"
+      ? captureResult.scrollHeightEnd
+      : null;
+  const viewportW =
+    typeof captureResult.viewportW === "number" ? captureResult.viewportW : null;
+  const viewportH =
+    typeof captureResult.viewportH === "number" ? captureResult.viewportH : null;
+  debugBundle.shotsCaptured = frames.length;
+  debugBundle.finalW = width;
+  debugBundle.finalH = totalHeight;
+  debugBundle.scrollHeightStart = scrollHeightStart;
+  debugBundle.scrollHeightEnd = scrollHeightEnd;
+  debugBundle.viewportW = viewportW;
+  debugBundle.viewportH = viewportH;
   if (!frames.length || !width || !totalHeight) {
     const err = new Error("No frames to stitch.");
     err.code = "PLAN_FAILED";
+    err.details = { ...debugBundle, errorCode: err.code };
+    resetFullPageCaptureState();
+    throw err;
+  }
+  if (fullPageCaptureState.cancelled) {
+    const err = new Error("Capture cancelled.");
+    err.code = "CANCELLED";
+    err.details = { ...debugBundle, errorCode: err.code };
+    resetFullPageCaptureState();
+    throw err;
+  }
+  if (
+    scrollHeightStart &&
+    scrollHeightEnd &&
+    Math.abs(scrollHeightStart - scrollHeightEnd) > 50
+  ) {
+    const err = new Error("Page layout changed during capture.");
+    err.code = "SCROLL_MISMATCH";
+    err.details = { ...debugBundle, errorCode: err.code };
+    resetFullPageCaptureState();
     throw err;
   }
   console.log("[FULL][SW]", { step: "plan_ok", frames: frames.length });
-  if (totalHeight * dpr > FULLPAGE_MAX_HEIGHT) {
-    const err = new Error("Page too tall for full page capture.");
-    err.code = "PAGE_TOO_LARGE";
-    throw err;
-  }
-
-  let blob;
+  const area = width * totalHeight;
+  const exceedsSingle =
+    width > FULLPAGE_LIMITS.maxWidthPx ||
+    totalHeight > FULLPAGE_LIMITS.maxSingleHeightPx ||
+    area > FULLPAGE_LIMITS.maxAreaPx;
+  let blob = null;
+  let parts = null;
   try {
-    const { stitchVerticalPng } = await import("./fullpage_stitch.js");
-    blob = await stitchVerticalPng({
-      frames,
-      width: Math.round(width * dpr),
-      totalHeight: Math.round(totalHeight * dpr),
-    });
+    const { stitchVerticalPng, stitchVerticalTiles } = await import(
+      "./fullpage_stitch.js"
+    );
+    if (!exceedsSingle) {
+      debugBundle.stage = "stitch";
+      sendFullPageProgress("stitch", 0, frames.length);
+      blob = await stitchVerticalPng({
+        frames,
+        width,
+        totalHeight,
+        onProgress: ({ completed, total }) =>
+          sendFullPageProgress("stitch", completed, total),
+      });
+    } else {
+      debugBundle.stage = "tile";
+      sendFullPageProgress("tile", 0, frames.length);
+      const tiles = await stitchVerticalTiles({
+        frames,
+        width,
+        totalHeight,
+        tileHeight: FULLPAGE_LIMITS.tileHeightPx,
+        onProgress: ({ completed, total }) =>
+          sendFullPageProgress("tile", completed, total),
+      });
+      parts = [];
+      let index = 0;
+      for (const tile of tiles) {
+        index += 1;
+        const fileName = `fullpage-part-${String(index).padStart(2, "0")}.png`;
+        await downloadBlob(tile.blob, fileName, { saveAs: false });
+        parts.push({ fileName });
+      }
+      debugBundle.tileCount = parts.length;
+    }
   } catch (error) {
     console.log("[FULL][SW]", {
       step: "stitch_failed",
       error: error && error.message ? error.message : String(error),
     });
-    const err = new Error("Full page screenshot failed.");
-    err.code = "UNKNOWN";
-    err.details = error && error.message ? error.message : String(error);
+    const err = new Error("Full capture failed. Try again.");
+    err.code = exceedsSingle ? "FP_CANVAS_LIMIT" : "UNKNOWN";
+    err.details = {
+      ...debugBundle,
+      errorCode: err.code,
+      error: error && error.message ? error.message : String(error),
+    };
+    resetFullPageCaptureState();
     throw err;
+  }
+  resetFullPageCaptureState();
+  if (parts) {
+    clearStatusMessage();
+    return { parts };
   }
   let dataUrl = await blobToDataUrl(blob);
   await loadTimestampOverlaySetting();
@@ -3959,7 +4094,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     });
   }
   clearStatusMessage();
-  return dataUrl;
+  return { dataUrl };
 }
 
 function applyTextAnnotations(ctx, annotations, dpr) {
@@ -5398,11 +5533,40 @@ async function handleMessage(message, sender) {
       }
       break;
     }
+    case "FP_CAPTURE_PROGRESS":
+      sendFullPageProgress(
+        normalizedMessage.stage || "capture",
+        normalizedMessage.current || 0,
+        normalizedMessage.total || 0,
+        normalizedMessage.detail
+      );
+      result = { ok: true };
+      break;
+    case "CAPTURE_FULLPAGE_CANCEL":
+      if (fullPageCaptureState.tabId) {
+        fullPageCaptureState.cancelled = true;
+        try {
+          await sendMessageToTabWithResponse(fullPageCaptureState.tabId, {
+            type: "FP_CAPTURE_CANCEL",
+          });
+        } catch (error) {
+          // Ignore cancel errors.
+        }
+      }
+      result = { ok: true };
+      break;
     case "CAPTURE_FULLPAGE":
       try {
-        const dataUrl = await captureFullPageScreenshot(normalizedMessage.tabId);
-        result = { ok: true, pngDataUrl: dataUrl };
+        const captureResult = await captureFullPageScreenshot(
+          normalizedMessage.tabId
+        );
+        result = { ok: true, ...captureResult };
       } catch (error) {
+        console.log("[FULL][SW]", {
+          step: "error",
+          code: error && error.code ? error.code : "UNKNOWN",
+          details: error && error.details ? error.details : undefined,
+        });
         result = {
           ok: false,
           error: {
