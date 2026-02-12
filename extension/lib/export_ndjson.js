@@ -18,6 +18,8 @@
       typeof options.redactEntry === "function" ? options.redactEntry : null;
     const onEntry =
       typeof options.onEntry === "function" ? options.onEntry : null;
+    const filterEntry =
+      typeof options.filterEntry === "function" ? options.filterEntry : null;
     const totalCount =
       typeof options.totalCount === "number" ? options.totalCount : null;
     const onProgress =
@@ -25,6 +27,7 @@
     const parts = [];
     let size = 0;
     let count = 0;
+    let processed = 0;
     const encoder = new TextEncoder();
     let chunk = "";
     let chunkCount = 0;
@@ -38,6 +41,20 @@
         const entry = record && record.entry ? record.entry : record;
         if (onEntry) {
           onEntry(entry, record);
+        }
+        processed += 1;
+        if (filterEntry && !filterEntry(entry)) {
+          if (totalCount && onProgress) {
+            const percent = Math.min(
+              100,
+              Math.floor((processed / Math.max(1, totalCount)) * 100)
+            );
+            if (percent !== lastPercent) {
+              lastPercent = percent;
+              onProgress({ count, total: totalCount, percent });
+            }
+          }
+          return;
         }
         const payload = redactEntry ? redactEntry(entry) : entry;
         const line = `${JSON.stringify(payload)}\n`;
@@ -64,7 +81,7 @@
         if (totalCount && onProgress) {
           const percent = Math.min(
             100,
-            Math.floor((count / Math.max(1, totalCount)) * 100)
+            Math.floor((processed / Math.max(1, totalCount)) * 100)
           );
           if (percent !== lastPercent) {
             lastPercent = percent;

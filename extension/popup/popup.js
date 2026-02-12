@@ -87,6 +87,19 @@ const nearLimitStatus = document.getElementById("status_near_limit");
 const downloadBanner = document.getElementById("status_download_banner");
 const storageLimitModal = document.getElementById("modal_storage_limit");
 const storageLimitBody = document.getElementById("storage_limit_body");
+const filtersToggle = document.getElementById("filters_toggle");
+const filtersChevron = document.getElementById("filters_chevron");
+const filtersBody = document.getElementById("filters_body");
+const filterRequestType = document.getElementById("filter_request_type");
+const filterStatusMode = document.getElementById("filter_status_mode");
+const filterStatusCustomWrap = document.getElementById("filter_status_custom_wrap");
+const filterStatusCustomList = document.getElementById("filter_status_custom_list");
+const filterStatusError = document.getElementById("filter_status_error");
+const filterUrlContains = document.getElementById("filter_url_contains");
+const filterUrlExcludes = document.getElementById("filter_url_excludes");
+const filterCaptureMode = document.getElementById("filter_capture_mode");
+const filtersDisabledHint = document.getElementById("filters_disabled_hint");
+const filtersSummary = document.getElementById("filters_summary");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -167,6 +180,16 @@ let exportProgressPercent = 0;
 let exportButtonLabel = null;
 let lastExportResultAt = 0;
 let exportProgressState = null;
+let captureFilters = {
+  filter_request_type: "xhr_fetch",
+  filter_status_mode: "all",
+  filter_status_custom_list: "",
+  filter_url_contains: "",
+  filter_url_excludes: "",
+  filter_capture_mode: "filtered_capture",
+  filters_panel_collapsed: true,
+};
+let filtersLocked = false;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -226,6 +249,151 @@ function applyCaptureSettingsToUI() {
       ? "ON"
       : "OFF";
   }
+}
+
+function applyFiltersToUI() {
+  if (filterRequestType) {
+    filterRequestType.value = captureFilters.filter_request_type;
+  }
+  if (filterStatusMode) {
+    filterStatusMode.value = captureFilters.filter_status_mode;
+  }
+  if (filterStatusCustomList) {
+    filterStatusCustomList.value = captureFilters.filter_status_custom_list;
+  }
+  if (filterUrlContains) {
+    filterUrlContains.value = captureFilters.filter_url_contains;
+  }
+  if (filterUrlExcludes) {
+    filterUrlExcludes.value = captureFilters.filter_url_excludes;
+  }
+  if (filterCaptureMode) {
+    const radio = filterCaptureMode.querySelector(
+      `input[value="${captureFilters.filter_capture_mode}"]`
+    );
+    if (radio) {
+      radio.checked = true;
+    }
+  }
+  const showCustom = captureFilters.filter_status_mode === "custom";
+  if (filterStatusCustomWrap) {
+    filterStatusCustomWrap.classList.toggle("is-hidden", !showCustom);
+  }
+  if (filtersBody && filtersChevron) {
+    filtersBody.classList.toggle("collapsed", captureFilters.filters_panel_collapsed);
+    filtersChevron.textContent = captureFilters.filters_panel_collapsed ? "▸" : "▾";
+    filtersToggle?.classList.toggle("open", !captureFilters.filters_panel_collapsed);
+  }
+}
+
+function setFiltersLocked(locked) {
+  filtersLocked = locked;
+  const controls = [
+    filterRequestType,
+    filterStatusMode,
+    filterStatusCustomList,
+    filterUrlContains,
+    filterUrlExcludes,
+  ];
+  controls.forEach((control) => {
+    if (control) {
+      control.disabled = locked;
+    }
+  });
+  if (filterCaptureMode) {
+    filterCaptureMode
+      .querySelectorAll("input")
+      .forEach((input) => (input.disabled = locked));
+  }
+  if (filtersDisabledHint) {
+    filtersDisabledHint.classList.toggle("is-hidden", !locked);
+  }
+}
+
+function parseStatusList(raw) {
+  if (!raw || typeof raw !== "string") {
+    return [];
+  }
+  const entries = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const codes = [];
+  entries.forEach((value) => {
+    const num = Number(value);
+    if (Number.isInteger(num) && num >= 100 && num <= 599) {
+      codes.push(num);
+    }
+  });
+  const unique = Array.from(new Set(codes)).slice(0, 30);
+  return unique;
+}
+
+function validateFilters() {
+  if (filterStatusError) {
+    filterStatusError.classList.add("is-hidden");
+    filterStatusError.textContent = "";
+  }
+  if (captureFilters.filter_status_mode !== "custom") {
+    return { ok: true, statuses: [] };
+  }
+  const codes = parseStatusList(captureFilters.filter_status_custom_list);
+  if (!codes.length) {
+    if (filterStatusError) {
+      filterStatusError.textContent =
+        "Enter at least one valid status code (100-599).";
+      filterStatusError.classList.remove("is-hidden");
+    }
+    return { ok: false, statuses: [] };
+  }
+  if (filterStatusError) {
+    filterStatusError.classList.add("is-hidden");
+    filterStatusError.textContent = "";
+  }
+  return { ok: true, statuses: codes };
+}
+
+async function loadFiltersSettings() {
+  const settings = await chrome.storage.local.get({
+    repro_capture_filters_v1: captureFilters,
+  });
+  if (settings && settings.repro_capture_filters_v1) {
+    captureFilters = {
+      ...captureFilters,
+      ...settings.repro_capture_filters_v1,
+    };
+  }
+  applyFiltersToUI();
+  validateFilters();
+}
+
+async function persistFiltersSettings() {
+  await chrome.storage.local.set({
+    repro_capture_filters_v1: captureFilters,
+  });
+}
+
+function getFiltersPayload() {
+  const validation = validateFilters();
+  if (!validation.ok) {
+    return { ok: false, error: "Invalid status filter list." };
+  }
+  const excludeTokens = captureFilters.filter_url_excludes
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  return {
+    ok: true,
+    filters: {
+      requestType: captureFilters.filter_request_type,
+      statusMode: captureFilters.filter_status_mode,
+      customStatuses: validation.statuses,
+      urlContains: captureFilters.filter_url_contains.trim(),
+      urlExcludes: excludeTokens,
+      captureMode: captureFilters.filter_capture_mode,
+    },
+  };
 }
 
 function getStatusBadge(status) {
@@ -379,6 +547,45 @@ function mapStageToPhase(stage) {
   return "Working";
 }
 
+function buildFiltersSummary(filters) {
+  if (!filters) {
+    return "";
+  }
+  const parts = [];
+  if (filters.filter_request_type === "xhr_fetch") {
+    parts.push("XHR+Fetch");
+  } else if (filters.filter_request_type === "xhr") {
+    parts.push("XHR");
+  } else if (filters.filter_request_type === "fetch") {
+    parts.push("Fetch");
+  } else {
+    parts.push("All requests");
+  }
+  if (filters.filter_status_mode === "errors") {
+    parts.push("Errors>=400");
+  } else if (filters.filter_status_mode === "custom") {
+    parts.push(
+      filters.filter_status_custom_list
+        ? `Status: ${filters.filter_status_custom_list}`
+        : "Status: custom"
+    );
+  } else {
+    parts.push("All statuses");
+  }
+  if (filters.filter_url_contains) {
+    parts.push(`contains: ${filters.filter_url_contains}`);
+  }
+  if (filters.filter_url_excludes) {
+    parts.push(`exclude: ${filters.filter_url_excludes}`);
+  }
+  if (filters.filter_capture_mode === "capture_all_export_filter") {
+    parts.push("Capture all");
+  } else {
+    parts.push("Filtered capture");
+  }
+  return parts.join(" • ");
+}
+
 function setDownloadBanner(message, type = "info") {
   if (!downloadBanner) {
     return;
@@ -425,6 +632,21 @@ function focusCompletedPartsList() {
   completedPartsList.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function toggleFiltersSection(forceOpen) {
+  if (!filtersBody || !filtersChevron) {
+    return;
+  }
+  const shouldCollapse =
+    typeof forceOpen === "boolean"
+      ? !forceOpen
+      : !filtersBody.classList.contains("collapsed");
+  filtersBody.classList.toggle("collapsed", shouldCollapse);
+  filtersChevron.textContent = shouldCollapse ? "▸" : "▾";
+  filtersToggle?.classList.toggle("open", !shouldCollapse);
+  captureFilters.filters_panel_collapsed = shouldCollapse;
+  persistFiltersSettings();
+}
+
 async function loadCaptureSettings() {
   const settings = await chrome.storage.local.get({
     autoDownloadOnRollover: false,
@@ -441,6 +663,172 @@ async function loadCaptureSettings() {
     timestampOverlay: settings.timestampOverlay === true,
   };
   applyCaptureSettingsToUI();
+}
+
+async function loadCaptureFilters() {
+  const stored = await chrome.storage.local.get({
+    repro_capture_filters_v1: null,
+  });
+  if (stored.repro_capture_filters_v1) {
+    captureFilters = {
+      ...captureFilters,
+      ...stored.repro_capture_filters_v1,
+    };
+  }
+  applyFiltersToUI();
+}
+
+async function persistCaptureFilters() {
+  await chrome.storage.local.set({
+    repro_capture_filters_v1: { ...captureFilters },
+  });
+}
+
+function applyFiltersToUI() {
+  if (filterRequestType) {
+    filterRequestType.value = captureFilters.filter_request_type;
+  }
+  if (filterStatusMode) {
+    filterStatusMode.value = captureFilters.filter_status_mode;
+  }
+  if (filterStatusCustomList) {
+    filterStatusCustomList.value = captureFilters.filter_status_custom_list;
+  }
+  if (filterUrlContains) {
+    filterUrlContains.value = captureFilters.filter_url_contains;
+  }
+  if (filterUrlExcludes) {
+    filterUrlExcludes.value = captureFilters.filter_url_excludes;
+  }
+  if (filterCaptureMode) {
+    const radios = filterCaptureMode.querySelectorAll("input[type='radio']");
+    radios.forEach((radio) => {
+      radio.checked = radio.value === captureFilters.filter_capture_mode;
+    });
+  }
+  const showCustom = captureFilters.filter_status_mode === "custom";
+  if (filterStatusCustomWrap) {
+    filterStatusCustomWrap.classList.toggle("is-hidden", !showCustom);
+  }
+  if (filtersBody) {
+    const collapsed = Boolean(captureFilters.filters_panel_collapsed);
+    filtersBody.classList.toggle("collapsed", collapsed);
+    if (filtersChevron) {
+      filtersChevron.textContent = collapsed ? "▸" : "▾";
+      filtersToggle?.classList.toggle("open", !collapsed);
+    }
+  }
+}
+
+function parseCustomStatusList(value) {
+  const tokens = String(value || "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const numbers = [];
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) {
+      return { ok: false, error: "Use comma-separated status codes (100-599)." };
+    }
+    const num = Number(token);
+    if (num < 100 || num > 599) {
+      return { ok: false, error: "Status codes must be 100-599." };
+    }
+    numbers.push(num);
+  }
+  const unique = Array.from(new Set(numbers));
+  if (unique.length > 30) {
+    return { ok: false, error: "Limit custom status codes to 30." };
+  }
+  return { ok: true, values: unique };
+}
+
+function parseExcludeTokens(value) {
+  const tokens = String(value || "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.slice(0, 20);
+}
+
+function updateFilterSummaryText(summary) {
+  if (!filtersSummary) {
+    return;
+  }
+  if (!summary) {
+    filtersSummary.textContent = "";
+    filtersSummary.classList.add("is-hidden");
+    return;
+  }
+  filtersSummary.textContent = summary;
+  filtersSummary.classList.remove("is-hidden");
+}
+
+function setFiltersLocked(locked) {
+  filtersLocked = Boolean(locked);
+  const controls = [
+    filterRequestType,
+    filterStatusMode,
+    filterStatusCustomList,
+    filterUrlContains,
+    filterUrlExcludes,
+  ];
+  controls.forEach((control) => {
+    if (control) {
+      control.disabled = filtersLocked;
+    }
+  });
+  if (filterCaptureMode) {
+    const radios = filterCaptureMode.querySelectorAll("input[type='radio']");
+    radios.forEach((radio) => {
+      radio.disabled = filtersLocked;
+    });
+  }
+  if (filtersDisabledHint) {
+    filtersDisabledHint.classList.toggle("is-hidden", !filtersLocked);
+  }
+}
+
+function showFilterValidationError(message) {
+  if (!filterStatusError) {
+    return;
+  }
+  if (message) {
+    filterStatusError.textContent = message;
+    filterStatusError.classList.remove("is-hidden");
+  } else {
+    filterStatusError.textContent = "";
+    filterStatusError.classList.add("is-hidden");
+  }
+}
+
+function readFiltersFromUI() {
+  const statusMode = filterStatusMode ? filterStatusMode.value : "all";
+  const customList = filterStatusCustomList ? filterStatusCustomList.value : "";
+  const customParse =
+    statusMode === "custom" ? parseCustomStatusList(customList) : null;
+  if (statusMode === "custom" && (!customParse || !customParse.ok)) {
+    showFilterValidationError(customParse ? customParse.error : "Invalid list.");
+    return { ok: false };
+  }
+  showFilterValidationError("");
+  const excludes = parseExcludeTokens(filterUrlExcludes ? filterUrlExcludes.value : "");
+  const requestType = filterRequestType ? filterRequestType.value : "xhr_fetch";
+  const captureMode = filterCaptureMode
+    ? filterCaptureMode.querySelector("input[type='radio']:checked")?.value ||
+      "filtered_capture"
+    : "filtered_capture";
+  return {
+    ok: true,
+    filters: {
+      requestType,
+      statusMode,
+      customStatuses: customParse ? customParse.values : [],
+      urlContains: filterUrlContains ? filterUrlContains.value.trim() : "",
+      urlExcludes: excludes,
+      captureMode,
+    },
+  };
 }
 
 async function persistCaptureSettings() {
@@ -1715,6 +2103,19 @@ function updateStatusUI(state) {
       (sessionState === "capturing" || sessionState === "paused");
     downloadHelp.classList.toggle("is-hidden", !showHelp);
   }
+  setFiltersLocked(sessionMode === "network_console" && sessionState === "capturing");
+  if (filtersSummary) {
+    const summary = filtersLocked
+      ? state.filtersSummary
+      : buildFiltersSummary(captureFilters);
+    if (summary) {
+      filtersSummary.textContent = summary;
+      filtersSummary.classList.remove("is-hidden");
+    } else {
+      filtersSummary.textContent = "";
+      filtersSummary.classList.add("is-hidden");
+    }
+  }
   if (state.part && state.part.pausedForStorageLimit) {
     showStorageLimitModal(state);
   } else {
@@ -2154,7 +2555,19 @@ async function handleRecordingStop() {
 
 async function handleNetworkStart() {
   setStatus(statusElements.download, "Starting network capture...");
-  const response = await send("NETWORK_START");
+  const filterPayload = getFiltersPayload();
+  if (!filterPayload.ok) {
+    setStatus(
+      statusElements.message,
+      "Fix filter settings before starting capture.",
+      "error"
+    );
+    showToast("Fix filter settings before starting capture.", "error");
+    return;
+  }
+  const response = await send("NETWORK_START", {
+    filters: filterPayload.filters,
+  });
   if (!response.ok) {
     await handleFailedResponse(response);
     if (response.code === "debugger_blocked") {
@@ -2587,6 +3000,9 @@ function routeAction(action, el) {
     case "help:gotit":
       closeHelp();
       break;
+    case "filters:toggle":
+      toggleFiltersSection();
+      break;
     case "recording:start":
       handleRecordingStart();
       break;
@@ -2669,6 +3085,37 @@ async function routeChange(action, el) {
     console.log("[UI] change:", action);
   }
   switch (action) {
+    case "filters:update":
+      if (filtersLocked) {
+        showToast("Stop capture to change filters.", "error");
+        applyFiltersToUI();
+        break;
+      }
+      captureFilters.filter_request_type = filterRequestType
+        ? filterRequestType.value
+        : captureFilters.filter_request_type;
+      captureFilters.filter_status_mode = filterStatusMode
+        ? filterStatusMode.value
+        : captureFilters.filter_status_mode;
+      captureFilters.filter_status_custom_list = filterStatusCustomList
+        ? filterStatusCustomList.value
+        : captureFilters.filter_status_custom_list;
+      captureFilters.filter_url_contains = filterUrlContains
+        ? filterUrlContains.value
+        : captureFilters.filter_url_contains;
+      captureFilters.filter_url_excludes = filterUrlExcludes
+        ? filterUrlExcludes.value
+        : captureFilters.filter_url_excludes;
+      if (filterCaptureMode) {
+        const selected = filterCaptureMode.querySelector("input:checked");
+        captureFilters.filter_capture_mode = selected
+          ? selected.value
+          : captureFilters.filter_capture_mode;
+      }
+      applyFiltersToUI();
+      validateFilters();
+      await persistFiltersSettings();
+      break;
     case "redaction:toggle":
       handleRedactionToggle(el.checked);
       break;
@@ -2777,6 +3224,7 @@ document.addEventListener("change", (event) => {
   }
   routeChange(actionEl.dataset.action, actionEl);
 });
+
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && helpIsOpen) {
@@ -3038,6 +3486,7 @@ async function initPopup() {
   setMode(currentMode);
   await loadRedactionSetting();
   await loadCaptureSettings();
+  await loadFiltersSettings();
   await loadAnnotationStyle();
   await initCapabilities();
   await refreshStatus();
@@ -3046,6 +3495,13 @@ async function initPopup() {
     versionBadge.textContent = APP_VERSION;
   }
   await loadRecordingDownloadData();
+  if (filtersBody) {
+    filtersBody.addEventListener("click", () => {
+      if (filtersLocked) {
+        showToast("Stop capture to change filters.", "error");
+      }
+    });
+  }
 }
 
 initPopup();

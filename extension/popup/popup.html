@@ -222,6 +222,97 @@
 
       <section class="card mode-controls" data-mode="network_console">
         <h2>Network + Console</h2>
+          <button
+            id="filters_toggle"
+            class="section-toggle"
+            type="button"
+            data-action="filters:toggle"
+            data-section="filters"
+          >
+            <span>Capture Filters</span>
+            <span id="filters_chevron" class="chevron">▸</span>
+          </button>
+          <div id="filters_body" class="filters-body collapsed">
+            <div class="settings-row">
+              <label class="label" for="filter_request_type">Request type</label>
+              <select id="filter_request_type" data-action="filters:update">
+                <option value="xhr_fetch">XHR + Fetch</option>
+                <option value="xhr">XHR only</option>
+                <option value="fetch">Fetch only</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <label class="label" for="filter_status_mode">Status</label>
+              <select id="filter_status_mode" data-action="filters:update">
+                <option value="all">All statuses</option>
+                <option value="errors">Errors only (>= 400)</option>
+                <option value="custom">Custom status list...</option>
+              </select>
+            </div>
+            <div id="filter_status_custom_wrap" class="settings-row is-hidden">
+              <label class="label" for="filter_status_custom_list">Codes</label>
+              <input
+                id="filter_status_custom_list"
+                type="text"
+                placeholder="e.g., 400,404,409,410,500"
+                data-action="filters:update"
+              />
+            </div>
+            <div id="filter_status_error" class="hint is-hidden"></div>
+            <div class="settings-row">
+              <label class="label" for="filter_url_contains">URL contains</label>
+              <input
+                id="filter_url_contains"
+                type="text"
+                placeholder="e.g., /payments or auth-service"
+                data-action="filters:update"
+              />
+            </div>
+            <p class="hint">Matches anywhere in the URL.</p>
+            <div class="settings-row">
+              <label class="label" for="filter_url_excludes">Exclude contains</label>
+              <input
+                id="filter_url_excludes"
+                type="text"
+                placeholder="e.g., analytics, heartbeat"
+                data-action="filters:update"
+              />
+            </div>
+            <p class="hint">Optional. Excludes noisy endpoints.</p>
+            <div class="settings-row">
+              <label class="label">Capture mode</label>
+              <div class="radio-group" id="filter_capture_mode">
+                <label>
+                  <input
+                    type="radio"
+                    name="filter_capture_mode"
+                    value="filtered_capture"
+                    data-action="filters:update"
+                  />
+                  Filtered capture only (recommended)
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="filter_capture_mode"
+                    value="capture_all_export_filter"
+                    data-action="filters:update"
+                  />
+                  Capture everything, filter on export
+                </label>
+              </div>
+            </div>
+            <p class="hint">Filters apply when you press Start.</p>
+            <p class="hint">
+              Changing filters during capture requires Stop → Start.
+            </p>
+            <p class="hint">Capture everything increases storage size and export time.</p>
+            <p id="filters_disabled_hint" class="hint is-hidden">
+              Stop capture to change filters.
+            </p>
+            <p id="filters_summary" class="status-strip is-hidden"></p>
+          </div>
           <div class="toggle-row">
             <span class="label">Auto-download on rollover</span>
             <label class="toggle">

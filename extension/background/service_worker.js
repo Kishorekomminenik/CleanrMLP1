@@ -61,6 +61,14 @@ const CAPTURE_DEFAULTS = {
   maxBodyBytes: 200 * 1024,
   autoDownloadOnRollover: false,
 };
+const FILTER_DEFAULTS = {
+  requestType: "xhr_fetch",
+  statusMode: "all",
+  customStatuses: [],
+  urlContains: "",
+  urlExcludes: [],
+  captureMode: "filtered_capture",
+};
 const MIN_REQUESTS_TO_EXPORT = 25;
 const MAX_COMPLETED_PARTS_RETAINED = 3;
 const DEFAULT_PART_CAP_BYTES = 75000000;
@@ -168,6 +176,7 @@ const recordingOverlayState = {
   totalPausedMs: 0,
   tabId: null,
 };
+let activeFilters = { ...FILTER_DEFAULTS };
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -341,6 +350,197 @@ function computeRecordingElapsedMs(nowMs) {
     0,
     endMs - recordingOverlayState.startMs - recordingOverlayState.totalPausedMs
   );
+}
+
+function normalizeFilters(input) {
+  const filters = input || {};
+  const requestType =
+    typeof filters.requestType === "string"
+      ? filters.requestType
+      : FILTER_DEFAULTS.requestType;
+  const statusMode =
+    typeof filters.statusMode === "string"
+      ? filters.statusMode
+      : FILTER_DEFAULTS.statusMode;
+  const customStatusesRaw = Array.isArray(filters.customStatuses)
+    ? filters.customStatuses
+    : typeof filters.customStatuses === "string"
+      ? filters.customStatuses.split(",")
+      : [];
+  const customStatuses = Array.from(
+    new Set(
+      customStatusesRaw
+        .map((value) => Number(String(value).trim()))
+        .filter((value) => Number.isInteger(value) && value >= 100 && value <= 599)
+    )
+  ).slice(0, 30);
+  const urlContains =
+    typeof filters.urlContains === "string" ? filters.urlContains.trim() : "";
+  const urlExcludesRaw = Array.isArray(filters.urlExcludes)
+    ? filters.urlExcludes
+    : typeof filters.urlExcludes === "string"
+      ? filters.urlExcludes.split(",")
+      : [];
+  const urlExcludes = urlExcludesRaw
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const captureMode =
+    typeof filters.captureMode === "string"
+      ? filters.captureMode
+      : FILTER_DEFAULTS.captureMode;
+  return {
+    requestType,
+    statusMode,
+    customStatuses,
+    urlContains,
+    urlExcludes,
+    captureMode,
+  };
+}
+
+function buildFiltersSummary(filters) {
+  if (!filters) {
+    return "";
+  }
+  const parts = [];
+  if (filters.requestType === "xhr_fetch") {
+    parts.push("XHR+Fetch");
+  } else if (filters.requestType === "xhr") {
+    parts.push("XHR");
+  } else if (filters.requestType === "fetch") {
+    parts.push("Fetch");
+  } else {
+    parts.push("All requests");
+  }
+  if (filters.statusMode === "errors") {
+    parts.push("Errors>=400");
+  } else if (filters.statusMode === "custom") {
+    parts.push(
+      filters.customStatuses && filters.customStatuses.length
+        ? `Status: ${filters.customStatuses.join(",")}`
+        : "Status: custom"
+    );
+  } else {
+    parts.push("All statuses");
+  }
+  if (filters.urlContains) {
+    parts.push(`contains: ${filters.urlContains}`);
+  }
+  if (filters.urlExcludes && filters.urlExcludes.length) {
+    parts.push(`exclude: ${filters.urlExcludes.join(",")}`);
+  }
+  if (filters.captureMode === "capture_all_export_filter") {
+    parts.push("Capture all");
+  } else {
+    parts.push("Filtered capture");
+  }
+  return parts.join(" • ");
+}
+
+function matchesRequestType(resourceType, filters) {
+  if (!filters || filters.requestType === "all") {
+    return true;
+  }
+  if (!resourceType) {
+    return false;
+  }
+  const type = String(resourceType).toLowerCase();
+  if (filters.requestType === "xhr_fetch") {
+    return type === "xhr" || type === "fetch";
+  }
+  if (filters.requestType === "xhr") {
+    return type === "xhr";
+  }
+  if (filters.requestType === "fetch") {
+    return type === "fetch";
+  }
+  return true;
+}
+
+function matchesUrlFilters(url, filters) {
+  if (!filters || !url) {
+    return true;
+  }
+  if (filters.urlContains && !url.includes(filters.urlContains)) {
+    return false;
+  }
+  if (filters.urlExcludes && filters.urlExcludes.length) {
+    return !filters.urlExcludes.some((token) => token && url.includes(token));
+  }
+  return true;
+}
+
+function matchesStatusFilter(entry, filters) {
+  if (!filters || filters.statusMode === "all") {
+    return true;
+  }
+  const status = typeof entry.status === "number" ? entry.status : null;
+  if (filters.statusMode === "errors") {
+    if (status !== null) {
+      return status >= 400;
+    }
+    return Boolean(entry.errorText);
+  }
+  if (filters.statusMode === "custom") {
+    if (status === null) {
+      return false;
+    }
+    return filters.customStatuses.includes(status);
+  }
+  return true;
+}
+
+function matchesNetworkFilters(entry, filters) {
+  if (!entry || !filters) {
+    return true;
+  }
+  if (!matchesRequestType(entry.resourceType, filters)) {
+    return false;
+  }
+  if (!matchesUrlFilters(entry.url || "", filters)) {
+    return false;
+  }
+  if (!matchesStatusFilter(entry, filters)) {
+    return false;
+  }
+  return true;
+}
+
+function shouldCaptureAtRequestStage(entry, filters) {
+  if (!filters) {
+    return true;
+  }
+  if (filters.captureMode === "capture_all_export_filter") {
+    return true;
+  }
+  if (!matchesRequestType(entry.resourceType, filters)) {
+    return false;
+  }
+  if (!matchesUrlFilters(entry.url || "", filters)) {
+    return false;
+  }
+  return true;
+}
+
+function matchesExportNetworkEntry(entry, filters) {
+  if (!filters) {
+    return true;
+  }
+  if (!matchesRequestType(entry.resource_type, filters)) {
+    return false;
+  }
+  if (!matchesUrlFilters(entry.url || "", filters)) {
+    return false;
+  }
+  const statusEntry = {
+    status: typeof entry.response_status === "number" ? entry.response_status : null,
+    errorText: entry.error_text || null,
+  };
+  if (!matchesStatusFilter(statusEntry, filters)) {
+    return false;
+  }
+  return true;
 }
 
 function drawOverlayBadge(ctx, text, width, height) {
@@ -1257,6 +1457,9 @@ async function hydrateCaptureStateFromIdb() {
     return;
   }
   await loadCaptureSettings();
+  if (latest.filters) {
+    activeFilters = normalizeFilters(latest.filters);
+  }
   captureState.sessionId = latest.sessionId;
   const parts = await ReproIdb.getAllByIndex(
     "parts",
@@ -1935,6 +2138,9 @@ function hasExportableArtifacts() {
 }
 
 function getStatusSnapshot() {
+  if (session && session.filters) {
+    activeFilters = normalizeFilters(session.filters);
+  }
   updateSessionCounts();
   const artifacts = getArtifactsSnapshot();
   return {
@@ -1975,6 +2181,8 @@ function getStatusSnapshot() {
       exportInProgress: exportJob ? exportJob.active === true : false,
     },
     exportStatus,
+    filtersSummary: buildFiltersSummary(activeFilters),
+    filters: activeFilters,
     session,
     artifacts,
     hasArtifacts: artifacts.hasAnyArtifacts,
@@ -2169,6 +2377,9 @@ async function buildPartExportData(context) {
   }
   const partId = context && context.partId ? context.partId : null;
   const partRecord = partId ? await ReproIdb.getByKey("parts", partId) : null;
+  const sessionRecord = sessionExport
+    ? await ReproIdb.getByKey("sessions", sessionExport.session_id)
+    : null;
   const partInfo = partRecord || {
     partId,
     partNumber:
@@ -2216,6 +2427,14 @@ async function buildPartExportData(context) {
     },
     redaction_enabled:
       typeof redactionEnabled === "boolean" ? redactionEnabled : null,
+    filters:
+      (sessionRecord && sessionRecord.filters) ||
+      (sessionExport && sessionExport.filters) ||
+      activeFilters,
+    filters_summary:
+      (sessionRecord && sessionRecord.filters_summary) ||
+      (sessionExport && sessionExport.filters_summary) ||
+      buildFiltersSummary(activeFilters),
   };
   const sessionId = sessionExport ? sessionExport.session_id : null;
   const startedAtIso = sessionExport ? sessionExport.created_at : null;
@@ -2347,6 +2566,10 @@ async function buildPartExportData(context) {
     partInfo,
     redactionEnabled,
     exportLimits,
+    activeFilters:
+      (sessionRecord && sessionRecord.filters) ||
+      (sessionExport && sessionExport.filters) ||
+      activeFilters,
     exportTimestamp,
     session: sessionExport,
     environment,
@@ -2384,6 +2607,11 @@ async function buildEvidenceExportData(context) {
     zip_builder_version: extensionVersion || null,
     redaction_enabled:
       typeof redactionEnabled === "boolean" ? redactionEnabled : null,
+    filters: session && session.filters ? session.filters : activeFilters,
+    filters_summary:
+      session && session.filters_summary
+        ? session.filters_summary
+        : buildFiltersSummary(activeFilters),
   };
   const networkCapped = state.network.capped;
   const rawNetworkCount = Object.keys(state.network.requests).length;
@@ -2725,6 +2953,12 @@ async function runEvidenceZipExport(context) {
     const data = usePartExport
       ? await buildPartExportData(context)
       : await buildEvidenceExportData(context);
+    const exportFilters =
+      usePartExport &&
+      data.activeFilters &&
+      data.activeFilters.captureMode === "capture_all_export_filter"
+        ? data.activeFilters
+        : null;
     const redactionEnabled = usePartExport
       ? data.redactionEnabled === true
       : null;
@@ -2898,6 +3132,9 @@ async function runEvidenceZipExport(context) {
                   keyRange: IDBKeyRange.only(data.partId),
                   maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
                   redactEntry: redactNetworkEntry,
+                  filterEntry: exportFilters
+                    ? (entry) => matchesExportNetworkEntry(entry, exportFilters)
+                    : null,
                   totalCount: networkTotal,
                   onProgress: ({ percent }) => {
                     reportExportProgress(
@@ -2919,6 +3156,9 @@ async function runEvidenceZipExport(context) {
               keyRange: IDBKeyRange.only(data.partId),
               maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
               redactEntry: redactNetworkEntry,
+              filterEntry: exportFilters
+                ? (entry) => matchesExportNetworkEntry(entry, exportFilters)
+                : null,
               totalCount: networkTotal,
               onProgress: ({ percent }) => {
                 reportExportProgress(
@@ -3899,7 +4139,7 @@ async function stopRecording() {
   return response;
 }
 
-async function startNetworkCapture() {
+async function startNetworkCapture(filters) {
   if (state.network.active) {
     throw new Error("Network capture is already active.");
   }
@@ -3908,11 +4148,36 @@ async function startNetworkCapture() {
   ensureTabIsCapturable(tab);
 
   ensureSessionForMode("network_console", tab);
+  activeFilters = normalizeFilters(filters);
+  if (
+    activeFilters.statusMode === "custom" &&
+    (!activeFilters.customStatuses || activeFilters.customStatuses.length === 0)
+  ) {
+    const error = new Error("Invalid status filter list.");
+    error.code = "invalid_filters";
+    throw error;
+  }
+  if (session) {
+    session.filters = activeFilters;
+    session.filters_summary = buildFiltersSummary(activeFilters);
+  }
   if (!isIdbAvailable()) {
     throw new Error("IndexedDB unavailable for capture.");
   }
   await loadCaptureSettings();
   await ensureSessionRecord(tab);
+  if (captureState.sessionId) {
+    try {
+      const existing = await ReproIdb.getByKey("sessions", captureState.sessionId);
+      if (existing) {
+        existing.filters = activeFilters;
+        existing.filters_summary = buildFiltersSummary(activeFilters);
+        await ReproIdb.putOne("sessions", existing);
+      }
+    } catch (error) {
+      console.warn("Failed to persist filters to session record:", error);
+    }
+  }
   rotationSuppressed = false;
   captureState.pausedForStorageLimit = false;
   captureState.rolloverPending = false;
@@ -4125,6 +4390,14 @@ function finalizeNetworkEntry(requestId) {
   if (!entry) {
     return;
   }
+  if (
+    activeFilters &&
+    activeFilters.captureMode === "filtered_capture" &&
+    !matchesNetworkFilters(entry, activeFilters)
+  ) {
+    delete state.network.requests[requestId];
+    return;
+  }
   const record = buildNetworkStorageRecord(entry);
   queueNetworkRecord(record);
   delete state.network.requests[requestId];
@@ -4216,10 +4489,11 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 
   if (method === "Network.requestWillBeSent") {
     const resourceType = params.type ? String(params.type).toLowerCase() : null;
-    if (
-      resourceType &&
-      !RESOURCE_TYPES_DEFAULT.includes(resourceType.toLowerCase())
-    ) {
+    const entryPreview = {
+      resourceType: resourceType || null,
+      url: params.request && params.request.url ? params.request.url : "",
+    };
+    if (!shouldCaptureAtRequestStage(entryPreview, activeFilters)) {
       return;
     }
     updateRequestEntry(params.requestId, {
@@ -4475,6 +4749,7 @@ function resetCaptureState() {
   flushInProgress = false;
   rotationSuppressed = false;
   rotationInProgress = false;
+  activeFilters = { ...FILTER_DEFAULTS };
 }
 
 function getByteLength(value) {
@@ -4563,6 +4838,7 @@ function buildNetworkStorageRecord(entry) {
     time_missing: timestampEpochMs === null ? true : undefined,
     url: entry.url || null,
     method: entry.method || null,
+    resource_type: entry.resourceType || null,
     request_headers:
       entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
         ? entry.requestHeaders
@@ -4990,6 +5266,8 @@ function buildSessionExport() {
       console_entries: session.counts.console_entries,
       errors: session.counts.errors,
     },
+    filters: session.filters || activeFilters,
+    filters_summary: session.filters_summary || buildFiltersSummary(activeFilters),
     diagnostics: session.diagnostics.map((entry) => ({
       timestamp: entry.timestamp,
       level: normalizeDiagnosticLevel(entry.level),
@@ -5318,7 +5596,7 @@ async function handleMessage(message, sender) {
         }
       }
       try {
-        const captureResult = await startNetworkCapture();
+        const captureResult = await startNetworkCapture(normalizedMessage.filters);
         result = {
           ok: true,
           consoleEnabled: captureResult.consoleEnabled,
