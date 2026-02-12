@@ -82,6 +82,9 @@ const autoDownloadStatusLine = document.getElementById("status_auto_download");
 const downloadHelp = document.getElementById("status_download_help");
 const completedPartsList = document.getElementById("completed_parts_list");
 const completedPartsEmpty = document.getElementById("completed_parts_empty");
+const exportProgressStatus = document.getElementById("status_export_progress");
+const nearLimitStatus = document.getElementById("status_near_limit");
+const downloadBanner = document.getElementById("status_download_banner");
 const storageLimitModal = document.getElementById("modal_storage_limit");
 const storageLimitBody = document.getElementById("storage_limit_body");
 let statusUserToggled = false;
@@ -163,6 +166,7 @@ let exportInProgress = false;
 let exportProgressPercent = 0;
 let exportButtonLabel = null;
 let lastExportResultAt = 0;
+let exportProgressState = null;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -277,8 +281,13 @@ function renderCompletedParts(parts) {
     downloadBtn.className = "secondary mini";
     downloadBtn.dataset.action = "part:download";
     downloadBtn.dataset.partId = part.partId;
-    downloadBtn.textContent =
-      part.status === "downloaded" ? "Download again" : "Download";
+    if (part.status === "download_failed") {
+      downloadBtn.textContent = "Retry download";
+    } else if (part.status === "downloaded") {
+      downloadBtn.textContent = "Download again";
+    } else {
+      downloadBtn.textContent = "Download";
+    }
     const tooSmall = part.requestCount < MIN_REQUESTS_TO_EXPORT;
     const canDownload =
       ["completed_ready", "download_failed", "downloaded"].includes(part.status) &&
@@ -286,8 +295,14 @@ function renderCompletedParts(parts) {
       !part.queuedForExport &&
       !tooSmall;
     downloadBtn.disabled = !canDownload;
-    if (tooSmall) {
+    if (part.exportInProgress) {
+      downloadBtn.title = "Export in progress.";
+    } else if (part.queuedForExport) {
+      downloadBtn.title = "Queued for export.";
+    } else if (tooSmall) {
       downloadBtn.title = `Need ${MIN_REQUESTS_TO_EXPORT}+ requests to export.`;
+    } else {
+      downloadBtn.title = "";
     }
 
     const deleteBtn = document.createElement("button");
@@ -297,6 +312,13 @@ function renderCompletedParts(parts) {
     deleteBtn.dataset.partNumber = part.partNumber;
     deleteBtn.textContent = "Delete";
     deleteBtn.disabled = Boolean(part.exportInProgress || part.queuedForExport);
+    if (part.exportInProgress) {
+      deleteBtn.title = "Export in progress.";
+    } else if (part.queuedForExport) {
+      deleteBtn.title = "Queued for export.";
+    } else {
+      deleteBtn.title = "";
+    }
 
     actions.appendChild(downloadBtn);
     actions.appendChild(deleteBtn);
@@ -313,6 +335,64 @@ async function refreshCompletedParts() {
     return;
   }
   renderCompletedParts(response.parts);
+}
+
+function updateExportProgressUI() {
+  if (!exportProgressStatus) {
+    return;
+  }
+  if (!exportProgressState) {
+    exportProgressStatus.classList.add("is-hidden");
+    exportProgressStatus.textContent = "";
+    return;
+  }
+  const partLabel = exportProgressState.partNumber
+    ? `Part ${exportProgressState.partNumber}`
+    : "Export";
+  const phase = exportProgressState.phase || "Working";
+  const percent =
+    typeof exportProgressState.percent === "number"
+      ? exportProgressState.percent
+      : 0;
+  exportProgressStatus.textContent = `Exporting ${partLabel}… (${phase} ${percent}%)`;
+  exportProgressStatus.classList.remove("is-hidden");
+  exportProgressStatus.classList.remove("is-error", "is-info");
+}
+
+function mapStageToPhase(stage) {
+  if (!stage) {
+    return "Working";
+  }
+  const name = String(stage);
+  if (name.includes("ndjson") || name.includes("stringify")) {
+    return "Building NDJSON";
+  }
+  if (name.includes("zip")) {
+    return "Zipping";
+  }
+  if (name.includes("download")) {
+    return "Downloading";
+  }
+  if (name.includes("prepare") || name.includes("data_ready")) {
+    return "Reading data";
+  }
+  return "Working";
+}
+
+function setDownloadBanner(message, type = "info") {
+  if (!downloadBanner) {
+    return;
+  }
+  if (!message) {
+    downloadBanner.textContent = "";
+    downloadBanner.classList.add("is-hidden");
+    downloadBanner.classList.remove("is-error", "is-info");
+    return;
+  }
+  downloadBanner.textContent = message;
+  downloadBanner.classList.remove("is-hidden");
+  downloadBanner.classList.toggle("is-error", type === "error");
+  downloadBanner.classList.toggle("is-info", type === "info");
 }
 
 function showStorageLimitModal(state) {
@@ -1517,6 +1597,32 @@ function updateStatusUI(state) {
     const enabled = state.part ? state.part.autoDownloadOnRollover : false;
     autoDownloadStatusLine.textContent = `Auto-download: ${enabled ? "ON" : "OFF"}`;
   }
+  if (nearLimitStatus && state.part) {
+    const warnings = [];
+    const capRequests = state.part.capRequests || 0;
+    const capBytes = state.part.capBytes || 0;
+    const reqCount = state.part.requestsInPart || 0;
+    const bytes = state.part.bytesInPart || 0;
+    if (capRequests && reqCount >= capRequests * 0.8) {
+      warnings.push(
+        `Approaching cap: ${reqCount}/${capRequests}. Rollover soon.`
+      );
+    }
+    if (capBytes && bytes >= capBytes * 0.8) {
+      const mb = (bytes / (1024 * 1024)).toFixed(1);
+      const capMb = (capBytes / (1024 * 1024)).toFixed(1);
+      warnings.push(
+        `Approaching size cap: ${mb}MB/${capMb}MB. Rollover soon.`
+      );
+    }
+    if (warnings.length > 0) {
+      nearLimitStatus.textContent = warnings.join(" ");
+      nearLimitStatus.classList.remove("is-hidden");
+    } else {
+      nearLimitStatus.textContent = "";
+      nearLimitStatus.classList.add("is-hidden");
+    }
+  }
   if (sessionMeta) {
     const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
     sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
@@ -1610,6 +1716,16 @@ function updateStatusUI(state) {
   } else {
     hideStorageLimitModal();
   }
+  if (state.exportStatus) {
+    exportProgressState = {
+      partNumber: state.exportStatus.partNumber,
+      percent: state.exportStatus.percent,
+      phase: state.exportStatus.phase,
+    };
+  } else if (!exportInProgress) {
+    exportProgressState = null;
+  }
+  updateExportProgressUI();
   if (buttons.fullPageScreenshotMode) {
     buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
   }
@@ -2251,6 +2367,7 @@ async function handleDownload() {
       "Export queued…",
       "success"
     );
+    setDownloadBanner(null);
   } catch (error) {
     hadError = true;
     setStatus(
@@ -2267,14 +2384,17 @@ async function handleDownload() {
 }
 
 async function handleDownloadPart(partId) {
-  if (!partId || exportInProgress) {
+  if (!partId) {
     return;
   }
-  startExportUI();
   try {
     const response = await send("EXPORT_PART", { partId });
     if (!response.ok) {
-      finishExportUI(response.error || "Export could not be started.", "error");
+      setStatus(
+        statusElements.download,
+        response.error || "Export could not be started.",
+        "error"
+      );
       return;
     }
     setStatus(
@@ -2282,8 +2402,10 @@ async function handleDownloadPart(partId) {
       "Export queued…",
       "success"
     );
+    setDownloadBanner(null);
   } catch (error) {
-    finishExportUI(
+    setStatus(
+      statusElements.download,
       error && error.message ? error.message : "Export failed to start.",
       "error"
     );
@@ -2756,30 +2878,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === "EXPORT_STARTED") {
-    if (!exportInProgress) {
+    if (!exportInProgress && !message.partNumber) {
       startExportUI();
     }
+    exportProgressState = {
+      partNumber: message.partNumber || null,
+      percent: 0,
+      phase: "Starting",
+    };
+    updateExportProgressUI();
     setStatus(statusElements.download, "Export started.", "success");
     sendResponse({ ok: true });
     return true;
   }
+  if (message.type === "EXPORT_PROGRESS") {
+    exportProgressState = {
+      partNumber: message.partNumber || null,
+      percent:
+        typeof message.percent === "number" ? message.percent : 0,
+      phase: message.phase || "Working",
+    };
+    updateExportProgressUI();
+    sendResponse({ ok: true });
+    return true;
+  }
   if (message.type === "EXPORT_DONE") {
-    finishExportUI("Export complete.", "success");
+    if (!message.partNumber) {
+      finishExportUI("Export complete.", "success");
+    } else {
+      setStatus(statusElements.download, "Export complete.", "success");
+    }
     showToast("Exported");
     refreshCompletedParts();
     lastExportResultAt = Date.now();
+    exportProgressState = null;
+    updateExportProgressUI();
+    setDownloadBanner(null);
     sendResponse({ ok: true });
     return true;
   }
   if (message.type === "EXPORT_FAILED") {
-    finishExportUI(message.userMessage || "Export failed.", "error");
+    if (!message.partNumber) {
+      finishExportUI(message.userMessage || "Export failed.", "error");
+    } else {
+      setStatus(
+        statusElements.download,
+        message.userMessage || "Export failed.",
+        "error"
+      );
+    }
     refreshCompletedParts();
     lastExportResultAt = Date.now();
+    exportProgressState = null;
+    updateExportProgressUI();
+    setDownloadBanner(
+      message.userMessage || "Export failed. Retry download.",
+      "error"
+    );
     sendResponse({ ok: true });
     return true;
   }
   if (message.type === EXPORT_EVENTS.PROGRESS) {
     updateExportUI(message.percent, message.stage);
+    exportProgressState = {
+      partNumber: message.partNumber || null,
+      percent:
+        typeof message.percent === "number" ? message.percent : 0,
+      phase: mapStageToPhase(message.stage),
+    };
+    updateExportProgressUI();
     sendResponse({ ok: true });
     return true;
   }
@@ -2792,6 +2959,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     showToast("Exported");
     refreshCompletedParts();
     lastExportResultAt = Date.now();
+    exportProgressState = null;
+    updateExportProgressUI();
+    setDownloadBanner(null);
     sendResponse({ ok: true });
     return true;
   }
@@ -2803,6 +2973,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     finishExportUI(message.userMessage || "Export failed.", "error");
     refreshCompletedParts();
     lastExportResultAt = Date.now();
+    exportProgressState = null;
+    updateExportProgressUI();
+    setDownloadBanner(
+      message.userMessage || "Export failed. Retry download.",
+      "error"
+    );
     sendResponse({ ok: true });
     return true;
   }

@@ -21,17 +21,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       const blob = new Blob([arrayBuffer], { type: mimeType });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
+      chrome.downloads.download(
+        {
+          url,
+          filename,
+          saveAs: false,
+        },
+        (downloadId) => {
+          if (chrome.runtime.lastError || !downloadId) {
+            sendResponse({
+              ok: false,
+              error: chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : "Download blocked.",
+            });
+            return;
+          }
+          sendResponse({ ok: true, downloadId });
+        }
+      );
       setTimeout(() => {
         URL.revokeObjectURL(url);
-        link.remove();
       }, 4000);
-      sendResponse({ ok: true });
     } catch (error) {
       sendResponse({
         ok: false,

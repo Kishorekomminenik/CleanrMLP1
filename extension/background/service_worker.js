@@ -155,6 +155,7 @@ const exportQueue = [];
 const exportQueueIds = new Set();
 let exportRunning = false;
 let exportRunningJob = null;
+let exportStatus = null;
 const brokerState = {
   tabId: null,
   ready: false,
@@ -539,6 +540,48 @@ function reportExportProgress(percent, stage, detail) {
     stage,
     detail,
   });
+  const phase = mapExportStageToPhase(stage);
+  if (!exportStatus) {
+    exportStatus = {
+      jobId: exportJob.jobId || null,
+      partId: exportJob.partId || null,
+      partNumber: exportJob.partNumber || null,
+      percent: next,
+      phase,
+    };
+  } else {
+    exportStatus.percent = next;
+    exportStatus.phase = phase;
+  }
+  sendExportEvent("EXPORT_PROGRESS", {
+    percent: next,
+    phase,
+    stage,
+    detail,
+    jobId: exportJob.jobId || null,
+    partId: exportJob.partId || null,
+    partNumber: exportJob.partNumber || null,
+  });
+}
+
+function mapExportStageToPhase(stage) {
+  if (!stage) {
+    return "Working";
+  }
+  const name = String(stage);
+  if (name.includes("ndjson") || name.includes("stringify")) {
+    return "Building NDJSON";
+  }
+  if (name.includes("zip")) {
+    return "Zipping";
+  }
+  if (name.includes("download")) {
+    return "Downloading";
+  }
+  if (name.includes("prepare") || name.includes("data_ready")) {
+    return "Reading data";
+  }
+  return "Working";
 }
 
 function isZipBuilderAvailable() {
@@ -1010,8 +1053,9 @@ async function enqueueExport(partSnapshot, options = {}) {
   if (alreadyExported && !options.allowDuplicate) {
     return { ok: false, error: "Part already exported." };
   }
+  const jobId = buildExportJobId("part");
   const job = {
-    jobId: buildExportJobId("part"),
+    jobId,
     kind: "export_zip",
     partId: partSnapshot.partId,
     partNumber: partSnapshot.partNumber,
@@ -1021,6 +1065,7 @@ async function enqueueExport(partSnapshot, options = {}) {
       runEvidenceZipExport({
         partId: partSnapshot.partId,
         partNumber: partSnapshot.partNumber,
+        exportJobId: jobId,
       }),
   };
   return await enqueueExportJob(job);
@@ -1043,6 +1088,13 @@ async function processExportQueue() {
   }
   exportRunning = true;
   exportRunningJob = next;
+  exportStatus = {
+    jobId: next.jobId || null,
+    partId: next.partId || null,
+    partNumber: next.partNumber || null,
+    percent: 0,
+    phase: "Queued",
+  };
   sendExportQueueUpdate();
   if (next.partId) {
     await updatePartStatus(next.partId, PART_STATUS.EXPORTING);
@@ -1082,6 +1134,7 @@ async function processExportQueue() {
   } finally {
     exportRunning = false;
     exportRunningJob = null;
+    exportStatus = null;
     sendExportQueueUpdate();
     if (exportQueue.length > 0) {
       setTimeout(() => {
@@ -1596,6 +1649,7 @@ function getStatusSnapshot() {
       partId: captureState.partId,
       requestsInPart: captureState.requestsInPart,
       capRequests: captureState.capRequests,
+      capBytes: captureState.capBytes,
       errorsInPart: captureState.errorsInPart,
       bytesInPart: captureState.bytesInPart,
       networkBytesInPart: captureState.networkBytesInPart,
@@ -1611,6 +1665,7 @@ function getStatusSnapshot() {
       pausedForStorageLimit: captureState.pausedForStorageLimit,
       exportInProgress: exportJob ? exportJob.active === true : false,
     },
+    exportStatus,
     session,
     artifacts,
     hasArtifacts: artifacts.hasAnyArtifacts,
@@ -2339,7 +2394,18 @@ async function runEvidenceZipExport(context) {
     startedAt: Date.now(),
     lastProgress: 0,
     partId: usePartExport ? context.partId : null,
+    partNumber: usePartExport ? context.partNumber || null : null,
+    jobId: context && context.exportJobId ? context.exportJobId : null,
   };
+  if (!exportStatus) {
+    exportStatus = {
+      jobId: exportJob.jobId || null,
+      partId: exportJob.partId || null,
+      partNumber: exportJob.partNumber || null,
+      percent: 0,
+      phase: "Starting",
+    };
+  }
   const exportStartIso = nowIso();
   reportExportProgress(1, "export_start", { startedAt: exportStartIso });
   try {
@@ -2413,7 +2479,7 @@ async function runEvidenceZipExport(context) {
         "screenshots_too_large"
       );
     }
-    reportExportProgress(12, "stringify_start");
+    reportExportProgress(12, "ndjson_start");
     const jsonSizes = {
       network_logs: 0,
       console_logs: 0,
@@ -2503,6 +2569,14 @@ async function runEvidenceZipExport(context) {
     };
     let baseItems = [];
     if (usePartExport && data.partId) {
+      const networkTotal =
+        data.partInfo && typeof data.partInfo.requestCount === "number"
+          ? data.partInfo.requestCount
+          : null;
+      const consoleTotal =
+        data.partInfo && typeof data.partInfo.consoleCount === "number"
+          ? data.partInfo.consoleCount
+          : null;
       baseItems = [
         {
           path: "network.ndjson",
@@ -2515,6 +2589,14 @@ async function runEvidenceZipExport(context) {
                   keyRange: IDBKeyRange.only(data.partId),
                   maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
                   redactEntry: redactNetworkEntry,
+                  totalCount: networkTotal,
+                  onProgress: ({ percent }) => {
+                    reportExportProgress(
+                      12 + Math.round((percent / 100) * 4),
+                      "ndjson_network",
+                      { percent }
+                    );
+                  },
                 }
               );
               trackJsonSize("network_ndjson", result.size);
@@ -2528,6 +2610,14 @@ async function runEvidenceZipExport(context) {
               keyRange: IDBKeyRange.only(data.partId),
               maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
               redactEntry: redactNetworkEntry,
+              totalCount: networkTotal,
+              onProgress: ({ percent }) => {
+                reportExportProgress(
+                  12 + Math.round((percent / 100) * 4),
+                  "ndjson_network",
+                  { percent }
+                );
+              },
               onEntry: (entry) => {
                 if (entry.request_body_truncated) {
                   truncationCounts.request += 1;
@@ -2555,6 +2645,14 @@ async function runEvidenceZipExport(context) {
                   keyRange: IDBKeyRange.only(data.partId),
                   maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
                   redactEntry: redactConsoleEntry,
+                  totalCount: consoleTotal,
+                  onProgress: ({ percent }) => {
+                    reportExportProgress(
+                      16 + Math.round((percent / 100) * 4),
+                      "ndjson_console",
+                      { percent }
+                    );
+                  },
                 }
               );
               trackJsonSize("console_ndjson", result.size);
@@ -2568,6 +2666,14 @@ async function runEvidenceZipExport(context) {
               keyRange: IDBKeyRange.only(data.partId),
               maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
               redactEntry: redactConsoleEntry,
+              totalCount: consoleTotal,
+              onProgress: ({ percent }) => {
+                reportExportProgress(
+                  16 + Math.round((percent / 100) * 4),
+                  "ndjson_console",
+                  { percent }
+                );
+              },
             });
             trackJsonSize("console_ndjson", result.size);
             consoleBuilt = true;
@@ -2823,21 +2929,25 @@ async function runEvidenceZipExport(context) {
     const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
     await downloadBlob(zipBlob, filename, { saveAs: false });
     reportExportProgress(100, "zip_download", { filename });
-    sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
+    if (!usePartExport) {
+      sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
+    }
   } catch (error) {
     console.error("[EXPORT] Failed", error && error.stack ? error.stack : error);
-    sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
-      userMessage:
-        error && error.userMessage
-          ? error.userMessage
-          : "Export failed. Check extension logs.",
-      debugCode:
-        error && error.debugCode
-          ? error.debugCode
-          : error && error.message
-            ? error.message
-            : "unknown",
-    });
+    if (!usePartExport) {
+      sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
+        userMessage:
+          error && error.userMessage
+            ? error.userMessage
+            : "Export failed. Try again or reduce capture size.",
+        debugCode:
+          error && error.debugCode
+            ? error.debugCode
+            : error && error.message
+              ? error.message
+              : "unknown",
+      });
+    }
     throw error;
   } finally {
     if (exportJob) {
@@ -3973,6 +4083,7 @@ function resetCaptureState() {
   exportedPartIds.clear();
   exportQueue.length = 0;
   exportQueueIds.clear();
+  exportStatus = null;
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -4941,10 +5052,12 @@ async function handleMessage(message, sender) {
         break;
       }
       {
+        const jobId = buildExportJobId("evidence");
         const job = {
-          jobId: buildExportJobId("evidence"),
+          jobId,
           kind: "export_zip",
-          run: async () => runEvidenceZipExport(normalizedMessage),
+          run: async () =>
+            runEvidenceZipExport({ ...normalizedMessage, exportJobId: jobId }),
         };
         const enqueueResult = await enqueueExportJob(job);
         result = enqueueResult.ok
@@ -4958,10 +5071,12 @@ async function handleMessage(message, sender) {
         break;
       }
       {
+        const jobId = buildExportJobId("evidence");
         const job = {
-          jobId: buildExportJobId("evidence"),
+          jobId,
           kind: "export_zip",
-          run: async () => runEvidenceZipExport(normalizedMessage),
+          run: async () =>
+            runEvidenceZipExport({ ...normalizedMessage, exportJobId: jobId }),
         };
         const enqueueResult = await enqueueExportJob(job);
         result = enqueueResult.ok

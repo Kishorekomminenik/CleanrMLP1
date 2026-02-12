@@ -18,12 +18,17 @@
       typeof options.redactEntry === "function" ? options.redactEntry : null;
     const onEntry =
       typeof options.onEntry === "function" ? options.onEntry : null;
+    const totalCount =
+      typeof options.totalCount === "number" ? options.totalCount : null;
+    const onProgress =
+      typeof options.onProgress === "function" ? options.onProgress : null;
     const parts = [];
     let size = 0;
     let count = 0;
     const encoder = new TextEncoder();
     let chunk = "";
     let chunkCount = 0;
+    let lastPercent = -1;
     await ReproIdb.iterateByIndex(
       options.storeName,
       options.indexName,
@@ -55,6 +60,16 @@
           }
         } else if (yieldEvery > 0 && count % yieldEvery === 0) {
           await delay();
+        }
+        if (totalCount && onProgress) {
+          const percent = Math.min(
+            100,
+            Math.floor((count / Math.max(1, totalCount)) * 100)
+          );
+          if (percent !== lastPercent) {
+            lastPercent = percent;
+            onProgress({ count, total: totalCount, percent });
+          }
         }
       }
     );

@@ -488,6 +488,18 @@ button.btn-disabled {
   border: 1px solid rgba(148, 163, 184, 0.35);
 }
 
+.status-strip.is-error {
+  background: #fee2e2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.status-strip.is-info {
+  background: #e0f2fe;
+  border-color: #bae6fd;
+  color: #075985;
+}
+
 .status-row {
   display: flex;
   justify-content: space-between;
