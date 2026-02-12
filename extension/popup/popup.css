@@ -531,6 +531,25 @@ button.btn-disabled {
   color: var(--muted);
 }
 
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 0;
+  color: var(--muted);
+  gap: 8px;
+}
+
+.settings-row select {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;

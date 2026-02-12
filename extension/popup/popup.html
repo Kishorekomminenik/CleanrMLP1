@@ -132,9 +132,6 @@
           >
             &#128470; Full
           </button>
-          <button id="btn_add_marker" class="secondary" data-action="marker:add">
-            &#128204; Mark
-          </button>
         </div>
         <p id="fullPageHint" class="hint">
           Captures the entire page by scrolling and stitching.
@@ -230,6 +227,74 @@
             <span id="redactionStatus">ON</span>
           </label>
         </div>
+        <div class="toggle-row">
+          <span class="label">Auto-download on rollover</span>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              id="toggle_auto_download_rollover"
+              data-action="part:auto_download"
+            />
+            <span id="autoDownloadStatus">OFF</span>
+          </label>
+        </div>
+        <p class="hint">
+          When a part reaches the cap, export Part N automatically and continue in
+          Part N+1. No timer-based downloads.
+        </p>
+        <div class="settings-row">
+          <label class="label" for="dropdown_part_cap_requests">Requests per part</label>
+          <select id="dropdown_part_cap_requests" data-action="part:cap_requests">
+            <option value="1000">1000</option>
+            <option value="2500">2500</option>
+            <option value="5000" selected>5000</option>
+            <option value="10000">10000</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="label" for="dropdown_max_body_kb">Max body size per request</label>
+          <select id="dropdown_max_body_kb" data-action="part:max_body">
+            <option value="50">50 KB</option>
+            <option value="200" selected>200 KB</option>
+            <option value="1024">1024 KB</option>
+          </select>
+        </div>
+        <p class="hint">
+          Request/response bodies larger than this are truncated but metadata is stored.
+        </p>
+        <div class="toggle-row">
+          <span class="label">Timestamp overlay</span>
+          <label class="toggle">
+            <input
+              type="checkbox"
+              id="toggle_timestamp_overlay"
+              data-action="overlay:toggle"
+            />
+            <span id="timestampOverlayStatus">OFF</span>
+          </label>
+        </div>
+        <p class="hint">
+          Adds timestamp overlay to screenshots and recordings (coming soon).
+        </p>
+        <p id="status_part_progress" class="status-strip">
+          Part 1 — 0/5000 requests
+        </p>
+        <div class="button-row">
+          <button
+            id="btn_download_current_part"
+            class="secondary"
+            data-action="export:part_current"
+          >
+            Download current part
+          </button>
+          <button
+            id="btn_download_last_completed_part"
+            class="secondary"
+            data-action="export:part_last"
+          >
+            Download last completed part
+          </button>
+        </div>
         <div class="button-row" id="download_controls">
           <button id="btn_download_zip" class="primary" data-action="export:zip">
             Export ZIP
@@ -295,7 +360,6 @@
           <ul>
             <li>Nothing is captured until you press Start</li>
             <li>Screenshots and Full Page are always manual</li>
-            <li>Markers add timestamps you can reference later</li>
           </ul>
         </div>
 
@@ -304,7 +368,7 @@
           <ul>
             <li>ZIP is available only after Stop</li>
             <li>WebM = video only</li>
-            <li>ZIP = logs, screenshots, markers (+ video if recorded)</li>
+            <li>ZIP = logs, screenshots (+ video if recorded)</li>
           </ul>
         </div>
 

@@ -82,7 +82,6 @@
       })
       .slice(0, safeConfig.topSlowRequestsLimit || 10);
 
-    const markers = events.filter((event) => event.kind === "marker");
     const screenshots = events.filter((event) => event.kind === "screenshot");
     const totalRequests = events.filter(
       (event) => event.source === "network" && event.kind === "request"
@@ -119,7 +118,6 @@
     lines.push("Capture Notes");
     lines.push(`- Total actionable signals: ${actionableSignals.length}`);
     lines.push(`- Total requests: ${totalRequests}`);
-    lines.push(`- Markers: ${markers.length}`);
     lines.push(`- Screenshots: ${screenshots.length}`);
     lines.push("");
 
@@ -148,23 +146,6 @@
             ? `${signal.stats.maxDurationMs}ms`
             : "unknown";
         lines.push(`${index + 1}. ${signal.summary} (max ${maxDuration})`);
-      });
-    }
-    lines.push("");
-
-    lines.push(`Markers (${markers.length})`);
-    if (markers.length === 0) {
-      lines.push("- None");
-    } else {
-      markers.forEach((event) => {
-        const minutes = String(Math.floor(event.t_ms / 60000)).padStart(2, "0");
-        const seconds = String(Math.floor((event.t_ms % 60000) / 1000)).padStart(
-          2,
-          "0"
-        );
-        const tenths = Math.floor((event.t_ms % 1000) / 100);
-        const note = event.msg && String(event.msg).trim() ? event.msg : "(no note)";
-        lines.push(`- ${minutes}:${seconds}.${tenths} — ${note}`);
       });
     }
     lines.push("");

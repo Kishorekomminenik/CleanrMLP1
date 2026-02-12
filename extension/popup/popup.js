@@ -34,9 +34,12 @@ const buttons = {
   networkStop: document.getElementById("btn_stop_capture"),
   networkRefresh: document.getElementById("refreshTabBtn"),
   fullPageScreenshotMode: document.getElementById("btn_fullpage_screenshot_mode"),
-  addMarker: document.getElementById("btn_add_marker"),
   download: document.getElementById("btn_download_zip"),
   downloadRecording: document.getElementById("btn_download_recording"),
+  downloadCurrentPart: document.getElementById("btn_download_current_part"),
+  downloadLastCompletedPart: document.getElementById(
+    "btn_download_last_completed_part"
+  ),
   reset: document.getElementById("btn_reset_session"),
 };
 
@@ -71,6 +74,13 @@ const annotationFontOpacity = document.getElementById("annotationFontOpacity");
 const exportHint = document.getElementById("exportHint");
 const toastEl = document.getElementById("toast");
 const quickActions = document.getElementById("quick_actions");
+const autoDownloadToggle = document.getElementById("toggle_auto_download_rollover");
+const autoDownloadStatus = document.getElementById("autoDownloadStatus");
+const partCapSelect = document.getElementById("dropdown_part_cap_requests");
+const maxBodySelect = document.getElementById("dropdown_max_body_kb");
+const timestampOverlayToggle = document.getElementById("toggle_timestamp_overlay");
+const timestampOverlayStatus = document.getElementById("timestampOverlayStatus");
+const partProgressStatus = document.getElementById("status_part_progress");
 let statusUserToggled = false;
 let recordingAvailable = true;
 let networkAvailable = true;
@@ -78,6 +88,12 @@ let recordingCheckToken = 0;
 let recordingBlockedReason = null;
 let activeRecordingStream = null;
 let activeMediaRecorder = null;
+let captureSettings = {
+  autoDownloadOnRollover: false,
+  partCapRequests: 5000,
+  maxBodyKb: 200,
+  timestampOverlay: false,
+};
 let recordedChunks = [];
 let recordingObjectUrl = null;
 let recordingMimeType = "video/webm";
@@ -117,6 +133,7 @@ const APP_TAGLINE = "QA evidence recorder";
 const JSZIP_LOAD_ERROR =
   "Export unavailable: JSZip failed to load. Check popup.html script path.";
 let jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
+const MIN_REQUESTS_TO_EXPORT = 25;
 const MSG = {
   RECORDING_GET_STATE: "RECORDING_GET_STATE",
   RECORDING_START: "RECORDING_START",
@@ -125,7 +142,6 @@ const MSG = {
   RECORDING_STOP: "RECORDING_STOP",
   RECORDING_EXPORT_WEBM: "RECORDING_EXPORT_WEBM",
   RECORDING_RESET: "RECORDING_RESET",
-  ADD_MARKER: "ADD_MARKER",
   CAPTURE_FULLPAGE: "CAPTURE_FULLPAGE",
   SET_ANNOTATION_STYLE: "SET_ANNOTATION_STYLE",
   GET_ANNOTATION_STYLE: "GET_ANNOTATION_STYLE",
@@ -174,6 +190,63 @@ function showToast(message, type = "info") {
   }
 }
 
+function applyCaptureSettingsToUI() {
+  if (autoDownloadToggle) {
+    autoDownloadToggle.checked = captureSettings.autoDownloadOnRollover;
+  }
+  if (autoDownloadStatus) {
+    autoDownloadStatus.textContent = captureSettings.autoDownloadOnRollover
+      ? "ON"
+      : "OFF";
+  }
+  if (partCapSelect) {
+    partCapSelect.value = String(captureSettings.partCapRequests);
+  }
+  if (maxBodySelect) {
+    maxBodySelect.value = String(captureSettings.maxBodyKb);
+  }
+  if (timestampOverlayToggle) {
+    timestampOverlayToggle.checked = captureSettings.timestampOverlay;
+  }
+  if (timestampOverlayStatus) {
+    timestampOverlayStatus.textContent = captureSettings.timestampOverlay
+      ? "ON"
+      : "OFF";
+  }
+}
+
+async function loadCaptureSettings() {
+  const settings = await chrome.storage.local.get({
+    autoDownloadOnRollover: false,
+    partCapRequests: 5000,
+    maxBodyKb: 200,
+    timestampOverlay: false,
+  });
+  const partCapRequests = parseInt(settings.partCapRequests, 10);
+  const maxBodyKb = parseInt(settings.maxBodyKb, 10);
+  captureSettings = {
+    autoDownloadOnRollover: settings.autoDownloadOnRollover === true,
+    partCapRequests: Number.isFinite(partCapRequests) ? partCapRequests : 5000,
+    maxBodyKb: Number.isFinite(maxBodyKb) ? maxBodyKb : 200,
+    timestampOverlay: settings.timestampOverlay === true,
+  };
+  applyCaptureSettingsToUI();
+}
+
+async function persistCaptureSettings() {
+  await chrome.storage.local.set({
+    autoDownloadOnRollover: captureSettings.autoDownloadOnRollover,
+    partCapRequests: captureSettings.partCapRequests,
+    maxBodyKb: captureSettings.maxBodyKb,
+    timestampOverlay: captureSettings.timestampOverlay,
+  });
+  await send("SET_CAPTURE_SETTINGS", {
+    autoDownloadOnRollover: captureSettings.autoDownloadOnRollover,
+    partCapRequests: captureSettings.partCapRequests,
+    maxBodyKb: captureSettings.maxBodyKb,
+  });
+}
+
 function assertJsZipAvailable() {
   jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
   if (jszipAvailable) {
@@ -219,6 +292,12 @@ function startExportUI() {
     buttons.download.disabled = true;
     buttons.download.textContent = "Exporting… (0%)";
   }
+  if (buttons.downloadCurrentPart) {
+    buttons.downloadCurrentPart.disabled = true;
+  }
+  if (buttons.downloadLastCompletedPart) {
+    buttons.downloadLastCompletedPart.disabled = true;
+  }
   if (statusElements.download) {
     setStatus(statusElements.download, "Exporting… (0%)");
   }
@@ -250,6 +329,12 @@ function finishExportUI(message, type = "success") {
     }
     buttons.download.disabled = false;
     buttons.download.textContent = exportButtonLabel;
+  }
+  if (buttons.downloadCurrentPart) {
+    buttons.downloadCurrentPart.disabled = false;
+  }
+  if (buttons.downloadLastCompletedPart) {
+    buttons.downloadLastCompletedPart.disabled = false;
   }
   if (message && statusElements.download) {
     setStatus(statusElements.download, message, type);
@@ -1268,9 +1353,6 @@ function updateStatusUI(state) {
     sessionState === "capturing" ||
     sessionState === "paused" ||
     sessionState === "recording";
-  const markerModeAllowed =
-    sessionMode === "recording" || sessionMode === "network_console";
-  const allowMarkers = sessionActive && markerModeAllowed;
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabelMap = {
     recording: "Record",
@@ -1291,6 +1373,16 @@ function updateStatusUI(state) {
   const logCount = counts ? counts.console_entries : 0;
   const errorCount = counts ? counts.errors : 0;
   statusElements.counts.textContent = `${requestCount} requests, ${logCount} logs, ${errorCount} errors`;
+  if (partProgressStatus) {
+    if (state.part && state.part.partNumber) {
+      const partNumber = state.part.partNumber || 1;
+      const capRequests = state.part.capRequests || captureSettings.partCapRequests;
+      const partRequests = state.part.requestsInPart || 0;
+      partProgressStatus.textContent = `Part ${partNumber} — ${partRequests}/${capRequests} requests`;
+    } else {
+      partProgressStatus.textContent = "Part - — 0/0 requests";
+    }
+  }
   if (sessionMeta) {
     const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
     sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
@@ -1360,12 +1452,32 @@ function updateStatusUI(state) {
   if (buttons.screenshot) {
     buttons.screenshot.disabled = !allowScreenshots;
   }
+  if (buttons.download) {
+    const disableZip = sessionMode === "network_console";
+    buttons.download.disabled = disableZip || exportInProgress;
+  }
+  if (exportHint) {
+    if (sessionMode === "network_console") {
+      exportHint.textContent = "Use the part download buttons for network capture.";
+      exportHint.classList.remove("is-hidden");
+    } else {
+      exportHint.classList.add("is-hidden");
+    }
+  }
+  if (buttons.downloadCurrentPart) {
+    const partRequests = state.part ? state.part.requestsInPart || 0 : 0;
+    const partHasData = state.part ? state.part.partHasData : false;
+    const exportBusy = state.part ? state.part.exportInProgress : false;
+    buttons.downloadCurrentPart.disabled =
+      !partHasData || partRequests < MIN_REQUESTS_TO_EXPORT || exportBusy;
+  }
+  if (buttons.downloadLastCompletedPart) {
+    const lastPartExists = state.part && Boolean(state.part.lastCompletedPartId);
+    const exportBusy = state.part ? state.part.exportInProgress : false;
+    buttons.downloadLastCompletedPart.disabled = !lastPartExists || exportBusy;
+  }
   if (buttons.fullPageScreenshotMode) {
     buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
-  }
-  if (buttons.addMarker) {
-    buttons.addMarker.disabled = !allowMarkers;
-    buttons.addMarker.classList.toggle("is-hidden", currentMode === "screenshot");
   }
   if (quickActions) {
     const showQuickActions = currentMode === "screenshot" || sessionActive;
@@ -2020,6 +2132,56 @@ async function handleDownload() {
   }
 }
 
+async function handleDownloadCurrentPart() {
+  if (exportInProgress) {
+    return;
+  }
+  startExportUI();
+  try {
+    const response = await send("EXPORT_CURRENT_PART");
+    if (!response.ok) {
+      finishExportUI(response.error || "Export could not be started.", "error");
+      return;
+    }
+    updateExportUI(5, "export_start");
+    setStatus(
+      statusElements.download,
+      "Export started. You can close this window.",
+      "success"
+    );
+  } catch (error) {
+    finishExportUI(
+      error && error.message ? error.message : "Export failed to start.",
+      "error"
+    );
+  }
+}
+
+async function handleDownloadLastCompletedPart() {
+  if (exportInProgress) {
+    return;
+  }
+  startExportUI();
+  try {
+    const response = await send("EXPORT_LAST_COMPLETED_PART");
+    if (!response.ok) {
+      finishExportUI(response.error || "Export could not be started.", "error");
+      return;
+    }
+    updateExportUI(5, "export_start");
+    setStatus(
+      statusElements.download,
+      "Export started. You can close this window.",
+      "success"
+    );
+  } catch (error) {
+    finishExportUI(
+      error && error.message ? error.message : "Export failed to start.",
+      "error"
+    );
+  }
+}
+
 async function handleRecordingDownload() {
   clearStatusError();
   const live = await send(MSG.RECORDING_GET_STATE);
@@ -2068,27 +2230,6 @@ async function handleRecordingDownload() {
       "error"
     );
   }
-}
-
-async function handleAddMarker() {
-  const note = window.prompt("Marker note (optional)");
-  if (note === null) {
-    return;
-  }
-  const trimmed = typeof note === "string" ? note.trim().slice(0, 200) : "";
-  const response = await send(MSG.ADD_MARKER, { note: trimmed });
-  if (!response.ok) {
-    setStatus(
-      statusElements.message,
-      response.error || "Failed to add marker.",
-      "error"
-    );
-    showToast("Error", "error");
-    return;
-  }
-  setStatus(statusElements.message, "Marker added.", "success");
-  showToast("Marked");
-  await refreshStatus();
 }
 
 async function handleNetworkRefresh() {
@@ -2196,8 +2337,11 @@ function routeAction(action, el) {
     case "screenshot:full":
       handleFullPageScreenshot();
       break;
-    case "marker:add":
-      handleAddMarker();
+    case "export:part_current":
+      handleDownloadCurrentPart();
+      break;
+    case "export:part_last":
+      handleDownloadLastCompletedPart();
       break;
     case "export:zip":
       handleDownload();
@@ -2219,7 +2363,7 @@ function routeAction(action, el) {
   }
 }
 
-function routeChange(action, el) {
+async function routeChange(action, el) {
   if (!action) {
     return;
   }
@@ -2229,6 +2373,33 @@ function routeChange(action, el) {
   switch (action) {
     case "redaction:toggle":
       handleRedactionToggle(el.checked);
+      break;
+    case "part:auto_download":
+      captureSettings.autoDownloadOnRollover = Boolean(el.checked);
+      applyCaptureSettingsToUI();
+      await persistCaptureSettings();
+      break;
+    case "part:cap_requests":
+      captureSettings.partCapRequests = parseInt(el.value, 10) || 5000;
+      applyCaptureSettingsToUI();
+      await persistCaptureSettings();
+      break;
+    case "part:max_body":
+      captureSettings.maxBodyKb = parseInt(el.value, 10) || 200;
+      applyCaptureSettingsToUI();
+      await persistCaptureSettings();
+      break;
+    case "overlay:toggle":
+      captureSettings.timestampOverlay = Boolean(el.checked);
+      applyCaptureSettingsToUI();
+      await chrome.storage.local.set({
+        timestampOverlay: captureSettings.timestampOverlay,
+      });
+      setStatus(
+        statusElements.message,
+        "Timestamp overlay will apply in a future update.",
+        "info"
+      );
       break;
     case "annotation:style":
       sendAnnotationStyle();
@@ -2448,6 +2619,7 @@ async function initPopup() {
   currentMode = lastMode;
   setMode(currentMode);
   await loadRedactionSetting();
+  await loadCaptureSettings();
   await loadAnnotationStyle();
   await initCapabilities();
   await refreshStatus();

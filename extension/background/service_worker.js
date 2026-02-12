@@ -19,7 +19,8 @@ try {
 try {
   importScripts(
     chrome.runtime.getURL("lib/jszip.min.js"),
-    chrome.runtime.getURL("lib/zipBuilderChunked.js")
+    chrome.runtime.getURL("lib/zipBuilderChunked.js"),
+    chrome.runtime.getURL("lib/idb.js")
   );
 } catch (error) {
   console.warn("Zip builder unavailable:", error);
@@ -53,6 +54,18 @@ const EXPORT_SIZE_GUARDS = {
   maxScreenshotBytes: 150 * 1024 * 1024,
 };
 const JSON_BUILD_YIELD_EVERY = 200;
+const CAPTURE_DEFAULTS = {
+  partCapRequests: 5000,
+  partCapBytes: 250000000,
+  maxBodyBytes: 200 * 1024,
+  autoDownloadOnRollover: false,
+};
+const MIN_REQUESTS_TO_EXPORT = 25;
+const FLUSH_BATCH = {
+  network: 100,
+  console: 100,
+};
+const FLUSH_DELAY_MS = 500;
 
 const state = {
   screenshot: {
@@ -90,6 +103,34 @@ const state = {
     stoppedAt: null,
   },
 };
+
+const captureState = {
+  sessionId: null,
+  partId: null,
+  partNumber: 0,
+  partCreatedAtMs: null,
+  requestsInPart: 0,
+  bytesInPart: 0,
+  consoleInPart: 0,
+  errorsInPart: 0,
+  totalRequests: 0,
+  totalConsole: 0,
+  totalErrors: 0,
+  capRequests: CAPTURE_DEFAULTS.partCapRequests,
+  capBytes: CAPTURE_DEFAULTS.partCapBytes,
+  maxBodyBytes: CAPTURE_DEFAULTS.maxBodyBytes,
+  autoDownloadOnRollover: CAPTURE_DEFAULTS.autoDownloadOnRollover,
+  lastCompletedPartId: null,
+  lastCompletedPartNumber: null,
+  partHasData: false,
+};
+const networkQueue = [];
+const consoleQueue = [];
+let flushTimer = null;
+let flushInProgress = false;
+const pendingAutoExports = [];
+const exportedPartIds = new Set();
+let rotationSuppressed = false;
 
 const MODE_LABELS = {
   screenshot: "Screenshot",
@@ -247,6 +288,48 @@ function truncateToBytes(value, maxBytes) {
     truncated = new TextDecoder().decode(encoded.slice(0, sliceLength));
   }
   return `${truncated}${TRUNCATION_SUFFIX}`;
+}
+
+function truncateBodyWithMeta(value, maxBytes) {
+  if (typeof value !== "string") {
+    return {
+      value,
+      truncated: false,
+      originalBytes: null,
+    };
+  }
+  const originalBytes = getByteLength(value);
+  if (originalBytes <= maxBytes) {
+    return {
+      value,
+      truncated: false,
+      originalBytes,
+    };
+  }
+  return {
+    value: truncateToBytes(value, maxBytes),
+    truncated: true,
+    originalBytes,
+  };
+}
+
+function decodeResponseBodyWithLimit(entry, maxBytes) {
+  if (!entry || !entry.responseBody) {
+    return {
+      value: null,
+      truncated: false,
+      originalBytes: null,
+    };
+  }
+  let body = entry.responseBody;
+  if (entry.responseBodyBase64) {
+    try {
+      body = atob(entry.responseBody);
+    } catch (error) {
+      body = entry.responseBody;
+    }
+  }
+  return truncateBodyWithMeta(body, maxBytes);
 }
 
 function getExportLimits(pipelineConfig) {
@@ -434,6 +517,216 @@ function isZipBuilderAvailable() {
   return Boolean(globalThis.JSZip) && Boolean(globalThis.ZipBuilderChunked);
 }
 
+function isIdbAvailable() {
+  return Boolean(globalThis.ReproIdb);
+}
+
+function buildPartId(sessionId, partNumber) {
+  return `${sessionId}_part_${partNumber}`;
+}
+
+async function loadCaptureSettings() {
+  const settings = await chrome.storage.local.get({
+    autoDownloadOnRollover: CAPTURE_DEFAULTS.autoDownloadOnRollover,
+    partCapRequests: CAPTURE_DEFAULTS.partCapRequests,
+    maxBodyKb: CAPTURE_DEFAULTS.maxBodyBytes / 1024,
+  });
+  const capRequests = parseInt(settings.partCapRequests, 10);
+  const maxBodyKb = parseInt(settings.maxBodyKb, 10);
+  captureState.capRequests = Number.isFinite(capRequests)
+    ? capRequests
+    : CAPTURE_DEFAULTS.partCapRequests;
+  captureState.capBytes = CAPTURE_DEFAULTS.partCapBytes;
+  captureState.maxBodyBytes = Number.isFinite(maxBodyKb)
+    ? Math.max(1, maxBodyKb) * 1024
+    : CAPTURE_DEFAULTS.maxBodyBytes;
+  captureState.autoDownloadOnRollover = settings.autoDownloadOnRollover === true;
+}
+
+async function ensureSessionRecord(tab) {
+  if (!session) {
+    return;
+  }
+  if (!isIdbAvailable()) {
+    throw new Error("IndexedDB unavailable.");
+  }
+  if (captureState.sessionId) {
+    return;
+  }
+  const createdAtMs = parseEpochMs(session.created_at) || Date.now();
+  captureState.sessionId = session.session_id;
+  captureState.partNumber = 0;
+  captureState.partCreatedAtMs = null;
+  captureState.requestsInPart = 0;
+  captureState.bytesInPart = 0;
+  captureState.consoleInPart = 0;
+  captureState.errorsInPart = 0;
+  captureState.errorsInPart = 0;
+  captureState.totalRequests = 0;
+  captureState.totalConsole = 0;
+  captureState.totalErrors = 0;
+  captureState.partHasData = false;
+  captureState.lastCompletedPartId = null;
+  captureState.lastCompletedPartNumber = null;
+  const sessionRecord = {
+    sessionId: session.session_id,
+    createdAtMs,
+    mode: session.mode,
+    tabId: session.active_tab ? session.active_tab.tab_id : null,
+    url: session.active_tab ? session.active_tab.url : "",
+    title: session.active_tab ? session.active_tab.title : "",
+  };
+  await ReproIdb.putOne("sessions", sessionRecord);
+  await startNewPart("session_start");
+}
+
+async function startNewPart(reason) {
+  if (!captureState.sessionId) {
+    return;
+  }
+  captureState.partNumber += 1;
+  captureState.partId = buildPartId(captureState.sessionId, captureState.partNumber);
+  captureState.partCreatedAtMs = Date.now();
+  captureState.requestsInPart = 0;
+  captureState.bytesInPart = 0;
+  captureState.consoleInPart = 0;
+  captureState.partHasData = false;
+  const partRecord = {
+    partId: captureState.partId,
+    sessionId: captureState.sessionId,
+    partNumber: captureState.partNumber,
+    status: "active",
+    createdAtMs: captureState.partCreatedAtMs,
+    requestCount: 0,
+    consoleCount: 0,
+    bytesInPart: 0,
+    reason: reason || null,
+  };
+  await ReproIdb.putOne("parts", partRecord);
+  sendPartStatusUpdate();
+}
+
+async function completePart(partSnapshot) {
+  if (!partSnapshot || !partSnapshot.partId) {
+    return;
+  }
+  const partRecord = {
+    partId: partSnapshot.partId,
+    sessionId: captureState.sessionId,
+    partNumber: partSnapshot.partNumber,
+    status: "completed",
+    createdAtMs: partSnapshot.createdAtMs || Date.now(),
+    endedAtMs: Date.now(),
+    requestCount: partSnapshot.requestCount || 0,
+    consoleCount: partSnapshot.consoleCount || 0,
+    errorCount: partSnapshot.errorCount || 0,
+    bytesInPart: partSnapshot.bytesInPart || 0,
+    reason: partSnapshot.reason || null,
+  };
+  await ReproIdb.putOne("parts", partRecord);
+}
+
+async function persistActivePart() {
+  if (!captureState.partId || !isIdbAvailable()) {
+    return;
+  }
+  const partRecord = {
+    partId: captureState.partId,
+    sessionId: captureState.sessionId,
+    partNumber: captureState.partNumber,
+    status: "active",
+    createdAtMs: captureState.partCreatedAtMs || Date.now(),
+    requestCount: captureState.requestsInPart,
+    consoleCount: captureState.consoleInPart,
+    errorCount: captureState.errorsInPart,
+    bytesInPart: captureState.bytesInPart,
+  };
+  await ReproIdb.putOne("parts", partRecord);
+}
+
+function sendPartStatusUpdate(extra) {
+  sendExportEvent("CAPTURE_PART_STATUS", {
+    partNumber: captureState.partNumber,
+    partId: captureState.partId,
+    requestsInPart: captureState.requestsInPart,
+    capRequests: captureState.capRequests,
+    errorsInPart: captureState.errorsInPart,
+    lastCompletedPartNumber: captureState.lastCompletedPartNumber,
+    lastCompletedPartId: captureState.lastCompletedPartId,
+    partHasData: captureState.partHasData,
+    ...extra,
+  });
+}
+
+function scheduleFlush() {
+  if (flushTimer) {
+    return;
+  }
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushQueues();
+  }, FLUSH_DELAY_MS);
+}
+
+async function flushQueues() {
+  if (flushInProgress) {
+    return;
+  }
+  flushInProgress = true;
+  try {
+    const networkBatch = networkQueue.splice(0, FLUSH_BATCH.network);
+    if (networkBatch.length > 0) {
+      await ReproIdb.putMany("network_entries", networkBatch);
+    }
+    const consoleBatch = consoleQueue.splice(0, FLUSH_BATCH.console);
+    if (consoleBatch.length > 0) {
+      await ReproIdb.putMany("console_entries", consoleBatch);
+    }
+    if (networkBatch.length > 0 || consoleBatch.length > 0) {
+      await persistActivePart();
+    }
+  } finally {
+    flushInProgress = false;
+    if (networkQueue.length > 0 || consoleQueue.length > 0) {
+      scheduleFlush();
+    }
+  }
+}
+
+function queueAutoExport(part) {
+  if (!part || !part.partId) {
+    return;
+  }
+  if (exportedPartIds.has(part.partId)) {
+    return;
+  }
+  pendingAutoExports.push(part);
+  setTimeout(() => {
+    void processPendingAutoExports();
+  }, 0);
+}
+
+async function processPendingAutoExports() {
+  if (exportJob && exportJob.active) {
+    return;
+  }
+  if (pendingAutoExports.length === 0) {
+    return;
+  }
+  await flushQueues();
+  const next = pendingAutoExports.shift();
+  if (!next) {
+    return;
+  }
+  await runEvidenceZipExport({ partId: next.partId, partNumber: next.partNumber });
+  await markPartExported(next.partId);
+  if (pendingAutoExports.length > 0) {
+    setTimeout(() => {
+      void processPendingAutoExports();
+    }, 0);
+  }
+}
+
 function buildExportSizeError(message, debugCode) {
   const error = new Error(message);
   error.userMessage = message;
@@ -500,6 +793,102 @@ async function buildEntriesJsonBlob(options) {
   }
   pushChunk("]}");
   return { blob: new Blob(parts, { type: "application/json" }), size };
+}
+
+async function buildEntriesJsonBlobFromIdb(options) {
+  if (!isIdbAvailable()) {
+    throw new Error("IndexedDB unavailable.");
+  }
+  const version = options.version || "1.0";
+  const maxBytes =
+    typeof options.maxBytes === "number" ? options.maxBytes : null;
+  const yieldEvery =
+    typeof options.yieldEvery === "number" ? options.yieldEvery : JSON_BUILD_YIELD_EVERY;
+  const redactEntry =
+    typeof options.redactEntry === "function" ? options.redactEntry : null;
+  const onEntry =
+    typeof options.onEntry === "function" ? options.onEntry : null;
+  const limit =
+    typeof options.limit === "number" ? Math.max(0, options.limit) : null;
+  const batchSize =
+    typeof options.batchSize === "number" ? options.batchSize : 500;
+  const parts = [];
+  let size = 0;
+  let count = 0;
+  const pushChunk = (chunk) => {
+    parts.push(chunk);
+    size += chunk.length;
+    if (maxBytes && size > maxBytes) {
+      throw buildExportSizeError(
+        `${options.label || "Export"} JSON exceeds size guard.`,
+        options.debugCode || "json_too_large"
+      );
+    }
+  };
+  pushChunk(`{"version":"${version}","entries":[`);
+  let first = true;
+  const keyRange = options.keyRange || null;
+  let offset = 0;
+  let done = false;
+  while (!done) {
+    const remaining = limit ? Math.max(0, limit - count) : null;
+    const nextBatchSize =
+      remaining !== null ? Math.min(batchSize, remaining) : batchSize;
+    if (remaining === 0) {
+      break;
+    }
+    const batch = await ReproIdb.getBatchByIndex(
+      options.storeName,
+      options.indexName,
+      keyRange,
+      offset,
+      nextBatchSize
+    );
+    const items = batch && Array.isArray(batch.items) ? batch.items : [];
+    if (items.length === 0) {
+      break;
+    }
+    items.forEach((record) => {
+      const entry = record && record.entry ? record.entry : record;
+      if (onEntry) {
+        onEntry(entry, record);
+      }
+      const payload = redactEntry ? redactEntry(entry) : entry;
+      const json = JSON.stringify(payload);
+      if (!first) {
+        pushChunk(",");
+      }
+      pushChunk(json);
+      first = false;
+      count += 1;
+    });
+    offset += items.length;
+    done = batch.done === true || items.length < nextBatchSize;
+    if (yieldEvery > 0) {
+      await yieldExport();
+    }
+  }
+  pushChunk("]}");
+  return { blob: new Blob(parts, { type: "application/json" }), size, count };
+}
+
+async function loadLimitedEntriesFromIdb(options) {
+  if (!isIdbAvailable()) {
+    return [];
+  }
+  const keyRange = options.keyRange || null;
+  const direction = options.direction || "prev";
+  const limit = options.limit || 0;
+  const records = await ReproIdb.getAllByIndex(
+    options.storeName,
+    options.indexName,
+    keyRange,
+    { limit, direction }
+  );
+  const entries = records
+    .map((record) => (record && record.entry ? record.entry : record))
+    .reverse();
+  return entries;
 }
 
 async function downloadBlob(blob, filename, opts = {}) {
@@ -671,6 +1060,12 @@ function updateSessionCounts() {
   if (!session) {
     return;
   }
+  if (captureState && captureState.sessionId) {
+    session.counts.network_requests = captureState.totalRequests;
+    session.counts.console_entries = captureState.totalConsole;
+    session.counts.errors = captureState.totalErrors;
+    return;
+  }
   session.counts.network_requests = Object.keys(state.network.requests).length;
   session.counts.console_entries = state.console.logs.length;
   session.counts.errors = state.console.logs.filter(
@@ -740,7 +1135,6 @@ function createSession(mode, tab) {
     pause_started_at: null,
     total_paused_ms: 0,
     screenshots: [],
-    markers: [],
     active_tab: {
       tab_id: tab && tab.id ? tab.id : null,
       url: tab && tab.url ? tab.url : "",
@@ -802,38 +1196,44 @@ function markSessionStopped() {
 function getArtifactsSnapshot() {
   const screenshotCount =
     session && Array.isArray(session.screenshots) ? session.screenshots.length : 0;
-  const markerCount =
-    session && Array.isArray(session.markers) ? session.markers.length : 0;
+  const networkCount = captureState.sessionId
+    ? captureState.totalRequests
+    : Object.keys(state.network.requests).length;
+  const consoleCount = captureState.sessionId
+    ? captureState.totalConsole
+    : state.console.logs.length;
   return {
     hasScreenshot: Boolean(state.screenshot.dataUrl) || screenshotCount > 0,
     hasRecording: Boolean(state.recording.dataUrl) || Boolean(state.recording.hasData),
-    hasNetworkLogs: Object.keys(state.network.requests).length > 0,
-    hasConsoleLogs: state.console.logs.length > 0,
+    hasNetworkLogs: networkCount > 0,
+    hasConsoleLogs: consoleCount > 0,
     hasAnyArtifacts:
       Boolean(state.screenshot.dataUrl) ||
       Boolean(state.recording.dataUrl) ||
       Boolean(state.recording.hasData) ||
-      Object.keys(state.network.requests).length > 0 ||
-      state.console.logs.length > 0 ||
-      markerCount > 0,
+      networkCount > 0 ||
+      consoleCount > 0,
   };
 }
 
 function hasExportableArtifacts() {
   const screenshotCount =
     session && Array.isArray(session.screenshots) ? session.screenshots.length : 0;
-  const markerCount =
-    session && Array.isArray(session.markers) ? session.markers.length : 0;
+  const networkCount = captureState.sessionId
+    ? captureState.totalRequests
+    : Object.keys(state.network.requests).length;
+  const consoleCount = captureState.sessionId
+    ? captureState.totalConsole
+    : state.console.logs.length;
   const hasRecording = Boolean(state.recording.dataUrl) || state.recording.hasData;
-  const hasNetwork = Object.keys(state.network.requests).length > 0;
-  const hasConsole = state.console.logs.length > 0;
+  const hasNetwork = networkCount > 0;
+  const hasConsole = consoleCount > 0;
   const hasScreenshot = Boolean(state.screenshot.dataUrl) || screenshotCount > 0;
   return (
     hasRecording ||
     hasNetwork ||
     hasConsole ||
-    hasScreenshot ||
-    markerCount > 0
+    hasScreenshot
   );
 }
 
@@ -845,8 +1245,26 @@ function getStatusSnapshot() {
     recordingStatus: state.recording.status,
     recordingCapturedAt: state.recording.capturedAt,
     networkActive: state.network.active,
-    networkCount: Object.keys(state.network.requests).length,
-    consoleCount: state.console.logs.length,
+    networkCount: captureState.sessionId
+      ? captureState.totalRequests
+      : Object.keys(state.network.requests).length,
+    consoleCount: captureState.sessionId
+      ? captureState.totalConsole
+      : state.console.logs.length,
+    part: {
+      partNumber: captureState.partNumber,
+      partId: captureState.partId,
+      requestsInPart: captureState.requestsInPart,
+      capRequests: captureState.capRequests,
+      errorsInPart: captureState.errorsInPart,
+      bytesInPart: captureState.bytesInPart,
+      maxBodyBytes: captureState.maxBodyBytes,
+      autoDownloadOnRollover: captureState.autoDownloadOnRollover,
+      lastCompletedPartNumber: captureState.lastCompletedPartNumber,
+      lastCompletedPartId: captureState.lastCompletedPartId,
+      partHasData: captureState.partHasData,
+      exportInProgress: exportJob ? exportJob.active === true : false,
+    },
     session,
     artifacts,
     hasArtifacts: artifacts.hasAnyArtifacts,
@@ -973,6 +1391,300 @@ async function buildEnvironment(context) {
   };
 }
 
+function buildPartSummaryText(partInfo, truncationNote) {
+  const lines = [];
+  lines.push("Part summary");
+  lines.push(`- Part: ${partInfo && partInfo.partNumber ? partInfo.partNumber : "-"}`);
+  lines.push(
+    `- Requests: ${partInfo && typeof partInfo.requestCount === "number" ? partInfo.requestCount : 0}`
+  );
+  lines.push(
+    `- Console entries: ${
+      partInfo && typeof partInfo.consoleCount === "number" ? partInfo.consoleCount : 0
+    }`
+  );
+  lines.push(
+    `- Errors: ${partInfo && typeof partInfo.errorCount === "number" ? partInfo.errorCount : 0}`
+  );
+  if (truncationNote) {
+    lines.push("");
+    lines.push(truncationNote);
+  }
+  return lines.join("\n");
+}
+
+async function buildPartExportData(context) {
+  if (!isIdbAvailable()) {
+    throw new Error("IndexedDB unavailable.");
+  }
+  const metadataOnly = Boolean(context && context.metadataOnly);
+  updateSessionCounts();
+  const environment = await buildEnvironment(context);
+  const exportTimestamp =
+    context && context.exportTimestamp
+      ? context.exportTimestamp
+      : formatExportTimestamp(new Date());
+  const redactionResult = await chrome.storage.local.get({
+    redactionEnabled: true,
+  });
+  const redactionEnabled = redactionResult.redactionEnabled !== false;
+  const extensionVersion =
+    environment && environment.extension_version
+      ? environment.extension_version
+      : getExtensionVersion();
+  const exportCreatedAt = new Date();
+  const exportMetadata = {
+    zip_created_at_utc: exportCreatedAt.toISOString(),
+    zip_created_at_local: exportCreatedAt.toString(),
+    zip_created_at_epoch_ms: exportCreatedAt.getTime(),
+    zip_builder_version: extensionVersion || null,
+    redaction_enabled:
+      typeof redactionEnabled === "boolean" ? redactionEnabled : null,
+  };
+  let sessionExport = buildSessionExport();
+  if (!sessionExport && hasExportableArtifacts()) {
+    const tab = await getActiveTab();
+    const createdAt =
+      state.recording.capturedAt || state.screenshot.capturedAt || nowIso();
+    sessionExport = {
+      session_id: createSessionId(),
+      created_at: createdAt,
+      ended_at: nowIso(),
+      mode: "network_console",
+      state: "stopped",
+      active_tab: {
+        tab_id: tab && tab.id ? tab.id : null,
+        url: tab && tab.url ? tab.url : "",
+        title: tab && tab.title ? tab.title : "",
+      },
+      counts: {
+        network_requests: captureState.totalRequests,
+        console_entries: captureState.totalConsole,
+        errors: captureState.totalErrors,
+      },
+      diagnostics: [],
+    };
+  }
+  const partId = context && context.partId ? context.partId : null;
+  const partRecord = partId ? await ReproIdb.getByKey("parts", partId) : null;
+  const partInfo = partRecord || {
+    partId,
+    partNumber:
+      context && context.partNumber
+        ? context.partNumber
+        : captureState.partNumber,
+    requestCount: captureState.requestsInPart,
+    consoleCount: captureState.consoleInPart,
+    errorCount: captureState.errorsInPart,
+  };
+  const sessionId = sessionExport ? sessionExport.session_id : null;
+  const startedAtIso = sessionExport ? sessionExport.created_at : null;
+  const endedAtIso = sessionExport ? sessionExport.ended_at : null;
+  const startedAtMs = parseEpochMs(startedAtIso);
+  const endedAtMs = parseEpochMs(endedAtIso);
+  const durationMs =
+    startedAtMs !== null && endedAtMs !== null
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : null;
+  const timezoneOffsetMinutes =
+    environment && typeof environment.timezone_offset_minutes === "number"
+      ? environment.timezone_offset_minutes
+      : null;
+  const timezoneIana =
+    (environment && (environment.timezone_iana || environment.timezone)) || null;
+  const monotonicBaseline =
+    session && session.monotonic
+      ? session.monotonic
+      : { epoch_origin_ms: null, monotonic_origin_ms: null };
+  const monotonicAvailable =
+    session && typeof session.monotonic_available === "boolean"
+      ? session.monotonic_available
+      : false;
+  const videoStartEpochMs =
+    typeof state.recording.videoStartEpochMs === "number"
+      ? state.recording.videoStartEpochMs
+      : null;
+  const videoEndEpochMs =
+    typeof state.recording.videoEndEpochMs === "number"
+      ? state.recording.videoEndEpochMs
+      : parseEpochMs(state.recording.capturedAt);
+  const videoDurationMs =
+    videoStartEpochMs !== null && videoEndEpochMs !== null
+      ? Math.max(0, videoEndEpochMs - videoStartEpochMs)
+      : null;
+  const videoCodec = state.recording.videoMime || state.recording.mimeType || null;
+  const qaSessionLogSession = {
+    session_id: sessionId,
+    startedAt: startedAtIso,
+    startedAt_ms: startedAtMs,
+    endedAt: endedAtIso,
+    endedAt_ms: endedAtMs,
+    durationMs,
+    tabId:
+      sessionExport && sessionExport.active_tab
+        ? sessionExport.active_tab.tab_id
+        : null,
+    mode: sessionExport ? sessionExport.mode : null,
+    timezone_offset_minutes: timezoneOffsetMinutes,
+    timezone_iana: timezoneIana,
+    extension_version: extensionVersion || null,
+    monotonic: {
+      epoch_origin_ms: monotonicBaseline.epoch_origin_ms,
+      monotonic_origin_ms: monotonicBaseline.monotonic_origin_ms,
+    },
+    monotonic_available: monotonicAvailable,
+    video_time_zero_epoch_ms: videoStartEpochMs,
+    video_duration_ms: videoDurationMs,
+    video_codec: videoCodec,
+    video_fps: null,
+  };
+  const pipelineConfig =
+    globalThis.PipelineConfig && globalThis.PipelineConfig.DEFAULTS
+      ? globalThis.PipelineConfig.DEFAULTS
+      : {
+          actionWindowMs: { pre: 250, post: 3000 },
+          dedupeWindowMs: 1000,
+          slowThresholdMs: 2000,
+          maxRequestsStored: 2000,
+          maxBodyBytes: 204800,
+          burstCollapse: { windowMs: 5000, minCount: 10 },
+          topSlowRequestsLimit: 10,
+        };
+  const exportLimits = getExportLimits(pipelineConfig);
+  const keyRange = partId ? IDBKeyRange.only(partId) : null;
+  const limitedNetworkEntries = metadataOnly
+    ? []
+    : await loadLimitedEntriesFromIdb({
+        storeName: "network_entries",
+        indexName: "partId",
+        keyRange,
+        limit: exportLimits.maxRequests,
+      });
+  const limitedConsoleEntries = metadataOnly
+    ? []
+    : await loadLimitedEntriesFromIdb({
+        storeName: "console_entries",
+        indexName: "partId",
+        keyRange,
+        limit: exportLimits.maxConsoleEntries,
+      });
+  const redactedNetworkEntries =
+    redactionEnabled && globalThis.RedactUtils
+      ? limitedNetworkEntries.map((entry) =>
+          globalThis.RedactUtils.redactNetworkEntry(entry)
+        )
+      : limitedNetworkEntries;
+  const redactedConsoleEntries =
+    redactionEnabled && globalThis.RedactUtils
+      ? limitedConsoleEntries.map((entry) =>
+          globalThis.RedactUtils.redactConsoleEntry(entry)
+        )
+      : limitedConsoleEntries;
+  const networkLimit = {
+    total: partInfo && typeof partInfo.requestCount === "number"
+      ? partInfo.requestCount
+      : limitedNetworkEntries.length,
+    kept: limitedNetworkEntries.length,
+    dropped:
+      partInfo && typeof partInfo.requestCount === "number"
+        ? Math.max(0, partInfo.requestCount - limitedNetworkEntries.length)
+        : 0,
+  };
+  const consoleLimit = {
+    total: partInfo && typeof partInfo.consoleCount === "number"
+      ? partInfo.consoleCount
+      : limitedConsoleEntries.length,
+    kept: limitedConsoleEntries.length,
+    dropped:
+      partInfo && typeof partInfo.consoleCount === "number"
+        ? Math.max(0, partInfo.consoleCount - limitedConsoleEntries.length)
+        : 0,
+  };
+  const truncationResult = buildExportTruncationReport({
+    limits: exportLimits,
+    networkResult: networkLimit,
+    consoleResult: consoleLimit,
+    screenshotResult: { total: 0, kept: 0, dropped: 0 },
+    truncatedBodies: { request: 0, response: 0 },
+  });
+  const metadataNote = metadataOnly
+    ? "Metadata-only export created due to size limits."
+    : truncationResult.note;
+  const qaSummaryText = buildPartSummaryText(partInfo, metadataNote);
+  let qaSessionLog = null;
+  let normalizedEvents = [];
+  let signals = [];
+  if (
+    !metadataOnly &&
+    globalThis.PipelineNormalizer &&
+    globalThis.PipelineActionGrouper &&
+    globalThis.PipelineSignalReducer
+  ) {
+    const normalized = globalThis.PipelineNormalizer.normalizeSession(
+      {
+        session: {
+          sessionId: sessionExport ? sessionExport.session_id : null,
+          startedAt: sessionExport ? sessionExport.created_at : null,
+          endedAt: sessionExport ? sessionExport.ended_at : null,
+          tabId:
+            sessionExport && sessionExport.active_tab
+              ? sessionExport.active_tab.tab_id
+              : null,
+          mode: sessionExport ? sessionExport.mode : null,
+        },
+        rawNetwork: redactedNetworkEntries,
+        markers: [],
+        screenshots: [],
+        consoleEvents: redactedConsoleEntries,
+        uiActions: [],
+      },
+      pipelineConfig
+    );
+    const grouped = globalThis.PipelineActionGrouper.groupByActions(
+      normalized.normalizedEvents,
+      pipelineConfig
+    );
+    const reduced = globalThis.PipelineSignalReducer.reduceToSignals(
+      grouped.normalizedEventsWithActionIds,
+      pipelineConfig,
+      {
+        rawNetworkCount: networkLimit.total,
+        networkCapped: networkLimit.dropped > 0,
+      }
+    );
+    normalizedEvents = grouped.normalizedEventsWithActionIds;
+    signals = reduced.signals || [];
+  }
+  qaSessionLog = {
+    schema_version: QA_SESSION_LOG_SCHEMA_VERSION,
+    session: qaSessionLogSession,
+    raw: {
+      network: redactedNetworkEntries,
+      console: redactedConsoleEntries,
+      markers: [],
+      screenshots: [],
+    },
+    normalizedEvents,
+    signals,
+    config: pipelineConfig,
+  };
+  return {
+    networkLogsSource: "idb",
+    consoleLogsSource: "idb",
+    partId,
+    partInfo,
+    redactionEnabled,
+    exportLimits,
+    exportTimestamp,
+    session: sessionExport,
+    environment,
+    qaSessionLog,
+    qaSummaryText,
+    exportMetadata,
+    exportTruncationReport: truncationResult.report,
+  };
+}
+
 async function buildEvidenceExportData(context) {
   updateSessionCounts();
   const environment = await buildEnvironment(context);
@@ -1036,20 +1748,7 @@ async function buildEvidenceExportData(context) {
           )}-${exportTimestamp}.png`,
     };
   });
-  const markerEntries =
-    session && Array.isArray(session.markers) ? session.markers : [];
-  const markerList = markerEntries.map((entry) => {
-    const timestampIso = entry.timestampIso || entry.timestamp || nowIso();
-    return {
-      timestampIso,
-      timestamp: timestampIso,
-      t_ms:
-        typeof entry.t_ms === "number"
-          ? entry.t_ms
-          : computeSessionOffsetMs(timestampIso),
-      note: typeof entry.note === "string" ? entry.note : "Marker",
-    };
-  });
+  const markerList = [];
   const screenshotDownloads = screenshotList.map((meta, index) => ({
     ...meta,
     dataUrl: screenshotEntries[index] ? screenshotEntries[index].dataUrl : null,
@@ -1318,6 +2017,8 @@ async function runEvidenceZipExport(context) {
   if (exportJob && exportJob.active) {
     throw new Error("Export already in progress.");
   }
+  const usePartExport = Boolean(context && context.partId);
+  const metadataOnly = Boolean(context && context.metadataOnly);
   exportJob = {
     active: true,
     startedAt: Date.now(),
@@ -1330,13 +2031,32 @@ async function runEvidenceZipExport(context) {
       throw new Error("Zip builder unavailable.");
     }
     reportExportProgress(5, "prepare_data");
-    const data = await buildEvidenceExportData(context);
-    const networkCount =
-      data.networkLogs && Array.isArray(data.networkLogs.entries)
+    const data = usePartExport
+      ? await buildPartExportData(context)
+      : await buildEvidenceExportData(context);
+    const redactionEnabled = usePartExport
+      ? data.redactionEnabled === true
+      : null;
+    const redactNetworkEntry =
+      redactionEnabled && globalThis.RedactUtils
+        ? (entry) => globalThis.RedactUtils.redactNetworkEntry(entry)
+        : null;
+    const redactConsoleEntry =
+      redactionEnabled && globalThis.RedactUtils
+        ? (entry) => globalThis.RedactUtils.redactConsoleEntry(entry)
+        : null;
+    const networkCount = usePartExport
+      ? data.partInfo && typeof data.partInfo.requestCount === "number"
+        ? data.partInfo.requestCount
+        : 0
+      : data.networkLogs && Array.isArray(data.networkLogs.entries)
         ? data.networkLogs.entries.length
         : 0;
-    const consoleCount =
-      data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+    const consoleCount = usePartExport
+      ? data.partInfo && typeof data.partInfo.consoleCount === "number"
+        ? data.partInfo.consoleCount
+        : 0
+      : data.consoleLogs && Array.isArray(data.consoleLogs.entries)
         ? data.consoleLogs.entries.length
         : 0;
     const screenshotCount = Array.isArray(data.screenshots)
@@ -1409,10 +2129,101 @@ async function runEvidenceZipExport(context) {
       trackJsonSize(key, json.length);
       return json;
     };
+    const truncationCounts = { request: 0, response: 0 };
+    let networkBuilt = false;
+    let consoleBuilt = false;
+    const finalizePartTruncationReport = () => {
+      if (!usePartExport || !networkBuilt || !consoleBuilt) {
+        return;
+      }
+      const partInfo = data.partInfo || {};
+      const exportLimits = data.exportLimits || getExportLimits();
+      const networkLimit = {
+        total:
+          typeof partInfo.requestCount === "number" ? partInfo.requestCount : 0,
+        kept:
+          metadataOnly || typeof partInfo.requestCount !== "number"
+            ? 0
+            : Math.min(partInfo.requestCount, exportLimits.maxRequests),
+        dropped:
+          typeof partInfo.requestCount === "number"
+            ? Math.max(
+                0,
+                partInfo.requestCount -
+                  (metadataOnly ? 0 : exportLimits.maxRequests)
+              )
+            : 0,
+      };
+      const consoleLimit = {
+        total:
+          typeof partInfo.consoleCount === "number" ? partInfo.consoleCount : 0,
+        kept:
+          metadataOnly || typeof partInfo.consoleCount !== "number"
+            ? 0
+            : Math.min(partInfo.consoleCount, exportLimits.maxConsoleEntries),
+        dropped:
+          typeof partInfo.consoleCount === "number"
+            ? Math.max(
+                0,
+                partInfo.consoleCount -
+                  (metadataOnly ? 0 : exportLimits.maxConsoleEntries)
+              )
+            : 0,
+      };
+      const truncationResult = buildExportTruncationReport({
+        limits: exportLimits,
+        networkResult: networkLimit,
+        consoleResult: consoleLimit,
+        screenshotResult: { total: 0, kept: 0, dropped: 0 },
+        truncatedBodies: {
+          request: truncationCounts.request,
+          response: truncationCounts.response,
+        },
+      });
+      data.exportTruncationReport = truncationResult.report;
+      data.qaSummaryText = buildPartSummaryText(partInfo, truncationResult.note);
+    };
     const baseItems = [
       {
         path: "network_logs.json",
         getData: async () => {
+          if (metadataOnly) {
+            const result = await buildEntriesJsonBlob({
+              entries: [],
+              version: "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+              label: "Network logs",
+              debugCode: "network_json_too_large",
+            });
+            trackJsonSize("network_logs", result.size);
+            networkBuilt = true;
+            finalizePartTruncationReport();
+            return result.blob;
+          }
+          if (usePartExport && data.partId) {
+            const result = await buildEntriesJsonBlobFromIdb({
+              storeName: "network_entries",
+              indexName: "partId",
+              keyRange: IDBKeyRange.only(data.partId),
+              version: "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+              label: "Network logs",
+              debugCode: "network_json_too_large",
+              redactEntry: redactNetworkEntry,
+              onEntry: (entry) => {
+                if (entry.request_body_truncated) {
+                  truncationCounts.request += 1;
+                }
+                if (entry.response_body_truncated) {
+                  truncationCounts.response += 1;
+                }
+              },
+            });
+            trackJsonSize("network_logs", result.size);
+            networkBuilt = true;
+            finalizePartTruncationReport();
+            return result.blob;
+          }
           const result = await buildEntriesJsonBlob({
             entries:
               data.networkLogs && Array.isArray(data.networkLogs.entries)
@@ -1433,6 +2244,35 @@ async function runEvidenceZipExport(context) {
       {
         path: "console_logs.json",
         getData: async () => {
+          if (metadataOnly) {
+            const result = await buildEntriesJsonBlob({
+              entries: [],
+              version: "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+              label: "Console logs",
+              debugCode: "console_json_too_large",
+            });
+            trackJsonSize("console_logs", result.size);
+            consoleBuilt = true;
+            finalizePartTruncationReport();
+            return result.blob;
+          }
+          if (usePartExport && data.partId) {
+            const result = await buildEntriesJsonBlobFromIdb({
+              storeName: "console_entries",
+              indexName: "partId",
+              keyRange: IDBKeyRange.only(data.partId),
+              version: "1.0",
+              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+              label: "Console logs",
+              debugCode: "console_json_too_large",
+              redactEntry: redactConsoleEntry,
+            });
+            trackJsonSize("console_logs", result.size);
+            consoleBuilt = true;
+            finalizePartTruncationReport();
+            return result.blob;
+          }
           const result = await buildEntriesJsonBlob({
             entries:
               data.consoleLogs && Array.isArray(data.consoleLogs.entries)
@@ -1492,6 +2332,15 @@ async function runEvidenceZipExport(context) {
           ),
         options: { date: zipDate },
       });
+      baseItems.push({
+        path: "truncation_report.json",
+        getData: () =>
+          toJsonWithSize(
+            data.exportTruncationReport || {},
+            "export_truncation_report"
+          ),
+        options: { date: zipDate },
+      });
     }
     logExportPhase("zip_add_json", { count: baseItems.length });
     await ZipBuilderChunked.addItemsInBatches(zip, baseItems, {
@@ -1534,43 +2383,47 @@ async function runEvidenceZipExport(context) {
       reportExportProgress(70, "zip_add_screenshots", { completed: 0, total: 0 });
     }
 
-    const exportTimestamp =
-      data.exportTimestamp || formatExportTimestamp(new Date());
-    let recordingBlob = null;
-    let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
-    if (data.video && data.video.blobUrl) {
-      try {
-        const response = await fetch(data.video.blobUrl);
-        recordingBlob = await response.blob();
-        if (data.video.fileName) {
-          recordingFileName = data.video.fileName;
-        }
-      } catch (error) {
-        recordingBlob = null;
-      }
-    }
-    if (!recordingBlob && (data.recordingDataUrl || data.recordingMimeType)) {
-      try {
-        await ensureOffscreenReady();
-        const exportResponse = await sendMessageToOffscreen({
-          type: "RECORDING_EXPORT_WEBM",
-        });
-        if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
-          const response = await fetch(exportResponse.blobUrl);
+    if (!usePartExport) {
+      const exportTimestamp =
+        data.exportTimestamp || formatExportTimestamp(new Date());
+      let recordingBlob = null;
+      let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
+      if (data.video && data.video.blobUrl) {
+        try {
+          const response = await fetch(data.video.blobUrl);
           recordingBlob = await response.blob();
-        } else if (data.recordingDataUrl) {
-          recordingBlob = dataUrlToBlob(data.recordingDataUrl);
+          if (data.video.fileName) {
+            recordingFileName = data.video.fileName;
+          }
+        } catch (error) {
+          recordingBlob = null;
         }
-      } catch (error) {
-        recordingBlob = null;
       }
-    }
-    if (recordingBlob) {
-      logExportPhase("zip_add_video", { bytes: recordingBlob.size });
-      zip.file(recordingFileName, recordingBlob, { date: zipDate });
-      reportExportProgress(75, "zip_add_video", {
-        bytes: recordingBlob.size,
-      });
+      if (!recordingBlob && (data.recordingDataUrl || data.recordingMimeType)) {
+        try {
+          await ensureOffscreenReady();
+          const exportResponse = await sendMessageToOffscreen({
+            type: "RECORDING_EXPORT_WEBM",
+          });
+          if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+            const response = await fetch(exportResponse.blobUrl);
+            recordingBlob = await response.blob();
+          } else if (data.recordingDataUrl) {
+            recordingBlob = dataUrlToBlob(data.recordingDataUrl);
+          }
+        } catch (error) {
+          recordingBlob = null;
+        }
+      }
+      if (recordingBlob) {
+        logExportPhase("zip_add_video", { bytes: recordingBlob.size });
+        zip.file(recordingFileName, recordingBlob, { date: zipDate });
+        reportExportProgress(75, "zip_add_video", {
+          bytes: recordingBlob.size,
+        });
+      } else {
+        reportExportProgress(75, "zip_add_video", { bytes: 0 });
+      }
     } else {
       reportExportProgress(75, "zip_add_video", { bytes: 0 });
     }
@@ -1598,6 +2451,19 @@ async function runEvidenceZipExport(context) {
     reportExportProgress(100, "zip_download", { filename });
     sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });
   } catch (error) {
+    const isSizeError =
+      error &&
+      (error.debugCode || "").toString().includes("too_large");
+    if (usePartExport && !metadataOnly && isSizeError) {
+      console.warn("[EXPORT] Size guard hit. Falling back to metadata-only.");
+      if (exportJob) {
+        exportJob.active = false;
+      }
+      return await runEvidenceZipExport({
+        ...context,
+        metadataOnly: true,
+      });
+    }
     console.error("[EXPORT] Failed", error && error.stack ? error.stack : error);
     sendExportEvent("EXPORT_EVIDENCE_ZIP_ERROR", {
       userMessage:
@@ -1616,7 +2482,69 @@ async function runEvidenceZipExport(context) {
     if (exportJob) {
       exportJob.active = false;
     }
+    if (pendingAutoExports.length > 0) {
+      setTimeout(() => {
+        void processPendingAutoExports();
+      }, 0);
+    }
   }
+}
+
+async function isPartExported(partId) {
+  if (!partId) {
+    return false;
+  }
+  if (exportedPartIds.has(partId)) {
+    return true;
+  }
+  if (!isIdbAvailable()) {
+    return false;
+  }
+  const record = await ReproIdb.getByKey("parts", partId);
+  if (record && record.exportedAtMs) {
+    exportedPartIds.add(partId);
+    return true;
+  }
+  return false;
+}
+
+async function markPartExported(partId) {
+  if (!partId || !isIdbAvailable()) {
+    return;
+  }
+  const record = await ReproIdb.getByKey("parts", partId);
+  if (!record) {
+    return;
+  }
+  record.exportedAtMs = Date.now();
+  await ReproIdb.putOne("parts", record);
+  exportedPartIds.add(partId);
+}
+
+async function validatePartExport(partId, requestCount) {
+  if (!partId) {
+    return { ok: false, error: "No part available to export." };
+  }
+  if (exportJob && exportJob.active) {
+    return { ok: false, error: "Export already running." };
+  }
+  if (await isPartExported(partId)) {
+    return { ok: false, error: "Part already exported." };
+  }
+  if (typeof requestCount === "number" && requestCount < MIN_REQUESTS_TO_EXPORT) {
+    return { ok: false, error: "Not enough data to export yet." };
+  }
+  return { ok: true };
+}
+
+function schedulePartExport(partId, partNumber) {
+  setTimeout(() => {
+    runEvidenceZipExport({ partId, partNumber })
+      .then(() => {
+        return markPartExported(partId);
+      })
+      .catch(() => {});
+  }, 0);
 }
 
 function sendMessageToTab(tabId, message) {
@@ -1894,29 +2822,6 @@ async function captureFullPageScreenshot(requestedTabId) {
   return dataUrl;
 }
 
-function addMarker(note) {
-  if (!session) {
-    throw new Error("No active session.");
-  }
-  if (session.mode === "screenshot") {
-    throw new Error("Markers are unavailable in screenshot mode.");
-  }
-  if (session.state !== "capturing" && session.state !== "paused") {
-    throw new Error("Session is not recording or paused.");
-  }
-  const timestampIso = nowIso();
-  const tMs = computeSessionOffsetMs(timestampIso);
-  const rawNote = typeof note === "string" ? note.trim() : "";
-  const trimmedNote = rawNote.slice(0, 200);
-  const marker = {
-    timestampIso,
-    t_ms: tMs,
-    note: trimmedNote,
-  };
-  session.markers.push(marker);
-  return marker;
-}
-
 function applyTextAnnotations(ctx, annotations, dpr) {
   annotations.forEach((annotation) => {
     ctx.save();
@@ -2067,6 +2972,12 @@ async function startNetworkCapture() {
   ensureTabIsCapturable(tab);
 
   ensureSessionForMode("network_console", tab);
+  if (!isIdbAvailable()) {
+    throw new Error("IndexedDB unavailable for capture.");
+  }
+  await loadCaptureSettings();
+  await ensureSessionRecord(tab);
+  rotationSuppressed = false;
   let attached = false;
   try {
     await attachDebugger(tab.id);
@@ -2167,6 +3078,35 @@ async function stopNetworkCapture() {
   state.console.active = false;
   state.console.stoppedAt = nowIso();
   markSessionStopped();
+  rotationSuppressed = true;
+  const pendingIds = Object.keys(state.network.requests);
+  if (pendingIds.length > 0) {
+    pendingIds.forEach((requestId) => {
+      finalizeNetworkEntry(requestId);
+    });
+  }
+  if (captureState.partId) {
+    const completedPart = {
+      partId: captureState.partId,
+      partNumber: captureState.partNumber,
+      requestCount: captureState.requestsInPart,
+      consoleCount: captureState.consoleInPart,
+      errorCount: captureState.errorsInPart,
+      bytesInPart: captureState.bytesInPart,
+      createdAtMs: captureState.partCreatedAtMs || Date.now(),
+      reason: "manual_stop",
+    };
+    captureState.lastCompletedPartId = captureState.partId;
+    captureState.lastCompletedPartNumber = captureState.partNumber;
+    captureState.partId = null;
+    captureState.partHasData = false;
+    await completePart(completedPart);
+    await flushQueues();
+    setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "success");
+    sendPartStatusUpdate({
+      message: `Part ${completedPart.partNumber} ready to download.`,
+    });
+  }
 
   if (tabId) {
     try {
@@ -2182,8 +3122,10 @@ async function stopNetworkCapture() {
 }
 
 function updateRequestEntry(requestId, updates) {
-  const isNew = !state.network.requests[requestId];
-  if (isNew) {
+  if (!requestId) {
+    return;
+  }
+  if (!state.network.requests[requestId]) {
     state.network.requests[requestId] = {
       id: requestId,
       timestampIso: null,
@@ -2192,19 +3134,21 @@ function updateRequestEntry(requestId, updates) {
       responseBody: null,
       responseBodyBase64: false,
     };
-    state.network.order.push(requestId);
-    if (state.network.order.length > MAX_NETWORK_ENTRIES) {
-      const oldest = state.network.order.shift();
-      if (oldest) {
-        delete state.network.requests[oldest];
-        state.network.capped = true;
-      }
-    }
   }
   Object.assign(state.network.requests[requestId], updates);
-  if (isNew) {
-    updateSessionCounts();
+}
+
+function finalizeNetworkEntry(requestId) {
+  if (!requestId) {
+    return;
   }
+  const entry = state.network.requests[requestId];
+  if (!entry) {
+    return;
+  }
+  const record = buildNetworkStorageRecord(entry);
+  queueNetworkRecord(record);
+  delete state.network.requests[requestId];
 }
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
@@ -2358,6 +3302,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
           responseBody: result.body,
           responseBodyBase64: result.base64Encoded,
         });
+        finalizeNetworkEntry(params.requestId);
       })
       .catch(() => {
         addDiagnostic("warning", "Response body fetch failed.", {
@@ -2367,6 +3312,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
           responseBody: null,
           responseBodyBase64: false,
         });
+        finalizeNetworkEntry(params.requestId);
       });
   }
 
@@ -2376,6 +3322,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       canceled: params.canceled,
       endTime: params.timestamp,
     });
+    finalizeNetworkEntry(params.requestId);
   }
 });
 
@@ -2391,6 +3338,35 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   state.console.active = false;
   state.console.stoppedAt = nowIso();
   addDiagnostic("error", "Debugger detached unexpectedly.", { reason });
+  rotationSuppressed = true;
+  const pendingIds = Object.keys(state.network.requests);
+  if (pendingIds.length > 0) {
+    pendingIds.forEach((requestId) => {
+      finalizeNetworkEntry(requestId);
+    });
+  }
+  if (captureState.partId) {
+    const completedPart = {
+      partId: captureState.partId,
+      partNumber: captureState.partNumber,
+      requestCount: captureState.requestsInPart,
+      consoleCount: captureState.consoleInPart,
+      errorCount: captureState.errorsInPart,
+      bytesInPart: captureState.bytesInPart,
+      createdAtMs: captureState.partCreatedAtMs || Date.now(),
+      reason: "debugger_detached",
+    };
+    captureState.lastCompletedPartId = captureState.partId;
+    captureState.lastCompletedPartNumber = captureState.partNumber;
+    captureState.partId = null;
+    captureState.partHasData = false;
+    void completePart(completedPart);
+    void flushQueues();
+    setStatusMessage(`Part ${completedPart.partNumber} ready to download.`, "error");
+    sendPartStatusUpdate({
+      message: `Part ${completedPart.partNumber} ready to download.`,
+    });
+  }
 });
 
 async function resetSession() {
@@ -2425,6 +3401,7 @@ async function resetSession() {
   state.recording.videoStartEpochMs = null;
   state.recording.videoEndEpochMs = null;
 
+  resetCaptureState();
   session = null;
   clearStatusMessage();
 }
@@ -2452,6 +3429,37 @@ async function resetNetworkState() {
   state.console.logs = [];
   state.console.startedAt = null;
   state.console.stoppedAt = null;
+
+  resetCaptureState();
+}
+
+function resetCaptureState() {
+  captureState.sessionId = null;
+  captureState.partId = null;
+  captureState.partNumber = 0;
+  captureState.partCreatedAtMs = null;
+  captureState.requestsInPart = 0;
+  captureState.bytesInPart = 0;
+  captureState.consoleInPart = 0;
+  captureState.totalRequests = 0;
+  captureState.totalConsole = 0;
+  captureState.totalErrors = 0;
+  captureState.capRequests = CAPTURE_DEFAULTS.partCapRequests;
+  captureState.capBytes = CAPTURE_DEFAULTS.partCapBytes;
+  captureState.maxBodyBytes = CAPTURE_DEFAULTS.maxBodyBytes;
+  captureState.autoDownloadOnRollover = CAPTURE_DEFAULTS.autoDownloadOnRollover;
+  captureState.lastCompletedPartId = null;
+  captureState.lastCompletedPartNumber = null;
+  captureState.partHasData = false;
+  networkQueue.length = 0;
+  consoleQueue.length = 0;
+  pendingAutoExports.length = 0;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  flushInProgress = false;
+  rotationSuppressed = false;
 }
 
 function getByteLength(value) {
@@ -2515,6 +3523,177 @@ function sanitizeConsoleEntry(entry) {
   return sanitized;
 }
 
+function buildNetworkStorageRecord(entry) {
+  if (!entry || !captureState.partId) {
+    return null;
+  }
+  const responseHeaders =
+    entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0
+      ? entry.responseHeaders
+      : null;
+  const skipBody = shouldSkipResponseBody(responseHeaders);
+  const timestampIso = entry.timestampIso || nowIso();
+  const timestampEpochMs = parseEpochMs(timestampIso);
+  const requestBodyMeta = truncateBodyWithMeta(
+    typeof entry.requestBody === "string" ? entry.requestBody : null,
+    captureState.maxBodyBytes
+  );
+  const responseBodyMeta = skipBody
+    ? { value: null, truncated: false, originalBytes: null }
+    : decodeResponseBodyWithLimit(entry, captureState.maxBodyBytes);
+  const exportEntry = {
+    request_id: entry.id || null,
+    timestamp: timestampIso,
+    timestamp_epoch_ms: timestampEpochMs,
+    time_missing: timestampEpochMs === null ? true : undefined,
+    url: entry.url || null,
+    method: entry.method || null,
+    request_headers:
+      entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
+        ? entry.requestHeaders
+        : null,
+    request_post_data: requestBodyMeta.value,
+    response_status: typeof entry.status === "number" ? entry.status : null,
+    response_status_text: entry.statusText || null,
+    response_headers: responseHeaders,
+    response_mime_type: entry.mimeType || null,
+    response_body_skipped: skipBody ? true : undefined,
+    response_body: responseBodyMeta.value,
+    timing: entry.timing || null,
+    from_disk_cache:
+      typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
+    from_service_worker:
+      typeof entry.fromServiceWorker === "boolean" ? entry.fromServiceWorker : null,
+    error_text: entry.errorText || null,
+    request_body_truncated: requestBodyMeta.truncated ? true : undefined,
+    response_body_truncated: responseBodyMeta.truncated ? true : undefined,
+    request_body_original_bytes: requestBodyMeta.originalBytes,
+    response_body_original_bytes: responseBodyMeta.originalBytes,
+  };
+  const entryBytes =
+    (requestBodyMeta.originalBytes || 0) + (responseBodyMeta.originalBytes || 0);
+  return {
+    id: `net_${captureState.partId}_${entry.id || crypto.randomUUID()}`,
+    sessionId: captureState.sessionId,
+    partId: captureState.partId,
+    partNumber: captureState.partNumber,
+    t_ms: computeSessionOffsetMs(timestampIso),
+    entry: exportEntry,
+    entry_bytes: entryBytes,
+    createdAtMs: Date.now(),
+  };
+}
+
+function buildConsoleStorageRecord(entry) {
+  if (!entry || !captureState.partId) {
+    return null;
+  }
+  const timestampIso = entry.timestamp || nowIso();
+  const timestampEpochMs = parseEpochMs(timestampIso);
+  const exportEntry = {
+    timestamp: timestampIso,
+    timestamp_epoch_ms: timestampEpochMs,
+    time_missing: timestampEpochMs === null ? true : undefined,
+    level: entry.level || "log",
+    message: typeof entry.message === "string" ? entry.message : "",
+    args: Array.isArray(entry.args) ? entry.args : [],
+    source: entry.source || "console",
+    url: entry.url || null,
+    line: typeof entry.line === "number" ? entry.line : null,
+    column: typeof entry.column === "number" ? entry.column : null,
+    stack: entry.stack || null,
+  };
+  return {
+    id: `con_${captureState.partId}_${crypto.randomUUID()}`,
+    sessionId: captureState.sessionId,
+    partId: captureState.partId,
+    partNumber: captureState.partNumber,
+    t_ms: computeSessionOffsetMs(timestampIso),
+    level: exportEntry.level,
+    entry: exportEntry,
+    createdAtMs: Date.now(),
+  };
+}
+
+function queueNetworkRecord(record) {
+  if (!record) {
+    return;
+  }
+  networkQueue.push(record);
+  captureState.requestsInPart += 1;
+  captureState.totalRequests += 1;
+  if (record.entry_bytes) {
+    captureState.bytesInPart += record.entry_bytes;
+  }
+  captureState.partHasData = true;
+  updateSessionCounts();
+  scheduleFlush();
+  maybeRotatePart();
+}
+
+function queueConsoleRecord(record) {
+  if (!record) {
+    return;
+  }
+  consoleQueue.push(record);
+  captureState.consoleInPart += 1;
+  captureState.totalConsole += 1;
+  if (record.level === "error") {
+    captureState.totalErrors += 1;
+    captureState.errorsInPart += 1;
+  }
+  captureState.partHasData = true;
+  updateSessionCounts();
+  scheduleFlush();
+}
+
+function maybeRotatePart() {
+  if (!captureState.partId) {
+    return;
+  }
+  if (rotationSuppressed) {
+    return;
+  }
+  const shouldRotate =
+    captureState.requestsInPart >= captureState.capRequests ||
+    captureState.bytesInPart >= captureState.capBytes;
+  if (!shouldRotate) {
+    return;
+  }
+  const completedPart = {
+    partId: captureState.partId,
+    partNumber: captureState.partNumber,
+    requestCount: captureState.requestsInPart,
+    consoleCount: captureState.consoleInPart,
+    errorCount: captureState.errorsInPart,
+    bytesInPart: captureState.bytesInPart,
+    createdAtMs: captureState.partCreatedAtMs || Date.now(),
+    reason: "cap_reached",
+  };
+  captureState.lastCompletedPartId = captureState.partId;
+  captureState.lastCompletedPartNumber = captureState.partNumber;
+  void completePart(completedPart);
+  void startNewPart("rollover");
+  const rolloverMessage = `Reached ${captureState.capRequests} requests. Continuing in Part ${captureState.partNumber}. Part ${completedPart.partNumber} ready to download.`;
+  setStatusMessage(rolloverMessage, "success");
+  sendPartStatusUpdate({
+    rollover: true,
+    message: rolloverMessage,
+  });
+  if (
+    captureState.autoDownloadOnRollover &&
+    completedPart.requestCount >= MIN_REQUESTS_TO_EXPORT
+  ) {
+    queueAutoExport(completedPart);
+    const autoMessage = `Auto-downloading Part ${completedPart.partNumber}… continuing capture in Part ${captureState.partNumber}.`;
+    setStatusMessage(autoMessage, "info");
+    sendPartStatusUpdate({
+      autoDownload: true,
+      message: autoMessage,
+    });
+  }
+}
+
 function formatRemoteObject(remote) {
   if (!remote) {
     return "undefined";
@@ -2571,11 +3750,8 @@ function extractStackFromFrames(frames) {
 
 function addConsoleEntry(entry) {
   const sanitized = sanitizeConsoleEntry(entry);
-  state.console.logs.push(sanitized);
-  if (state.console.logs.length > MAX_CONSOLE_ENTRIES) {
-    state.console.logs.shift();
-  }
-  updateSessionCounts();
+  const record = buildConsoleStorageRecord(sanitized);
+  queueConsoleRecord(record);
 }
 
 function buildConsoleExportEntries() {
@@ -2861,17 +4037,6 @@ async function handleMessage(message, sender) {
       result = { ok: true, screenshotDataUrl: dataUrl };
       break;
     }
-    case "ADD_MARKER":
-      try {
-        const marker = addMarker(message.note);
-        result = { ok: true, marker };
-      } catch (error) {
-        result = {
-          ok: false,
-          error: error && error.message ? error.message : "Failed to add marker.",
-        };
-      }
-      break;
     case "SET_ANNOTATION_STYLE":
       if (message && message.mapped) {
         await chrome.storage.session.set({
@@ -3063,6 +4228,66 @@ async function handleMessage(message, sender) {
         break;
       }
       result = { ok: true, data: await buildEvidenceExportData(normalizedMessage) };
+      break;
+    case "SET_CAPTURE_SETTINGS":
+      await chrome.storage.local.set({
+        autoDownloadOnRollover: normalizedMessage.autoDownloadOnRollover === true,
+        partCapRequests: normalizedMessage.partCapRequests,
+        maxBodyKb: normalizedMessage.maxBodyKb,
+      });
+      await loadCaptureSettings();
+      result = {
+        ok: true,
+        settings: {
+          autoDownloadOnRollover: captureState.autoDownloadOnRollover,
+          partCapRequests: captureState.capRequests,
+          maxBodyKb: Math.round(captureState.maxBodyBytes / 1024),
+        },
+      };
+      break;
+    case "EXPORT_CURRENT_PART":
+      {
+        const validation = await validatePartExport(
+          captureState.partId,
+          captureState.requestsInPart
+        );
+        if (!validation.ok) {
+          result = { ok: false, error: validation.error };
+          break;
+        }
+        await flushQueues();
+        result = { ok: true, accepted: true };
+        schedulePartExport(captureState.partId, captureState.partNumber);
+      }
+      break;
+    case "EXPORT_LAST_COMPLETED_PART":
+      {
+        let lastPartCount = 0;
+        if (captureState.lastCompletedPartId && isIdbAvailable()) {
+          const partRecord = await ReproIdb.getByKey(
+            "parts",
+            captureState.lastCompletedPartId
+          );
+          lastPartCount =
+            partRecord && typeof partRecord.requestCount === "number"
+              ? partRecord.requestCount
+              : 0;
+        }
+        const validation = await validatePartExport(
+          captureState.lastCompletedPartId,
+          lastPartCount
+        );
+        if (!validation.ok) {
+          result = { ok: false, error: validation.error };
+          break;
+        }
+        await flushQueues();
+        result = { ok: true, accepted: true };
+        schedulePartExport(
+          captureState.lastCompletedPartId,
+          captureState.lastCompletedPartNumber
+        );
+      }
       break;
     case "EXPORT_EVIDENCE_ZIP_REQUEST":
       if (exportJob && exportJob.active) {
