@@ -55,6 +55,7 @@ const EXPORT_SIZE_GUARDS = {
   maxScreenshotBytes: 150 * 1024 * 1024,
 };
 const JSON_BUILD_YIELD_EVERY = 200;
+const DEFAULT_PART_CAP_BYTES = 75000000;
 const CAPTURE_DEFAULTS = {
   partCapRequests: 5000,
   partCapBytes: DEFAULT_PART_CAP_BYTES,
@@ -71,7 +72,6 @@ const FILTER_DEFAULTS = {
 };
 const MIN_REQUESTS_TO_EXPORT = 25;
 const MAX_COMPLETED_PARTS_RETAINED = 3;
-const DEFAULT_PART_CAP_BYTES = 75000000;
 const RESOURCE_TYPES_DEFAULT = ["xhr", "fetch"];
 const PART_STATUS = {
   ACTIVE: "active",
