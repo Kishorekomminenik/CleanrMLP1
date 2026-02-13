@@ -74,7 +74,7 @@
         </div>
       </div>
 
-      <section class="card">
+      <section class="card mode-controls" data-mode="recording screenshot">
         <h2>Controls</h2>
         <div class="mode-controls" data-mode="screenshot">
           <p id="screenshotHint" class="hint">
@@ -117,12 +117,9 @@
             Adds a small timestamp to screenshots and recordings. OFF keeps evidence clean.
           </p>
         </div>
-        <div class="mode-controls" data-mode="network_console">
-          <p class="hint">Configure and manage logs below.</p>
-        </div>
       </section>
 
-      <section class="card">
+      <section class="card mode-controls" data-mode="screenshot">
         <div class="action-row" id="quick_actions">
           <button id="btn_take_screenshot" class="secondary" data-action="screenshot:snap">
             &#128247; Snap
@@ -141,7 +138,7 @@
         <p id="fullPageProgress" class="status-strip is-hidden"></p>
       </section>
 
-      <section class="card">
+      <section class="card mode-controls" data-mode="recording">
         <button
           id="status_toggle"
           class="section-toggle"
