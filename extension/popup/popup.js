@@ -1,13 +1,3 @@
-import {
-  COLOR_OPTIONS,
-  DEFAULT_ANNOTATION_STYLE,
-  FONT_OPTIONS,
-  OPACITY_OPTIONS,
-  SIZE_OPTIONS,
-  WEIGHT_OPTIONS,
-  normalizeAnnotationStyle,
-} from "../shared/annotationConfig.js";
-
 const statusElements = {
   message: document.getElementById("status_message"),
   mode: document.getElementById("status_mode"),
@@ -60,14 +50,6 @@ const sessionPill = document.getElementById("session_pill");
 const sessionMeta = document.getElementById("session_meta");
 const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
-const annotationToggle = document.getElementById("annotation_toggle");
-const annotationChevron = document.getElementById("annotation_chevron");
-const annotationBody = document.getElementById("annotation_body");
-const annotationFontFamily = document.getElementById("annotationFontFamily");
-const annotationFontSize = document.getElementById("annotationFontSize");
-const annotationFontWeight = document.getElementById("annotationFontWeight");
-const annotationFontColor = document.getElementById("annotationFontColor");
-const annotationFontOpacity = document.getElementById("annotationFontOpacity");
 const exportHint = document.getElementById("exportHint");
 const toastEl = document.getElementById("toast");
 const quickActions = document.getElementById("quick_actions");
@@ -133,8 +115,6 @@ let recordingStopPromise = null;
 let recordingStopResolver = null;
 let recordingStopRequestedAt = null;
 let recordingDurationMsSnapshot = null;
-let annotationCollapsed = true;
-let annotationInitialized = false;
 let toastTimer = null;
 let helpIsOpen = false;
 let helpReturnFocusEl = null;
@@ -1440,26 +1420,6 @@ function setMode(mode) {
   } else if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
   }
-  if (mode === "screenshot") {
-    if (annotationToggle) {
-      annotationToggle.disabled = false;
-    }
-    void ensureAnnotationReady();
-  } else {
-    if (annotationToggle) {
-      annotationToggle.disabled = true;
-    }
-    if (annotationBody) {
-      annotationCollapsed = true;
-      annotationBody.classList.add("collapsed");
-    }
-    if (annotationChevron) {
-      annotationChevron.textContent = "▸";
-    }
-    if (annotationToggle) {
-      annotationToggle.classList.remove("open");
-    }
-  }
 }
 
 function setRecordingButtons(state) {
@@ -1507,66 +1467,6 @@ function setRecordingButtons(state) {
   buttons.recordPause.classList.toggle("btn-disabled", pauseDisabled);
   buttons.recordResume.classList.toggle("btn-disabled", resumeDisabled);
   buttons.recordStop.classList.toggle("btn-disabled", stopDisabled);
-}
-
-function formatOpacityLabel(value) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function renderAnnotationOptions() {
-  const setOptions = (select, options, formatter) => {
-    if (!select) {
-      return;
-    }
-    select.innerHTML = "";
-    options.forEach((optionValue) => {
-      const option = document.createElement("option");
-      option.value = String(optionValue);
-      option.textContent = formatter ? formatter(optionValue) : String(optionValue);
-      select.appendChild(option);
-    });
-  };
-  setOptions(annotationFontFamily, FONT_OPTIONS);
-  setOptions(annotationFontSize, SIZE_OPTIONS);
-  setOptions(annotationFontWeight, WEIGHT_OPTIONS);
-  setOptions(annotationFontColor, COLOR_OPTIONS);
-  setOptions(annotationFontOpacity, OPACITY_OPTIONS, formatOpacityLabel);
-}
-
-function mapAnnotationStyleToStorage(style) {
-  return normalizeAnnotationStyle(style);
-}
-
-function mapAnnotationStyleToUi(style) {
-  return normalizeAnnotationStyle(style);
-}
-
-function getAnnotationStyleFromUi() {
-  return normalizeAnnotationStyle({
-    fontFamily: annotationFontFamily
-      ? annotationFontFamily.value
-      : ANNOTATION_DEFAULTS.fontFamily,
-    fontSize: annotationFontSize
-      ? Number(annotationFontSize.value)
-      : ANNOTATION_DEFAULTS.fontSize,
-    fontWeight: annotationFontWeight
-      ? annotationFontWeight.value
-      : ANNOTATION_DEFAULTS.fontWeight,
-    color: annotationFontColor
-      ? annotationFontColor.value
-      : ANNOTATION_DEFAULTS.color,
-    opacity: annotationFontOpacity
-      ? Number(annotationFontOpacity.value)
-      : ANNOTATION_DEFAULTS.opacity,
-  });
-}
-
-async function sendAnnotationStyle() {
-  const style = getAnnotationStyleFromUi();
-  await send(MSG.SET_ANNOTATION_STYLE, {
-    style,
-    mapped: mapAnnotationStyleToStorage(style),
-  });
 }
 
 function disableRecordingUI() {
@@ -2221,39 +2121,6 @@ async function refreshStatus() {
   }
 }
 
-async function loadAnnotationStyle() {
-  renderAnnotationOptions();
-  let current = ANNOTATION_DEFAULTS;
-  const response = await send(MSG.GET_ANNOTATION_STYLE);
-  if (response && response.ok && response.style) {
-    current = mapAnnotationStyleToUi(response.style);
-  }
-  if (annotationFontFamily) {
-    annotationFontFamily.value = current.fontFamily;
-  }
-  if (annotationFontSize) {
-    annotationFontSize.value = String(current.fontSize);
-  }
-  if (annotationFontWeight) {
-    annotationFontWeight.value = current.fontWeight;
-  }
-  if (annotationFontColor) {
-    annotationFontColor.value = current.color;
-  }
-  if (annotationFontOpacity) {
-    annotationFontOpacity.value = String(current.opacity);
-  }
-  await sendAnnotationStyle();
-}
-
-async function ensureAnnotationReady() {
-  if (annotationInitialized) {
-    return;
-  }
-  await loadAnnotationStyle();
-  annotationInitialized = true;
-}
-
 async function handleScreenshot() {
   setStatus(statusElements.message, "Capturing screenshot...");
   const response = await send("CAPTURE_SCREENSHOT");
@@ -2275,10 +2142,8 @@ async function handleScreenshot() {
     return;
   }
   try {
-    const annotationStyle = getAnnotationStyleFromUi();
     await chrome.storage.session.set({
       latestScreenshotDataUrl: response.screenshotDataUrl,
-      latestScreenshotAnnotationStyle: annotationStyle,
     });
     await chrome.tabs.create({
       url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
@@ -2381,10 +2246,8 @@ async function handleFullPageScreenshot() {
   }
   if (response.dataUrl && typeof response.dataUrl === "string") {
     try {
-      const annotationStyle = getAnnotationStyleFromUi();
       await chrome.storage.session.set({
         latestScreenshotDataUrl: response.dataUrl,
-        latestScreenshotAnnotationStyle: annotationStyle,
       });
       await chrome.tabs.create({
         url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
@@ -2433,7 +2296,7 @@ async function handleRecordingStart() {
   console.log("[REC][popup] start clicked");
   setStatus(statusElements.download, "Starting recording...");
   recordingStatusMessage = null;
-  chrome.storage.session.remove(["recordingStatusMessage", "annotationSettings"]);
+  chrome.storage.session.remove(["recordingStatusMessage"]);
   const tab = await getActiveTab();
   if (!tab || !tab.id) {
     setStatus(statusElements.message, "No active tab.", "error");
@@ -2974,16 +2837,6 @@ function toggleStatusSection() {
   statusUserToggled = true;
 }
 
-function toggleAnnotationSection() {
-  if (!annotationBody || !annotationChevron || !annotationToggle) {
-    return;
-  }
-  annotationCollapsed = !annotationCollapsed;
-  annotationBody.classList.toggle("collapsed", annotationCollapsed);
-  annotationChevron.textContent = annotationCollapsed ? "▸" : "▾";
-  annotationToggle.classList.toggle("open", !annotationCollapsed);
-}
-
 async function handleRedactionToggle(checked) {
   await chrome.storage.local.set({ redactionEnabled: checked });
   redactionStatus.textContent = checked ? "ON" : "OFF";
@@ -3092,11 +2945,6 @@ function routeAction(action, el) {
     case "status:toggle":
       toggleStatusSection();
       break;
-    case "annotations:toggle":
-      if (currentMode === "screenshot") {
-        toggleAnnotationSection();
-      }
-      break;
     default:
       break;
   }
@@ -3175,11 +3023,6 @@ async function routeChange(action, el) {
           : "Timestamp overlay disabled.",
         "success"
       );
-      break;
-    case "annotation:style":
-      if (currentMode === "screenshot") {
-        sendAnnotationStyle();
-      }
       break;
     default:
       break;
@@ -3522,9 +3365,6 @@ async function initPopup() {
   await loadRedactionSetting();
   await loadCaptureSettings();
   await loadFiltersSettings();
-  if (currentMode === "screenshot") {
-    await ensureAnnotationReady();
-  }
   await initCapabilities();
   await refreshStatus();
   setInterval(refreshStatus, 1000);
