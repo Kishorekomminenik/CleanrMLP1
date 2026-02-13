@@ -134,6 +134,7 @@ let recordingStopResolver = null;
 let recordingStopRequestedAt = null;
 let recordingDurationMsSnapshot = null;
 let annotationCollapsed = true;
+let annotationInitialized = false;
 let toastTimer = null;
 let helpIsOpen = false;
 let helpReturnFocusEl = null;
@@ -1439,6 +1440,26 @@ function setMode(mode) {
   } else if (recordingUnavailable) {
     recordingUnavailable.classList.add("hidden");
   }
+  if (mode === "screenshot") {
+    if (annotationToggle) {
+      annotationToggle.disabled = false;
+    }
+    void ensureAnnotationReady();
+  } else {
+    if (annotationToggle) {
+      annotationToggle.disabled = true;
+    }
+    if (annotationBody) {
+      annotationCollapsed = true;
+      annotationBody.classList.add("collapsed");
+    }
+    if (annotationChevron) {
+      annotationChevron.textContent = "▸";
+    }
+    if (annotationToggle) {
+      annotationToggle.classList.remove("open");
+    }
+  }
 }
 
 function setRecordingButtons(state) {
@@ -2223,6 +2244,14 @@ async function loadAnnotationStyle() {
     annotationFontOpacity.value = String(current.opacity);
   }
   await sendAnnotationStyle();
+}
+
+async function ensureAnnotationReady() {
+  if (annotationInitialized) {
+    return;
+  }
+  await loadAnnotationStyle();
+  annotationInitialized = true;
 }
 
 async function handleScreenshot() {
@@ -3064,7 +3093,9 @@ function routeAction(action, el) {
       toggleStatusSection();
       break;
     case "annotations:toggle":
-      toggleAnnotationSection();
+      if (currentMode === "screenshot") {
+        toggleAnnotationSection();
+      }
       break;
     default:
       break;
@@ -3146,7 +3177,9 @@ async function routeChange(action, el) {
       );
       break;
     case "annotation:style":
-      sendAnnotationStyle();
+      if (currentMode === "screenshot") {
+        sendAnnotationStyle();
+      }
       break;
     default:
       break;
@@ -3489,7 +3522,9 @@ async function initPopup() {
   await loadRedactionSetting();
   await loadCaptureSettings();
   await loadFiltersSettings();
-  await loadAnnotationStyle();
+  if (currentMode === "screenshot") {
+    await ensureAnnotationReady();
+  }
   await initCapabilities();
   await refreshStatus();
   setInterval(refreshStatus, 1000);
