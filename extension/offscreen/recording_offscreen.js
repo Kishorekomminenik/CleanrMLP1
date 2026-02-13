@@ -15,6 +15,8 @@ let recordingStopReason = null;
 let recordingSegmentMode = false;
 let recordingObjectUrl = null;
 let recordingObjectUrlBytes = 0;
+const FULLPAGE_CANVAS_MAX_EDGE = 16384;
+const FULLPAGE_PART_HEIGHT = 12000;
 
 chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
 
@@ -30,6 +32,114 @@ function formatZipTimestamp(date) {
   const minutes = String(date.getMinutes()).padStart(2, "0");
   const seconds = String(date.getSeconds()).padStart(2, "0");
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function dataUrlToBlob(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    throw new Error("Invalid image data");
+  }
+  const [meta, base64] = dataUrl.split(",");
+  const mimeMatch = meta.match(/data:([^;]+)/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function dataUrlToBitmap(dataUrl) {
+  const blob = dataUrlToBlob(dataUrl);
+  return await createImageBitmap(blob);
+}
+
+function delay() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }) {
+  let drawn = 0;
+  for (const tile of tiles) {
+    const tileTop = tile.y + tile.clipTop;
+    const tileBottom = tileTop + tile.clipHeight;
+    const canvasTop = offsetY;
+    const canvasBottom =
+      heightLimit !== null ? offsetY + heightLimit : Number.POSITIVE_INFINITY;
+    if (tileBottom <= canvasTop || tileTop >= canvasBottom) {
+      drawn += 1;
+      continue;
+    }
+    const drawTop = Math.max(tileTop, canvasTop);
+    const drawBottom = Math.min(tileBottom, canvasBottom);
+    const drawHeight = Math.max(0, drawBottom - drawTop);
+    if (drawHeight <= 0) {
+      drawn += 1;
+      continue;
+    }
+    const bmp = await dataUrlToBitmap(tile.dataUrl);
+    const srcY = tile.clipTop + (drawTop - tileTop);
+    const frameWidth = tile.width || ctx.canvas.width;
+    ctx.drawImage(
+      bmp,
+      0,
+      srcY,
+      frameWidth,
+      drawHeight,
+      0,
+      drawTop - offsetY,
+      frameWidth,
+      drawHeight
+    );
+    drawn += 1;
+    if (drawn % 2 === 0) {
+      await delay();
+    }
+  }
+}
+
+async function stitchFullPageTiles(payload) {
+  const tiles = payload && Array.isArray(payload.tiles) ? payload.tiles : [];
+  const totalWidth = payload?.totalWidth;
+  const totalHeight = payload?.totalHeight;
+  if (!tiles.length || !totalWidth || !totalHeight) {
+    return { ok: false, error: "Missing tiles for stitching." };
+  }
+  if (totalWidth > FULLPAGE_CANVAS_MAX_EDGE) {
+    return {
+      ok: false,
+      error: "Full page width exceeds safe canvas limits.",
+      code: "FULLPAGE_ERR_STITCH_CANVAS_LIMIT",
+    };
+  }
+  if (totalHeight <= FULLPAGE_CANVAS_MAX_EDGE) {
+    const canvas = document.createElement("canvas");
+    canvas.width = totalWidth;
+    canvas.height = totalHeight;
+    const ctx = canvas.getContext("2d");
+    await drawTilesToCanvas({ ctx, tiles });
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
+    });
+    return { ok: true, kind: "single", blob };
+  }
+  const partHeight = Math.min(FULLPAGE_PART_HEIGHT, FULLPAGE_CANVAS_MAX_EDGE);
+  const parts = [];
+  let index = 0;
+  for (let offsetY = 0; offsetY < totalHeight; offsetY += partHeight) {
+    index += 1;
+    const height = Math.min(partHeight, totalHeight - offsetY);
+    const canvas = document.createElement("canvas");
+    canvas.width = totalWidth;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    await drawTilesToCanvas({ ctx, tiles, offsetY, heightLimit: height });
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
+    });
+    parts.push({ blob, index });
+  }
+  return { ok: true, kind: "multi", parts };
 }
 
 function sumChunkBytes(chunks) {
@@ -675,6 +785,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     "RECORDING_EXPORT_WEBM",
     "RECORDING_RESET",
     "DOWNLOAD_BLOB",
+    "FULLPAGE_STITCH",
   ]);
   if (!handledTypes.has(message.type)) {
     if (
@@ -752,6 +863,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           break;
         }
+        case "FULLPAGE_STITCH":
+          result = await stitchFullPageTiles(message.payload || {});
+          break;
         default:
           result = { ok: false, error: "Unknown message type." };
           break;

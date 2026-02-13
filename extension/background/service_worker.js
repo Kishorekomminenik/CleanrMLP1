@@ -32,7 +32,12 @@ const MAX_BODY_BYTES = 2000000;
 const MAX_NETWORK_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRY_BYTES = 50000;
-const FULLPAGE_MAX_HEIGHT = 30000;
+const FULLPAGE_LIMITS = {
+  maxTiles: 80,
+  maxCanvasEdge: 16384,
+  maxPartHeight: 12000,
+  scrollTolerance: 2,
+};
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -825,6 +830,20 @@ function sendExportEvent(type, payload) {
     chrome.runtime.sendMessage({ type, ...payload });
   } catch (error) {
     console.warn("[EXPORT] Failed to send event", type, error);
+  }
+}
+
+function sendFullPageProgress(step, current, total, detail) {
+  try {
+    chrome.runtime.sendMessage({
+      type: "FULLPAGE_PROGRESS",
+      step,
+      current,
+      total,
+      detail,
+    });
+  } catch (error) {
+    console.warn("[FULLPAGE] Failed to send progress", error);
   }
 }
 
@@ -3732,8 +3751,9 @@ async function ensureOffscreenDocument() {
   }
   offscreenCreating = chrome.offscreen.createDocument({
     url: chrome.runtime.getURL("offscreen/recording_offscreen.html"),
-    reasons: ["USER_MEDIA"],
-    justification: "Record active tab video while popup is closed.",
+    reasons: ["USER_MEDIA", "BLOBS"],
+    justification:
+      "Record active tab video and stitch full-page screenshots while popup is closed.",
   });
   try {
     await offscreenCreating;
@@ -3851,115 +3871,284 @@ async function captureFullPageScreenshot(requestedTabId) {
     error.code = "INJECT_FAILED";
     throw error;
   }
-
+  let restoreNeeded = false;
+  let metrics = null;
+  let windowId = tab.windowId || null;
   try {
-    console.log("[FULL][SW]", { step: "received", tabId, url: tab.url });
+    console.log("[FULLPAGE][METRICS]", { tabId, url: tab.url });
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["content/fullpage_capture.js"],
     });
-  } catch (error) {
-    console.log("[FULL][SW]", { step: "inject_failed", error: error?.message });
-    const err = new Error("Not supported on this page.");
-    err.code = "INJECT_FAILED";
-    err.details = error && error.message ? error.message : String(error);
-    throw err;
-  }
-  console.log("[FULL][SW]", { step: "inject_ok" });
-
-  const captureResult = await sendMessageToTabWithResponse(tabId, {
-    type: "FP_CAPTURE_ALL",
-  });
-  if (!captureResult || captureResult.ok === false) {
-    const message =
-      captureResult && captureResult.error
-        ? captureResult.error
-        : "Unable to prepare full page capture.";
-    const code =
-      captureResult && captureResult.code ? captureResult.code : "PLAN_FAILED";
-    console.log("[FULL][SW]", { step: "plan_failed", error: message });
-    const err = new Error(message);
-    err.code = code;
-    throw err;
-  }
-  const frames = Array.isArray(captureResult.frames) ? captureResult.frames : [];
-  const totalHeight =
-    typeof captureResult.totalHeight === "number" ? captureResult.totalHeight : 0;
-  const width = typeof captureResult.width === "number" ? captureResult.width : 0;
-  const dpr =
-    typeof captureResult.devicePixelRatio === "number"
-      ? captureResult.devicePixelRatio
-      : 1;
-  if (!frames.length || !width || !totalHeight) {
-    const err = new Error("No frames to stitch.");
-    err.code = "PLAN_FAILED";
-    throw err;
-  }
-  console.log("[FULL][SW]", { step: "plan_ok", frames: frames.length });
-  if (totalHeight * dpr > FULLPAGE_MAX_HEIGHT) {
-    const err = new Error("Page too tall for full page capture.");
-    err.code = "PAGE_TOO_LARGE";
-    throw err;
-  }
-
-  let blob;
-  try {
-    const { stitchVerticalPng } = await import("./fullpage_stitch.js");
-    blob = await stitchVerticalPng({
-      frames,
-      width: Math.round(width * dpr),
-      totalHeight: Math.round(totalHeight * dpr),
+    const applyRes = await sendMessageToTabWithResponse(tabId, {
+      type: "FP_APPLY_STYLES",
     });
-  } catch (error) {
-    console.log("[FULL][SW]", {
-      step: "stitch_failed",
-      error: error && error.message ? error.message : String(error),
+    if (!applyRes || applyRes.ok === false) {
+      const err = new Error("Failed to prepare page for capture.");
+      err.code = "FULLPAGE_ERR_PREPARE";
+      throw err;
+    }
+    restoreNeeded = true;
+    const metricsRes = await sendMessageToTabWithResponse(tabId, {
+      type: "FP_GET_METRICS",
     });
-    const err = new Error("Full page screenshot failed.");
-    err.code = "UNKNOWN";
-    err.details = error && error.message ? error.message : String(error);
-    throw err;
-  }
-  let dataUrl = await blobToDataUrl(blob);
-  await loadTimestampOverlaySetting();
-  if (timestampOverlayEnabled) {
-    const nowMs = Date.now();
-    const elapsedMs = computeRecordingElapsedMs(nowMs);
-    let overlayText = formatOverlayTimestamp(new Date(nowMs));
-    if (typeof elapsedMs === "number") {
-      const elapsedText = formatElapsedMs(elapsedMs);
-      if (elapsedText) {
-        overlayText += ` • +${elapsedText}`;
+    metrics = metricsRes && metricsRes.metrics ? metricsRes.metrics : null;
+    if (!metrics) {
+      const err = new Error("Unable to read page metrics.");
+      err.code = "FULLPAGE_ERR_METRICS";
+      throw err;
+    }
+    console.log("[FULLPAGE][METRICS]", metrics);
+    const {
+      scrollHeight,
+      innerHeight,
+      innerWidth,
+      devicePixelRatio = 1,
+      scrollY = 0,
+    } = metrics;
+    if (!scrollHeight || !innerHeight || !innerWidth) {
+      const err = new Error("Invalid page metrics for full capture.");
+      err.code = "FULLPAGE_ERR_METRICS";
+      throw err;
+    }
+    const maxScrollY = Math.max(0, scrollHeight - innerHeight);
+    const positions = [];
+    for (let y = 0; y <= maxScrollY; y += innerHeight) {
+      positions.push(y);
+    }
+    if (positions.length === 0 || positions[positions.length - 1] !== maxScrollY) {
+      positions.push(maxScrollY);
+    }
+    const totalTiles = positions.length;
+    if (totalTiles > FULLPAGE_LIMITS.maxTiles) {
+      const err = new Error("Page too tall for full capture.");
+      err.code = "FULLPAGE_ERR_TOO_TALL";
+      throw err;
+    }
+    if (windowId && tab.active === false) {
+      try {
+        await chrome.windows.update(windowId, { focused: true });
+      } catch (error) {
+        // Ignore focus failures.
       }
     }
-    const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
-      text: overlayText,
+    console.log("[FULLPAGE][TILE_CAPTURE]", { total: totalTiles });
+    sendFullPageProgress("capture", 0, totalTiles);
+    const tiles = [];
+    let prevY = null;
+    let currentScroll = scrollY;
+    for (let i = 0; i < positions.length; i += 1) {
+      const targetY = positions[i];
+      sendFullPageProgress("capture", i + 1, totalTiles);
+      const scrollRes = await sendMessageToTabWithResponse(tabId, {
+        type: "FP_SCROLL_TO",
+        y: targetY,
+      });
+      let actualY =
+        scrollRes && typeof scrollRes.scrollY === "number"
+          ? scrollRes.scrollY
+          : null;
+      if (actualY === null || Math.abs(actualY - targetY) > FULLPAGE_LIMITS.scrollTolerance) {
+        const retry = await sendMessageToTabWithResponse(tabId, {
+          type: "FP_SCROLL_TO",
+          y: targetY,
+        });
+        const retryY =
+          retry && typeof retry.scrollY === "number" ? retry.scrollY : null;
+        if (
+          retryY === null ||
+          Math.abs(retryY - targetY) > FULLPAGE_LIMITS.scrollTolerance
+        ) {
+          const err = new Error(
+            "Page prevented scrolling (likely modal/overflow lock)."
+          );
+          err.code =
+            currentScroll === retryY
+              ? "FULLPAGE_ERR_SCROLL_LOCKED"
+              : "FULLPAGE_ERR_SCROLL_MISMATCH";
+          throw err;
+        }
+        actualY = retryY;
+      }
+      currentScroll = actualY;
+      let dataUrl = null;
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+      } catch (error) {
+        const err = new Error(
+          error && error.message
+            ? `captureVisibleTab failed: ${error.message}`
+            : "captureVisibleTab failed."
+        );
+        err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
+        throw err;
+      }
+      if (!dataUrl || !dataUrl.startsWith("data:image/png")) {
+        const err = new Error("captureVisibleTab returned invalid data.");
+        err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
+        throw err;
+      }
+      let clipTop = 0;
+      if (prevY !== null) {
+        const overlap = prevY + innerHeight - targetY;
+        if (overlap > 0) {
+          clipTop = overlap;
+        }
+      }
+      const remaining = scrollHeight - targetY - clipTop;
+      const clipHeight = Math.max(0, Math.min(innerHeight - clipTop, remaining));
+      if (clipHeight <= 0) {
+        prevY = targetY;
+        continue;
+      }
+      tiles.push({
+        dataUrl,
+        y: Math.round(targetY * devicePixelRatio),
+        width: Math.round(innerWidth * devicePixelRatio),
+        height: Math.round(innerHeight * devicePixelRatio),
+        clipTop: Math.round(clipTop * devicePixelRatio),
+        clipHeight: Math.round(clipHeight * devicePixelRatio),
+      });
+      prevY = targetY;
+    }
+    const totalWidth = Math.round(innerWidth * devicePixelRatio);
+    const totalHeight = Math.round(scrollHeight * devicePixelRatio);
+    console.log("[FULLPAGE][STITCH_START]", {
+      tiles: tiles.length,
+      totalWidth,
+      totalHeight,
     });
-    if (overlayResult && overlayResult.dataUrl) {
-      dataUrl = overlayResult.dataUrl;
-      if (overlayResult.blob) {
-        blob = overlayResult.blob;
+    sendFullPageProgress("stitch", 0, tiles.length);
+    await ensureOffscreenReady();
+    const stitchResponse = await sendMessageToOffscreen({
+      type: "FULLPAGE_STITCH",
+      payload: {
+        tiles,
+        totalWidth,
+        totalHeight,
+      },
+    });
+    if (!stitchResponse || stitchResponse.ok === false) {
+      const err = new Error(
+        stitchResponse && stitchResponse.error
+          ? stitchResponse.error
+          : "Stitching failed."
+      );
+      err.code =
+        stitchResponse && stitchResponse.code
+          ? stitchResponse.code
+          : "FULLPAGE_ERR_STITCH";
+      throw err;
+    }
+    console.log("[FULLPAGE][STITCH_DONE]", {
+      kind: stitchResponse.kind,
+      parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
+    });
+    sendFullPageProgress("stitch", tiles.length, tiles.length);
+    await loadTimestampOverlaySetting();
+    const exportTimestamp = formatExportTimestamp(new Date());
+    const overlayText = (() => {
+      if (!timestampOverlayEnabled) {
+        return null;
+      }
+      const nowMs = Date.now();
+      const elapsedMs = computeRecordingElapsedMs(nowMs);
+      let text = formatOverlayTimestamp(new Date(nowMs));
+      if (typeof elapsedMs === "number") {
+        const elapsedText = formatElapsedMs(elapsedMs);
+        if (elapsedText) {
+          text += ` • +${elapsedText}`;
+        }
+      }
+      return text;
+    })();
+    if (stitchResponse.kind === "single" && stitchResponse.blob) {
+      let blob = stitchResponse.blob;
+      let dataUrl = await blobToDataUrl(blob);
+      if (overlayText) {
+        const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
+          text: overlayText,
+        });
+        if (overlayResult && overlayResult.dataUrl) {
+          dataUrl = overlayResult.dataUrl;
+          if (overlayResult.blob) {
+            blob = overlayResult.blob;
+          }
+        }
+      }
+      state.screenshot.dataUrl = dataUrl;
+      state.screenshot.capturedAt = triggerTimestampIso;
+      if (session) {
+        session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
+        const index = session.screenshots.length + 1;
+        session.screenshots.push({
+          index,
+          timestampIso: triggerTimestampIso,
+          t_ms: triggerTms,
+          blob,
+          dataUrl,
+          fullPage: true,
+          fileName: `qa-screenshot-fullpage-${exportTimestamp}.png`,
+        });
+      }
+      clearStatusMessage();
+      return { dataUrl };
+    }
+    if (stitchResponse.kind === "multi" && Array.isArray(stitchResponse.parts)) {
+      const parts = [];
+      let partIndex = 0;
+      for (const part of stitchResponse.parts) {
+        partIndex += 1;
+        let blob = part.blob;
+        if (!blob) {
+          continue;
+        }
+        let dataUrl = await blobToDataUrl(blob);
+        if (overlayText) {
+          const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
+            text: overlayText,
+          });
+          if (overlayResult && overlayResult.dataUrl) {
+            dataUrl = overlayResult.dataUrl;
+            if (overlayResult.blob) {
+              blob = overlayResult.blob;
+            }
+          }
+        }
+        const fileName = `qa-screenshot-fullpage-${exportTimestamp}_part${String(
+          partIndex
+        ).padStart(2, "0")}.png`;
+        if (session) {
+          const index = session.screenshots.length + 1;
+          session.screenshots.push({
+            index,
+            timestampIso: triggerTimestampIso,
+            t_ms: triggerTms,
+            blob,
+            dataUrl,
+            fullPage: true,
+            fileName,
+          });
+        }
+        await downloadBlob(blob, fileName, { saveAs: false });
+        parts.push({ fileName });
+      }
+      clearStatusMessage();
+      return { parts };
+    }
+    const err = new Error("Stitching returned no image.");
+    err.code = "FULLPAGE_ERR_STITCH";
+    throw err;
+  } finally {
+    if (restoreNeeded) {
+      try {
+        await sendMessageToTabWithResponse(tabId, { type: "FP_RESTORE" });
+        console.log("[FULLPAGE][RESTORE_DONE]", { tabId });
+      } catch (error) {
+        console.warn("[FULLPAGE] Failed to restore page state", error);
       }
     }
   }
-  console.log("[FULL][SW]", { step: "stitch_ok" });
-  state.screenshot.dataUrl = dataUrl;
-  state.screenshot.capturedAt = triggerTimestampIso;
-  if (session) {
-    session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
-    const index = session.screenshots.length + 1;
-    session.screenshots.push({
-      index,
-      timestampIso: triggerTimestampIso,
-      t_ms: triggerTms,
-      blob,
-      dataUrl,
-      fullPage: true,
-      fileName: "qa-screenshot-fullpage.png",
-    });
-  }
-  clearStatusMessage();
-  return dataUrl;
 }
 
 function applyTextAnnotations(ctx, annotations, dpr) {
@@ -5400,9 +5589,15 @@ async function handleMessage(message, sender) {
     }
     case "CAPTURE_FULLPAGE":
       try {
-        const dataUrl = await captureFullPageScreenshot(normalizedMessage.tabId);
-        result = { ok: true, pngDataUrl: dataUrl };
+        const captureResult = await captureFullPageScreenshot(
+          normalizedMessage.tabId
+        );
+        result = { ok: true, ...captureResult };
       } catch (error) {
+        console.log("[FULLPAGE][ERROR]", {
+          code: error && error.code ? error.code : "UNKNOWN",
+          message: error && error.message ? error.message : "Full capture failed.",
+        });
         result = {
           ok: false,
           error: {

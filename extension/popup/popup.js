@@ -44,6 +44,7 @@ const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
 const screenshotHint = document.getElementById("screenshotHint");
 const recordingDownloadHint = document.getElementById("recordingDownloadHint");
+const fullPageProgress = document.getElementById("fullPageProgress");
 const statusTimerRow = document.getElementById("status_timer_row");
 const statusCountsRow = document.getElementById("status_counts_row");
 const downloadControls = document.getElementById("download_controls");
@@ -190,6 +191,7 @@ let captureFilters = {
   filters_panel_collapsed: true,
 };
 let filtersLocked = false;
+let fullPageInProgress = false;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -600,6 +602,38 @@ function setDownloadBanner(message, type = "info") {
   downloadBanner.classList.remove("is-hidden");
   downloadBanner.classList.toggle("is-error", type === "error");
   downloadBanner.classList.toggle("is-info", type === "info");
+}
+
+function setFullPageInProgress(active) {
+  fullPageInProgress = Boolean(active);
+  if (buttons.fullPageScreenshotMode) {
+    buttons.fullPageScreenshotMode.disabled = fullPageInProgress;
+  }
+  if (!fullPageProgress) {
+    return;
+  }
+  if (!fullPageInProgress) {
+    fullPageProgress.textContent = "";
+    fullPageProgress.classList.add("is-hidden");
+  }
+}
+
+function updateFullPageProgress(step, current, total) {
+  if (!fullPageProgress) {
+    return;
+  }
+  const label =
+    step === "stitch"
+      ? "Stitching"
+      : step === "capture"
+        ? "Capturing"
+        : "Preparing";
+  const progressText =
+    total && current
+      ? `Full capture ${current}/${total}… (${label})`
+      : `Full capture… (${label})`;
+  fullPageProgress.textContent = progressText;
+  fullPageProgress.classList.remove("is-hidden");
 }
 
 function showStorageLimitModal(state) {
@@ -2071,7 +2105,8 @@ function updateStatusUI(state) {
   }
   updateExportProgressUI();
   if (buttons.fullPageScreenshotMode) {
-    buttons.fullPageScreenshotMode.disabled = !allowScreenshots;
+    buttons.fullPageScreenshotMode.disabled =
+      !allowScreenshots || fullPageInProgress;
   }
   if (quickActions) {
     const showQuickActions = currentMode === "screenshot" || sessionActive;
@@ -2282,46 +2317,66 @@ async function handleFullPageScreenshot() {
     "Capturing full page… please don’t scroll.",
     "default"
   );
+  setFullPageInProgress(true);
+  updateFullPageProgress("prepare", 0, 0);
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const response = await send(MSG.CAPTURE_FULLPAGE, {
     tabId: activeTab && activeTab.id ? activeTab.id : null,
   });
+  setFullPageInProgress(false);
   if (!response.ok) {
     const errorInfo = response.error || {};
     const code = errorInfo.code || "UNKNOWN";
-    let message = "Full capture failed. Try again, or use Snap.";
+    let message =
+      errorInfo.message ||
+      "Full capture failed. Try again, or use Snap.";
     if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
       message =
         errorInfo.message ||
         "Full capture isn’t supported on this page. Open a regular website tab and try again.";
-    } else if (code === "PAGE_TOO_LARGE") {
-      message =
-        "This page is large. Full capture may take a moment.";
-    } else if (code === "INJECT_FAILED" || code === "PLAN_FAILED") {
-      message = "Full capture failed. Try again, or use Snap.";
-    } else if (errorInfo.message && typeof errorInfo.message === "string") {
-      message = errorInfo.message;
+    } else if (code === "FULLPAGE_ERR_TOO_TALL") {
+      message = "Page too tall for full capture. Try Snap or segment capture.";
+    } else if (code === "FULLPAGE_ERR_SCROLL_LOCKED") {
+      message = "Page prevented scrolling (likely modal/overflow lock).";
+    } else if (code === "FULLPAGE_ERR_SCROLL_MISMATCH") {
+      message = "Page layout changed during capture. Try again.";
+    } else if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
+      message = errorInfo.message || "captureVisibleTab failed.";
+    } else if (code === "FULLPAGE_ERR_STITCH_CANVAS_LIMIT") {
+      message = "Stitching exceeded canvas limits. Exported in parts.";
     }
     setStatus(statusElements.message, message, "error");
     showToast(message, "error");
     await refreshStatus();
     return;
   }
-  if (response.pngDataUrl && typeof response.pngDataUrl === "string") {
+  if (response.dataUrl && typeof response.dataUrl === "string") {
     try {
-      const blob = await dataUrlToBlob(response.pngDataUrl);
-      const filename = `qa-screenshot-fullpage-${formatExportTimestamp(
-        new Date()
-      )}.png`;
-      await downloadBlob(blob, filename);
+      const annotationStyle = getAnnotationStyleFromUi();
+      await chrome.storage.session.set({
+        latestScreenshotDataUrl: response.dataUrl,
+        latestScreenshotAnnotationStyle: annotationStyle,
+      });
+      await chrome.tabs.create({
+        url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
+      });
     } catch (error) {
       const message =
-        error && error.message ? error.message : "Download failed.";
+        error && error.message ? error.message : "Failed to open viewer.";
       setStatus(statusElements.message, message, "error");
       showToast(message, "error");
       await refreshStatus();
       return;
     }
+  } else if (response.parts && Array.isArray(response.parts)) {
+    const names = response.parts.map((part) => part.fileName).filter(Boolean);
+    const message = names.length
+      ? `Full capture exported in parts: ${names.join(", ")}`
+      : "Full capture exported in parts.";
+    setStatus(statusElements.message, message, "success");
+    showToast("Full capture exported");
+    await refreshStatus();
+    return;
   }
   setStatus(statusElements.message, "Full page screenshot captured.", "success");
   showToast("Full captured");
@@ -3295,6 +3350,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       phase: message.phase || "Working",
     };
     updateExportProgressUI();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (message.type === "FULLPAGE_PROGRESS") {
+    if (!fullPageInProgress) {
+      setFullPageInProgress(true);
+    }
+    updateFullPageProgress(message.step, message.current, message.total);
     sendResponse({ ok: true });
     return true;
   }
