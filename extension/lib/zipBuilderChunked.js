@@ -48,6 +48,20 @@
     return zip.generateAsync(generateOptions);
   }
 
+  async function generateZipBytes(zip, options = {}) {
+    const generateOptions = {
+      type: "uint8array",
+      compression: options.compression || "STORE",
+      streamFiles:
+        typeof options.streamFiles === "boolean" ? options.streamFiles : true,
+    };
+    const onUpdate = typeof options.onUpdate === "function" ? options.onUpdate : null;
+    if (onUpdate) {
+      return zip.generateAsync(generateOptions, onUpdate);
+    }
+    return zip.generateAsync(generateOptions);
+  }
+
   const root =
     typeof window !== "undefined"
       ? window
@@ -57,6 +71,7 @@
   root.ZipBuilderChunked = {
     addItemsInBatches,
     generateZipBlob,
+    generateZipBytes,
     delay,
   };
 })();

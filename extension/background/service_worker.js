@@ -1194,17 +1194,20 @@ async function ensureBrokerReady() {
   throw new Error("Download broker not ready.");
 }
 
-async function brokerDownload(blob, filename, mimeType) {
+async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
   await ensureBrokerReady();
-  const arrayBuffer = await blob.arrayBuffer();
+  if (!(arrayBuffer instanceof ArrayBuffer)) {
+    throw new Error("Missing download bytes.");
+  }
   const response = await new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       {
-        type: "BROKER_DOWNLOAD_BLOB",
+        type: "BROKER_DOWNLOAD_BYTES",
         payload: {
           arrayBuffer,
           filename,
-          mimeType: mimeType || blob.type || "application/octet-stream",
+          mimeType: mimeType || "application/octet-stream",
+          saveAs: opts.saveAs === true,
         },
       },
       (reply) => {
@@ -1841,7 +1844,8 @@ async function loadLimitedEntriesFromIdb(options) {
 
 async function downloadBlob(blob, filename, opts = {}) {
   const saveAs = opts.saveAs !== undefined ? opts.saveAs : true;
-  await brokerDownload(blob, filename, blob.type || "application/octet-stream");
+  const arrayBuffer = await blob.arrayBuffer();
+  await brokerDownloadBytes(arrayBuffer, filename, blob.type, { saveAs });
   if (saveAs) {
     return true;
   }
@@ -1882,6 +1886,25 @@ function formatZipTimestamp(date) {
 
 function dataUrlToBlob(dataUrl) {
   return fetch(dataUrl).then((res) => res.blob());
+}
+
+function getArrayBufferFromUint8Array(bytes) {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function assertZipSignature(bytes) {
+  if (!bytes || bytes.length < 2) {
+    const error = new Error("ZIP generation failed (empty output).");
+    error.userMessage = "ZIP generation failed (empty output).";
+    error.debugCode = "zip_empty";
+    throw error;
+  }
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+    const error = new Error("ZIP generation failed (invalid signature).");
+    error.userMessage = "ZIP generation failed (invalid signature).";
+    error.debugCode = "zip_bad_signature";
+    throw error;
+  }
 }
 
 function isRestrictedUrl(url) {
@@ -3478,7 +3501,7 @@ async function runEvidenceZipExport(context) {
 
     reportExportProgress(78, "zip_generate_start");
     await yieldExport();
-    const zipBlob = await ZipBuilderChunked.generateZipBlob(zip, {
+    const zipBytes = await ZipBuilderChunked.generateZipBytes(zip, {
       compression: "STORE",
       streamFiles: true,
       onUpdate: (metadata) => {
@@ -3491,11 +3514,15 @@ async function runEvidenceZipExport(context) {
         });
       },
     });
-    logExportPhase("zip_generate_done", { bytes: zipBlob.size });
-    reportExportProgress(96, "zip_generate_done", { bytes: zipBlob.size });
+    assertZipSignature(zipBytes);
+    const zipArrayBuffer = getArrayBufferFromUint8Array(zipBytes);
+    logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });
+    reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 
     const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
-    await downloadBlob(zipBlob, filename, { saveAs: false });
+    await brokerDownloadBytes(zipArrayBuffer, filename, "application/zip", {
+      saveAs: false,
+    });
     reportExportProgress(100, "zip_download", { filename });
     if (!usePartExport) {
       sendExportEvent("EXPORT_EVIDENCE_ZIP_DONE", { filename });

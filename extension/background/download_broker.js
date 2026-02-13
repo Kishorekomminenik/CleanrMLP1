@@ -6,7 +6,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
-  if (message.type !== "BROKER_DOWNLOAD_BLOB") {
+  if (message.type !== "BROKER_DOWNLOAD_BLOB" && message.type !== "BROKER_DOWNLOAD_BYTES") {
     return false;
   }
   (async () => {
@@ -15,6 +15,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const arrayBuffer = payload.arrayBuffer;
       const filename = payload.filename || "download.bin";
       const mimeType = payload.mimeType || "application/octet-stream";
+      const saveAs = payload.saveAs === true;
       if (!arrayBuffer) {
         sendResponse({ ok: false, error: "Missing payload." });
         return;
@@ -25,7 +26,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         {
           url,
           filename,
-          saveAs: false,
+          saveAs,
         },
         (downloadId) => {
           if (chrome.runtime.lastError || !downloadId) {
