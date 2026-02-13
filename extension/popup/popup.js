@@ -728,31 +728,6 @@ function updateFilterSummaryText(summary) {
   filtersSummary.classList.remove("is-hidden");
 }
 
-function setFiltersLocked(locked) {
-  filtersLocked = Boolean(locked);
-  const controls = [
-    filterRequestType,
-    filterStatusMode,
-    filterStatusCustomList,
-    filterUrlContains,
-    filterUrlExcludes,
-  ];
-  controls.forEach((control) => {
-    if (control) {
-      control.disabled = filtersLocked;
-    }
-  });
-  if (filterCaptureMode) {
-    const radios = filterCaptureMode.querySelectorAll("input[type='radio']");
-    radios.forEach((radio) => {
-      radio.disabled = filtersLocked;
-    });
-  }
-  if (filtersDisabledHint) {
-    filtersDisabledHint.classList.toggle("is-hidden", !filtersLocked);
-  }
-}
-
 function showFilterValidationError(message) {
   if (!filterStatusError) {
     return;
