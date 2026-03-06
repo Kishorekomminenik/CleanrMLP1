@@ -2418,21 +2418,42 @@ async function handleRecordingStop() {
   if (recordingControlInFlight) {
     return;
   }
+  recordingControlInFlight = true;
+  console.log("[REC][popup] STOP_REQUESTED");
   setStatus(statusElements.download, "Stopping recording...");
-  const res = await send(MSG.RECORDING_STOP);
-  if (!res.ok) {
-    setStatus(
-      statusElements.message,
-      res.error || "Failed to stop recording.",
-      "error"
+  setStatus(statusElements.message, "Stopping recording...", "default");
+  try {
+    const stopTimeoutMs = 10000;
+    const timeoutPromise = new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            ok: false,
+            error: "Recording stop timed out.",
+            code: "RECORDING_STOP_TIMEOUT",
+          }),
+        stopTimeoutMs
+      )
     );
+    const res = await Promise.race([send(MSG.RECORDING_STOP), timeoutPromise]);
+    if (!res.ok) {
+      setStatus(
+        statusElements.message,
+        res.error || "Failed to stop recording.",
+        "error"
+      );
+      showToast(res.error || "Failed to stop recording.", "error");
+    }
+    const st = await send(MSG.RECORDING_GET_STATE);
+    if (st && st.ok) {
+      recordingLiveState = st;
+    }
+    setRecordingButtons({ recordingStatus: st?.state || "idle" });
+  } finally {
+    recordingControlInFlight = false;
+    console.log("[REC][popup] UI_RESET");
+    await refreshStatus();
   }
-  const st = await send(MSG.RECORDING_GET_STATE);
-  if (st && st.ok) {
-    recordingLiveState = st;
-  }
-  setRecordingButtons({ recordingStatus: st?.state || "idle" });
-  await refreshStatus();
 }
 
 async function handleNetworkStart() {
@@ -2594,7 +2615,7 @@ async function handleDownload() {
   if (exportInProgress) {
     return;
   }
-  if (currentMode === "screenshot") {
+  if (currentMode !== "network_console") {
     return;
   }
   let hadError = false;
@@ -2783,6 +2804,7 @@ async function handleRecordingDownload() {
       return;
     }
     const exportTimestamp = formatExportTimestamp(new Date());
+  console.log("[REC][popup] DOWNLOAD_TRIGGERED");
     await new Promise((resolve, reject) => {
       chrome.downloads.download(
         {

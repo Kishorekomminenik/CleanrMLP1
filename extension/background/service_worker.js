@@ -61,6 +61,7 @@ const EXPORT_SIZE_GUARDS = {
 };
 const JSON_BUILD_YIELD_EVERY = 200;
 const DEFAULT_PART_CAP_BYTES = 75000000;
+const RECORDING_STOP_TIMEOUT_MS = 10000;
 const CAPTURE_DEFAULTS = {
   partCapRequests: 5000,
   partCapBytes: DEFAULT_PART_CAP_BYTES,
@@ -4315,7 +4316,22 @@ async function resumeRecording() {
 }
 
 async function stopRecording() {
-  const response = await sendMessageToOffscreen({ type: "RECORDING_STOP" });
+  console.log("[REC][sw] STOP_REQUESTED");
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          error: "Recording stop timed out.",
+          code: "RECORDING_STOP_TIMEOUT",
+        }),
+      RECORDING_STOP_TIMEOUT_MS
+    );
+  });
+  const response = await Promise.race([
+    sendMessageToOffscreen({ type: "RECORDING_STOP" }),
+    timeoutPromise,
+  ]);
   if (!response.ok) {
     addDiagnostic("error", "Recording stop failed.", {
       error: response.error || "Failed to stop recording.",

@@ -15,6 +15,8 @@ let recordingStopReason = null;
 let recordingSegmentMode = false;
 let recordingObjectUrl = null;
 let recordingObjectUrlBytes = 0;
+let recordingFinalChunkLogged = false;
+const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
 const FULLPAGE_PART_HEIGHT = 12000;
 
@@ -507,6 +509,10 @@ function attachRecorderHandlers(recorder) {
         chrome.runtime.sendMessage({ type: "RECORDING_DATA_AVAILABLE" });
         notifyStateChanged("data");
       }
+      if (recordingState === "stopping" && !recordingFinalChunkLogged) {
+        recordingFinalChunkLogged = true;
+        console.log("[REC][offscreen] FINAL_CHUNK_RECEIVED");
+      }
     }
   };
   recorder.onerror = (event) => {
@@ -661,6 +667,7 @@ async function resumeRecording() {
 }
 
 async function stopRecording() {
+  console.log("[REC][offscreen] STOP_REQUESTED");
   if (recordingState === "idle" || !mediaRecorder) {
     return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
   }
@@ -676,7 +683,14 @@ async function stopRecording() {
   }
   recordingStopReason = "stop";
   recordingState = "stopping";
+  recordingFinalChunkLogged = false;
   const stopPromise = createStopPromise();
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(
+      () => resolve({ ok: false, reason: "timeout" }),
+      RECORDING_STOP_TIMEOUT_MS
+    );
+  });
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     if (typeof mediaRecorder.requestData === "function") {
       try {
@@ -688,10 +702,46 @@ async function stopRecording() {
         );
       }
     }
-    mediaRecorder.stop();
+    try {
+      mediaRecorder.stop();
+      console.log("[REC][offscreen] RECORDER_STOP_CALLED");
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      recordingLastError = `Stop failed: ${message}`;
+      recordingState = "idle";
+      stopStreamTracks();
+      notifyStateChanged("error");
+      resolveStopPromise({ ok: false, reason: "stop_failed" });
+      return { ok: false, error: "Failed to stop recording." };
+    }
   }
   notifyStateChanged("stopping");
-  await stopPromise;
+  const result = await Promise.race([stopPromise, timeoutPromise]);
+  if (result && result.ok === false && result.reason === "timeout") {
+    recordingLastError = "Recording stop timed out.";
+    recordingState = "idle";
+    mediaRecorder = null;
+    stopStreamTracks();
+    notifyStateChanged("error");
+    resolveStopPromise(result);
+    return {
+      ok: false,
+      error: "Recording stop timed out.",
+      code: "RECORDING_STOP_TIMEOUT",
+      ...getRecordingStateSnapshot(),
+    };
+  }
+  if (!recordingHasData || recordedChunks.length === 0) {
+    recordingLastError = "No recording data captured.";
+    recordingState = "idle";
+    stopStreamTracks();
+    notifyStateChanged("error");
+    return {
+      ok: false,
+      error: "No recording data captured.",
+      ...getRecordingStateSnapshot(),
+    };
+  }
   return { ok: true, ...getRecordingStateSnapshot() };
 }
 
@@ -714,6 +764,10 @@ async function exportRecordingWebm() {
   );
   let blob = new Blob(recordedChunks, {
     type: recordingMimeType || "video/webm",
+  });
+  console.log("[REC][offscreen] BLOB_ASSEMBLED", {
+    bytes: blob.size,
+    mimeType: recordingMimeType || "video/webm",
   });
   const durationMs =
     typeof recordingDurationMsSnapshot === "number"

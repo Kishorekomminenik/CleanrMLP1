@@ -100,6 +100,18 @@
             </button>
           </div>
           <p id="controlsStatus" class="status-strip">-</p>
+          <div class="button-row">
+            <button
+              id="btn_download_recording"
+              class="primary"
+              data-action="export:webm"
+            >
+              Download WebM
+            </button>
+          </div>
+          <p id="recordingDownloadHint" class="hint">
+            WebM includes video only.
+          </p>
         </div>
         <div class="mode-controls" data-mode="screenshot recording">
           <div class="toggle-row">
@@ -348,7 +360,7 @@
           </div>
       </section>
 
-      <section class="card mode-controls" data-mode="recording network_console">
+      <section class="card mode-controls" data-mode="network_console">
         <h2>Export</h2>
         <div class="toggle-row">
           <span class="label">Redaction</span>
@@ -361,18 +373,8 @@
           <button id="btn_download_zip" class="primary" data-action="export:zip">
             Export ZIP
           </button>
-          <button
-            id="btn_download_recording"
-            class="ghost is-hidden"
-            data-action="export:webm"
-          >
-            WebM
-          </button>
           <button id="btn_reset_session" data-action="session:reset">Reset</button>
         </div>
-        <p id="recordingDownloadHint" class="hint is-hidden">
-          WebM includes video only. Use ZIP for logs + screenshots.
-        </p>
         <p id="exportHint" class="hint is-hidden">Stop to export.</p>
         <p id="downloadStatus" class="status">Ready.</p>
       </section>
