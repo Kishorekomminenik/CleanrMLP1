@@ -2594,6 +2594,9 @@ async function handleDownload() {
   if (exportInProgress) {
     return;
   }
+  if (currentMode === "screenshot") {
+    return;
+  }
   let hadError = false;
   try {
     const statusResponse = await send(MSG.GET_STATUS);
