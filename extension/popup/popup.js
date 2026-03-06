@@ -2118,6 +2118,9 @@ async function refreshStatus() {
 }
 
 async function handleScreenshot() {
+  if (currentMode !== "screenshot") {
+    return;
+  }
   setStatus(statusElements.message, "Capturing screenshot...");
   const response = await send("CAPTURE_SCREENSHOT");
   if (
@@ -2157,6 +2160,9 @@ async function handleScreenshot() {
 }
 
 async function handleFullPageScreenshot() {
+  if (currentMode !== "screenshot") {
+    return;
+  }
   console.log("[FULL] start");
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2272,6 +2278,9 @@ async function handleFullPageScreenshot() {
 }
 
 async function handleRecordingStart() {
+  if (currentMode !== "recording") {
+    return;
+  }
   clearStatusError();
   if (recordingBlockedReason === "invalid_tab") {
     setStatus(
@@ -2375,6 +2384,9 @@ async function handleRecordingStart() {
 }
 
 async function handleRecordingPause() {
+  if (currentMode !== "recording") {
+    return;
+  }
   if (recordingControlInFlight) {
     return;
   }
@@ -2395,6 +2407,9 @@ async function handleRecordingPause() {
 }
 
 async function handleRecordingResume() {
+  if (currentMode !== "recording") {
+    return;
+  }
   if (recordingControlInFlight) {
     return;
   }
@@ -2415,6 +2430,9 @@ async function handleRecordingResume() {
 }
 
 async function handleRecordingStop() {
+  if (currentMode !== "recording") {
+    return;
+  }
   if (recordingControlInFlight) {
     return;
   }
@@ -2782,6 +2800,9 @@ async function handleClearAll() {
 }
 
 async function handleRecordingDownload() {
+  if (currentMode !== "recording") {
+    return;
+  }
   clearStatusError();
   const live = await send(MSG.RECORDING_GET_STATE);
   if (live && live.ok && (live.state === "recording" || live.state === "paused")) {
