@@ -104,42 +104,83 @@ async function stitchFullPageTiles(payload) {
   const tiles = payload && Array.isArray(payload.tiles) ? payload.tiles : [];
   const totalWidth = payload?.totalWidth;
   const totalHeight = payload?.totalHeight;
+  const overlayText =
+    payload && typeof payload.overlayText === "string" ? payload.overlayText : null;
   if (!tiles.length || !totalWidth || !totalHeight) {
-    return { ok: false, error: "Missing tiles for stitching." };
+    return { ok: false, error: "STITCH_FAILED" };
   }
   if (totalWidth > FULLPAGE_CANVAS_MAX_EDGE) {
     return {
       ok: false,
-      error: "Full page width exceeds safe canvas limits.",
+      error: "STITCH_FAILED",
       code: "FULLPAGE_ERR_STITCH_CANVAS_LIMIT",
     };
   }
+  const drawOverlay = (ctx, width, height) => {
+    if (!overlayText) {
+      return;
+    }
+    const paddingX = 8;
+    const paddingY = 6;
+    const margin = 10;
+    ctx.save();
+    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+    const metrics = ctx.measureText(overlayText);
+    const textWidth = metrics.width;
+    const textHeight = 14;
+    const boxWidth = Math.ceil(textWidth + paddingX * 2);
+    const boxHeight = textHeight + paddingY * 2;
+    const x = Math.max(margin, width - boxWidth - margin);
+    const y = Math.max(margin, height - boxHeight - margin);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(x, y, boxWidth, boxHeight);
+    ctx.fillStyle = "#ffffff";
+    ctx.textBaseline = "top";
+    ctx.fillText(overlayText, x + paddingX, y + paddingY);
+    ctx.restore();
+  };
   if (totalHeight <= FULLPAGE_CANVAS_MAX_EDGE) {
-    const canvas = document.createElement("canvas");
-    canvas.width = totalWidth;
-    canvas.height = totalHeight;
-    const ctx = canvas.getContext("2d");
-    await drawTilesToCanvas({ ctx, tiles });
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
-    });
-    return { ok: true, kind: "single", blob };
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = totalWidth;
+      canvas.height = totalHeight;
+      const ctx = canvas.getContext("2d");
+      await drawTilesToCanvas({ ctx, tiles });
+      drawOverlay(ctx, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob((b) => resolve(b || null), "image/png");
+      });
+      if (!(blob instanceof Blob)) {
+        return { ok: false, error: "STITCH_FAILED" };
+      }
+      return { ok: true, kind: "single", blob };
+    } catch (error) {
+      return { ok: false, error: "STITCH_FAILED" };
+    }
   }
   const partHeight = Math.min(FULLPAGE_PART_HEIGHT, FULLPAGE_CANVAS_MAX_EDGE);
   const parts = [];
   let index = 0;
-  for (let offsetY = 0; offsetY < totalHeight; offsetY += partHeight) {
-    index += 1;
-    const height = Math.min(partHeight, totalHeight - offsetY);
-    const canvas = document.createElement("canvas");
-    canvas.width = totalWidth;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    await drawTilesToCanvas({ ctx, tiles, offsetY, heightLimit: height });
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
-    });
-    parts.push({ blob, index });
+  try {
+    for (let offsetY = 0; offsetY < totalHeight; offsetY += partHeight) {
+      index += 1;
+      const height = Math.min(partHeight, totalHeight - offsetY);
+      const canvas = document.createElement("canvas");
+      canvas.width = totalWidth;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      await drawTilesToCanvas({ ctx, tiles, offsetY, heightLimit: height });
+      drawOverlay(ctx, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob((b) => resolve(b || null), "image/png");
+      });
+      if (!(blob instanceof Blob)) {
+        return { ok: false, error: "STITCH_FAILED" };
+      }
+      parts.push({ blob, index });
+    }
+  } catch (error) {
+    return { ok: false, error: "STITCH_FAILED" };
   }
   return { ok: true, kind: "multi", parts };
 }

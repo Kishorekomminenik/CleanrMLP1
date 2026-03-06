@@ -53,8 +53,8 @@ const buttons = {
 
 const statusEl = document.getElementById("statusText");
 
-const baseCtx = baseCanvas.getContext("2d");
-const drawCtx = drawCanvas.getContext("2d");
+const baseCtx = baseCanvas.getContext("2d", { willReadFrequently: true });
+const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
 
 const TOOL = {
   pointer: "pointer",

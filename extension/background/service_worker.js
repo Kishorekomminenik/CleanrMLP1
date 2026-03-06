@@ -4087,40 +4087,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       totalHeight,
     });
     sendFullPageProgress("stitch", 0, tiles.length);
-    try {
-      await ensureOffscreenReady();
-    } catch (error) {
-      const err = new Error("Full page capture failed. Try Snap instead.");
-      err.code = "FULLPAGE_ERR_OFFSCREEN";
-      throw err;
-    }
-    const stitchResponse = await sendMessageToOffscreen({
-      type: "FULLPAGE_STITCH",
-      payload: {
-        tiles,
-        totalWidth,
-        totalHeight,
-      },
-    });
-    if (!stitchResponse || stitchResponse.ok === false) {
-      const err = new Error(
-        stitchResponse && stitchResponse.error
-          ? stitchResponse.error
-          : "Stitching failed."
-      );
-      err.code =
-        stitchResponse && stitchResponse.code
-          ? stitchResponse.code
-          : "FULLPAGE_ERR_STITCH";
-      throw err;
-    }
-    console.log("[FULLPAGE_STITCH_DONE]", {
-      kind: stitchResponse.kind,
-      parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
-    });
-    sendFullPageProgress("stitch", tiles.length, tiles.length);
     await loadTimestampOverlaySetting();
-    const exportTimestamp = formatExportTimestamp(new Date());
     const overlayText = (() => {
       if (!timestampOverlayEnabled) {
         return null;
@@ -4136,19 +4103,47 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       return text;
     })();
+    try {
+      await ensureOffscreenReady();
+    } catch (error) {
+      const err = new Error("Full page capture failed. Try Snap instead.");
+      err.code = "FULLPAGE_ERR_OFFSCREEN";
+      throw err;
+    }
+    const stitchResponse = await sendMessageToOffscreen({
+      type: "FULLPAGE_STITCH",
+      payload: {
+        tiles,
+        totalWidth,
+        totalHeight,
+        overlayText,
+      },
+    });
+    if (!stitchResponse || stitchResponse.ok === false) {
+      const err = new Error(
+        stitchResponse && stitchResponse.error
+          ? stitchResponse.error
+          : "STITCH_FAILED"
+      );
+      err.code =
+        stitchResponse && stitchResponse.code
+          ? stitchResponse.code
+          : "FULLPAGE_ERR_STITCH";
+      throw err;
+    }
+    console.log("[FULLPAGE_STITCH_DONE]", {
+      kind: stitchResponse.kind,
+      parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
+    });
+    sendFullPageProgress("stitch", tiles.length, tiles.length);
+    const exportTimestamp = formatExportTimestamp(new Date());
     if (stitchResponse.kind === "single" && stitchResponse.blob) {
-      let blob = stitchResponse.blob;
-      let dataUrl = await blobToDataUrl(blob);
-      if (overlayText) {
-        const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
-          text: overlayText,
-        });
-        if (overlayResult && overlayResult.dataUrl) {
-          dataUrl = overlayResult.dataUrl;
-          if (overlayResult.blob) {
-            blob = overlayResult.blob;
-          }
-        }
+      const blob = stitchResponse.blob;
+      let dataUrl = null;
+      try {
+        dataUrl = await blobToDataUrl(blob);
+      } catch (error) {
+        dataUrl = null;
       }
       state.screenshot.dataUrl = dataUrl;
       state.screenshot.capturedAt = triggerTimestampIso;
@@ -4166,7 +4161,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         });
       }
       clearStatusMessage();
-      return { dataUrl };
+      return { blob };
     }
     if (stitchResponse.kind === "multi" && Array.isArray(stitchResponse.parts)) {
       const parts = [];
@@ -4177,17 +4172,11 @@ async function captureFullPageScreenshot(requestedTabId) {
         if (!blob) {
           continue;
         }
-        let dataUrl = await blobToDataUrl(blob);
-        if (overlayText) {
-          const overlayResult = await applyTimestampOverlayToDataUrl(dataUrl, {
-            text: overlayText,
-          });
-          if (overlayResult && overlayResult.dataUrl) {
-            dataUrl = overlayResult.dataUrl;
-            if (overlayResult.blob) {
-              blob = overlayResult.blob;
-            }
-          }
+        let dataUrl = null;
+        try {
+          dataUrl = await blobToDataUrl(blob);
+        } catch (error) {
+          dataUrl = null;
         }
         const fileName = `qa-screenshot-fullpage-${exportTimestamp}_part${String(
           partIndex

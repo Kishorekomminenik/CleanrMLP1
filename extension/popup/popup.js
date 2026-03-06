@@ -2228,7 +2228,42 @@ async function handleFullPageScreenshot() {
     await refreshStatus();
     return;
   }
-  if (response.dataUrl && typeof response.dataUrl === "string") {
+  if (response.blob) {
+    if (!(response.blob instanceof Blob)) {
+      setStatus(
+        statusElements.message,
+        "Full page capture failed. Try Snap instead.",
+        "error"
+      );
+      showToast("Full page capture failed. Try Snap instead.", "error");
+      await refreshStatus();
+      return;
+    }
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(response.blob);
+      });
+      if (typeof dataUrl !== "string") {
+        throw new Error("Invalid image data.");
+      }
+      await chrome.storage.session.set({
+        latestScreenshotDataUrl: dataUrl,
+      });
+      await chrome.tabs.create({
+        url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
+      });
+    } catch (error) {
+      const message =
+        error && error.message ? error.message : "Failed to open viewer.";
+      setStatus(statusElements.message, message, "error");
+      showToast(message, "error");
+      await refreshStatus();
+      return;
+    }
+  } else if (response.dataUrl && typeof response.dataUrl === "string") {
     try {
       await chrome.storage.session.set({
         latestScreenshotDataUrl: response.dataUrl,
