@@ -38,6 +38,9 @@ const FULLPAGE_LIMITS = {
   maxPartHeight: 12000,
   scrollTolerance: 2,
 };
+const FULLPAGE_CAPTURE_THROTTLE_MS = 400;
+const FULLPAGE_SCROLL_DELAY_MS = 250;
+const FULLPAGE_RETRY_DELAY_MS = 700;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -845,6 +848,32 @@ function sendFullPageProgress(step, current, total, detail) {
     });
   } catch (error) {
     console.warn("[FULLPAGE] Failed to send progress", error);
+  }
+}
+
+let fullpageLastCaptureAt = 0;
+
+async function throttleCaptureVisibleTab(windowId) {
+  const now = Date.now();
+  const elapsed = now - fullpageLastCaptureAt;
+  if (elapsed < FULLPAGE_CAPTURE_THROTTLE_MS) {
+    await delay(FULLPAGE_CAPTURE_THROTTLE_MS - elapsed);
+  }
+  const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+  fullpageLastCaptureAt = Date.now();
+  return dataUrl;
+}
+
+async function captureVisibleTabWithRetry(windowId) {
+  try {
+    return await throttleCaptureVisibleTab(windowId);
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    if (message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
+      await delay(FULLPAGE_RETRY_DELAY_MS);
+      return await throttleCaptureVisibleTab(windowId);
+    }
+    throw error;
   }
 }
 
@@ -4039,9 +4068,10 @@ async function captureFullPageScreenshot(requestedTabId) {
         actualY = retryY;
       }
       currentScroll = actualY;
+      await delay(FULLPAGE_SCROLL_DELAY_MS);
       let dataUrl = null;
       try {
-        dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+        dataUrl = await captureVisibleTabWithRetry(windowId);
       } catch (error) {
         const err = new Error(
           error && error.message
@@ -4051,6 +4081,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
         throw err;
       }
+      await delay(FULLPAGE_CAPTURE_THROTTLE_MS);
       if (!dataUrl || !dataUrl.startsWith("data:image/png")) {
         const err = new Error("captureVisibleTab returned invalid data.");
         err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
