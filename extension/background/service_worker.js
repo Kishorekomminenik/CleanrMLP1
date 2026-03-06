@@ -4087,7 +4087,13 @@ async function captureFullPageScreenshot(requestedTabId) {
       totalHeight,
     });
     sendFullPageProgress("stitch", 0, tiles.length);
-    await ensureOffscreenReady();
+    try {
+      await ensureOffscreenReady();
+    } catch (error) {
+      const err = new Error("Full page capture failed. Try Snap instead.");
+      err.code = "FULLPAGE_ERR_OFFSCREEN";
+      throw err;
+    }
     const stitchResponse = await sendMessageToOffscreen({
       type: "FULLPAGE_STITCH",
       payload: {

@@ -2188,26 +2188,6 @@ async function handleFullPageScreenshot() {
     showToast(message, "error");
     return;
   }
-  const statusResponse = await send(MSG.GET_STATUS);
-  const sessionState =
-    statusResponse && statusResponse.state && statusResponse.state.session
-      ? statusResponse.state.session.state
-      : null;
-  const recordingState = recordingLiveState ? recordingLiveState.state : null;
-  const captureActive =
-    sessionState === "capturing" ||
-    sessionState === "paused" ||
-    recordingState === "recording" ||
-    recordingState === "paused";
-  if (currentMode !== "screenshot" && !captureActive) {
-    setStatus(
-      statusElements.message,
-      "Start a session first.",
-      "error"
-    );
-    showToast("Start a session", "error");
-    return;
-  }
   setStatus(
     statusElements.message,
     "Capturing full page… please don’t scroll.",
@@ -2240,6 +2220,8 @@ async function handleFullPageScreenshot() {
       message = errorInfo.message || "captureVisibleTab failed.";
     } else if (code === "FULLPAGE_ERR_STITCH_CANVAS_LIMIT") {
       message = "Stitching exceeded canvas limits. Exported in parts.";
+    } else if (code === "FULLPAGE_ERR_OFFSCREEN") {
+      message = "Full page capture failed. Try Snap instead.";
     }
     setStatus(statusElements.message, message, "error");
     showToast(message, "error");
