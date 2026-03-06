@@ -930,12 +930,20 @@ async function callFullpageCapture(tabId, method, args = []) {
     func: async (methodName, methodArgs) => {
       const api = window.__reproFullpageCapture;
       if (!api || typeof api[methodName] !== "function") {
-        return { ok: false, error: "Fullpage capture not available." };
+        return {
+          ok: false,
+          error: "Fullpage capture not available.",
+          code: "FULLPAGE_ERR_UNAVAILABLE",
+        };
       }
       try {
         return await api[methodName](...(methodArgs || []));
       } catch (error) {
-        return { ok: false, error: error?.message || String(error) };
+        return {
+          ok: false,
+          error: error?.message || String(error),
+          code: "FULLPAGE_ERR_EXEC",
+        };
       }
     },
     args: [method, args],
@@ -4020,12 +4028,32 @@ async function captureFullPageScreenshot(requestedTabId) {
     ]);
     if (!applyRes || applyRes.ok === false) {
       const err = new Error(applyRes?.error || "Failed to prepare page.");
-      err.code = "FULLPAGE_ERR_PREPARE";
+      err.code = applyRes?.code || "FULLPAGE_ERR_PREPARE";
       throw err;
     }
     restoreNeeded = true;
     console.log("[FULLPAGE_PREPARE]", { captureRunId });
+    const candidatesRes = await callFullpageCapture(
+      tabId,
+      "getScrollableCandidates"
+    );
+    if (candidatesRes && candidatesRes.ok && candidatesRes.length) {
+      console.log("[FULLPAGE_SCROLL_CANDIDATES]", {
+        candidates: candidatesRes.map((candidate) => ({
+          key: candidate.key,
+          type: candidate.type,
+          scrollHeight: candidate.scrollHeight,
+          clientHeight: candidate.clientHeight,
+          canScroll: candidate.canScroll,
+        })),
+      });
+    }
     const metricsRes = await callFullpageCapture(tabId, "getFullpageMetrics");
+    if (metricsRes && metricsRes.ok === false) {
+      const err = new Error(metricsRes.error || "Unable to read page metrics.");
+      err.code = metricsRes.code || "FULLPAGE_ERR_METRICS";
+      throw err;
+    }
     metrics = metricsRes && metricsRes.metrics ? metricsRes.metrics : null;
     if (!metrics) {
       const err = new Error("Unable to read page metrics.");
@@ -4035,19 +4063,33 @@ async function captureFullPageScreenshot(requestedTabId) {
     console.log("[FULLPAGE_METRICS]", metrics);
     const {
       scrollHeight,
-      innerHeight,
-      innerWidth,
+      clientHeight,
+      clientWidth,
       devicePixelRatio = 1,
-      scrollY = 0,
+      scrollTop = 0,
+      selectedKey,
+      selectedType,
     } = metrics;
-    if (!scrollHeight || !innerHeight || !innerWidth) {
+    const viewportHeight =
+      typeof clientHeight === "number" && clientHeight > 0
+        ? clientHeight
+        : metrics.innerHeight;
+    const viewportWidth =
+      typeof clientWidth === "number" && clientWidth > 0
+        ? clientWidth
+        : metrics.innerWidth;
+    if (!scrollHeight || !viewportHeight || !viewportWidth) {
       const err = new Error("Invalid page metrics for full capture.");
       err.code = "FULLPAGE_ERR_METRICS";
       throw err;
     }
-    const maxScrollY = Math.max(0, scrollHeight - innerHeight);
+    console.log("[FULLPAGE_SCROLL_SELECTED]", {
+      key: selectedKey || "unknown",
+      type: selectedType || "unknown",
+    });
+    const maxScrollY = Math.max(0, scrollHeight - viewportHeight);
     const positions = [];
-    for (let y = 0; y <= maxScrollY; y += innerHeight) {
+    for (let y = 0; y <= maxScrollY; y += viewportHeight) {
       positions.push(y);
     }
     if (positions.length === 0 || positions[positions.length - 1] !== maxScrollY) {
@@ -4070,7 +4112,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     sendFullPageProgress("capture", 0, totalTiles);
     const tiles = [];
     let prevY = null;
-    let currentScroll = scrollY;
+    let currentScroll = scrollTop;
     for (let i = 0; i < positions.length; i += 1) {
       const targetY = positions[i];
       sendFullPageProgress("capture", i + 1, totalTiles);
@@ -4079,6 +4121,11 @@ async function captureFullPageScreenshot(requestedTabId) {
         "scrollToFullpagePosition",
         [targetY]
       );
+      if (scrollRes && scrollRes.ok === false) {
+        const err = new Error(scrollRes.error || "Scroll mismatch.");
+        err.code = scrollRes.code || "FULLPAGE_ERR_SCROLL_MISMATCH";
+        throw err;
+      }
       let actualY =
         scrollRes && typeof scrollRes.scrollY === "number"
           ? scrollRes.scrollY
@@ -4128,13 +4175,16 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       let clipTop = 0;
       if (prevY !== null) {
-        const overlap = prevY + innerHeight - targetY;
+      const overlap = prevY + viewportHeight - targetY;
         if (overlap > 0) {
           clipTop = overlap;
         }
       }
       const remaining = scrollHeight - targetY - clipTop;
-      const clipHeight = Math.max(0, Math.min(innerHeight - clipTop, remaining));
+      const clipHeight = Math.max(
+        0,
+        Math.min(viewportHeight - clipTop, remaining)
+      );
       if (clipHeight <= 0) {
         prevY = targetY;
         continue;
@@ -4142,14 +4192,14 @@ async function captureFullPageScreenshot(requestedTabId) {
       tiles.push({
         dataUrl,
         y: Math.round(targetY * devicePixelRatio),
-        width: Math.round(innerWidth * devicePixelRatio),
-        height: Math.round(innerHeight * devicePixelRatio),
+        width: Math.round(viewportWidth * devicePixelRatio),
+        height: Math.round(viewportHeight * devicePixelRatio),
         clipTop: Math.round(clipTop * devicePixelRatio),
         clipHeight: Math.round(clipHeight * devicePixelRatio),
       });
       prevY = targetY;
     }
-    const totalWidth = Math.round(innerWidth * devicePixelRatio);
+    const totalWidth = Math.round(viewportWidth * devicePixelRatio);
     const totalHeight = Math.round(scrollHeight * devicePixelRatio);
     console.log("[FULLPAGE_STITCH_START]", {
       tiles: tiles.length,
