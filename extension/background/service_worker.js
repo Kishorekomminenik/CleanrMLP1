@@ -848,6 +848,33 @@ function sendFullPageProgress(step, current, total, detail) {
   }
 }
 
+async function isFullpageCaptureLoaded(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => Boolean(window.__REPRO_FULLPAGE_CAPTURE_LOADED__),
+  });
+  return Boolean(results && results[0] && results[0].result);
+}
+
+async function callFullpageCapture(tabId, method, args = []) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (methodName, methodArgs) => {
+      const api = window.__reproFullpageCapture;
+      if (!api || typeof api[methodName] !== "function") {
+        return { ok: false, error: "Fullpage capture not available." };
+      }
+      try {
+        return await api[methodName](...(methodArgs || []));
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    },
+    args: [method, args],
+  });
+  return results && results[0] ? results[0].result : { ok: false };
+}
+
 function reportExportProgress(percent, stage, detail) {
   if (!exportJob) {
     exportJob = {};
@@ -3902,31 +3929,42 @@ async function captureFullPageScreenshot(requestedTabId) {
   let restoreNeeded = false;
   let metrics = null;
   let windowId = tab.windowId || null;
+  let scriptLoaded = false;
+  const captureRunId = `full_${Date.now()}`;
   try {
-    console.log("[FULLPAGE][METRICS]", { tabId, url: tab.url });
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content/fullpage_capture.js"],
-    });
-    const applyRes = await sendMessageToTabWithResponse(tabId, {
-      type: "FP_APPLY_STYLES",
-    });
+    console.log("[FULLPAGE_PROBE]", { tabId, url: tab.url });
+    scriptLoaded = await isFullpageCaptureLoaded(tabId);
+    if (!scriptLoaded) {
+      console.log("[FULLPAGE_INJECT]", { tabId });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content/fullpage_capture.js"],
+      });
+      scriptLoaded = await isFullpageCaptureLoaded(tabId);
+    }
+    if (!scriptLoaded) {
+      const err = new Error("Fullpage capture helper failed to load.");
+      err.code = "FULLPAGE_ERR_INJECT";
+      throw err;
+    }
+    const applyRes = await callFullpageCapture(tabId, "prepareFullpageCapture", [
+      captureRunId,
+    ]);
     if (!applyRes || applyRes.ok === false) {
-      const err = new Error("Failed to prepare page for capture.");
+      const err = new Error(applyRes?.error || "Failed to prepare page.");
       err.code = "FULLPAGE_ERR_PREPARE";
       throw err;
     }
     restoreNeeded = true;
-    const metricsRes = await sendMessageToTabWithResponse(tabId, {
-      type: "FP_GET_METRICS",
-    });
+    console.log("[FULLPAGE_PREPARE]", { captureRunId });
+    const metricsRes = await callFullpageCapture(tabId, "getFullpageMetrics");
     metrics = metricsRes && metricsRes.metrics ? metricsRes.metrics : null;
     if (!metrics) {
       const err = new Error("Unable to read page metrics.");
       err.code = "FULLPAGE_ERR_METRICS";
       throw err;
     }
-    console.log("[FULLPAGE][METRICS]", metrics);
+    console.log("[FULLPAGE_METRICS]", metrics);
     const {
       scrollHeight,
       innerHeight,
@@ -3960,7 +3998,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         // Ignore focus failures.
       }
     }
-    console.log("[FULLPAGE][TILE_CAPTURE]", { total: totalTiles });
+    console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
     sendFullPageProgress("capture", 0, totalTiles);
     const tiles = [];
     let prevY = null;
@@ -3968,19 +4006,21 @@ async function captureFullPageScreenshot(requestedTabId) {
     for (let i = 0; i < positions.length; i += 1) {
       const targetY = positions[i];
       sendFullPageProgress("capture", i + 1, totalTiles);
-      const scrollRes = await sendMessageToTabWithResponse(tabId, {
-        type: "FP_SCROLL_TO",
-        y: targetY,
-      });
+      const scrollRes = await callFullpageCapture(
+        tabId,
+        "scrollToFullpagePosition",
+        [targetY]
+      );
       let actualY =
         scrollRes && typeof scrollRes.scrollY === "number"
           ? scrollRes.scrollY
           : null;
       if (actualY === null || Math.abs(actualY - targetY) > FULLPAGE_LIMITS.scrollTolerance) {
-        const retry = await sendMessageToTabWithResponse(tabId, {
-          type: "FP_SCROLL_TO",
-          y: targetY,
-        });
+        const retry = await callFullpageCapture(
+          tabId,
+          "scrollToFullpagePosition",
+          [targetY]
+        );
         const retryY =
           retry && typeof retry.scrollY === "number" ? retry.scrollY : null;
         if (
@@ -4041,7 +4081,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     const totalWidth = Math.round(innerWidth * devicePixelRatio);
     const totalHeight = Math.round(scrollHeight * devicePixelRatio);
-    console.log("[FULLPAGE][STITCH_START]", {
+    console.log("[FULLPAGE_STITCH_START]", {
       tiles: tiles.length,
       totalWidth,
       totalHeight,
@@ -4068,7 +4108,7 @@ async function captureFullPageScreenshot(requestedTabId) {
           : "FULLPAGE_ERR_STITCH";
       throw err;
     }
-    console.log("[FULLPAGE][STITCH_DONE]", {
+    console.log("[FULLPAGE_STITCH_DONE]", {
       kind: stitchResponse.kind,
       parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
     });
@@ -4170,10 +4210,16 @@ async function captureFullPageScreenshot(requestedTabId) {
   } finally {
     if (restoreNeeded) {
       try {
-        await sendMessageToTabWithResponse(tabId, { type: "FP_RESTORE" });
-        console.log("[FULLPAGE][RESTORE_DONE]", { tabId });
+        await callFullpageCapture(tabId, "restoreFullpagePageState");
+        console.log("[FULLPAGE_RESTORE]", { tabId, captureRunId });
       } catch (error) {
         console.warn("[FULLPAGE] Failed to restore page state", error);
+      }
+      try {
+        await callFullpageCapture(tabId, "resetFullpageCaptureState");
+        console.log("[FULLPAGE_RESET]", { tabId, captureRunId });
+      } catch (error) {
+        console.warn("[FULLPAGE] Failed to reset page state", error);
       }
     }
   }
