@@ -4241,24 +4241,35 @@ async function captureFullPageScreenshot(requestedTabId) {
     });
     if (!stitchResponse || stitchResponse.ok === false) {
       const err = new Error(
-        stitchResponse && stitchResponse.error
-          ? stitchResponse.error
-          : "STITCH_FAILED"
+        stitchResponse && stitchResponse.message
+          ? stitchResponse.message
+          : "Image stitching failed."
       );
       err.code =
         stitchResponse && stitchResponse.code
           ? stitchResponse.code
-          : "FULLPAGE_ERR_STITCH";
+          : "FULLPAGE_ERR_STITCH_FAILED";
       throw err;
     }
+    const hasBlob =
+      stitchResponse.kind === "single" ? stitchResponse.blob instanceof Blob : false;
+    const blobSize =
+      stitchResponse.kind === "single" && hasBlob ? stitchResponse.blob.size : 0;
     console.log("[FULLPAGE_STITCH_DONE]", {
       kind: stitchResponse.kind,
       parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
+      hasBlob,
+      blobSize,
     });
     sendFullPageProgress("stitch", tiles.length, tiles.length);
     const exportTimestamp = formatExportTimestamp(new Date());
     if (stitchResponse.kind === "single" && stitchResponse.blob) {
       const blob = stitchResponse.blob;
+      if (!(blob instanceof Blob)) {
+        const err = new Error("Full capture produced an invalid image blob.");
+        err.code = "FULLPAGE_ERR_INVALID_BLOB";
+        throw err;
+      }
       let dataUrl = null;
       try {
         dataUrl = await blobToDataUrl(blob);
@@ -4281,7 +4292,12 @@ async function captureFullPageScreenshot(requestedTabId) {
         });
       }
       clearStatusMessage();
-      return { blob };
+      return {
+        blob,
+        mimeType: stitchResponse.mimeType || "image/png",
+        width: stitchResponse.width || totalWidth,
+        height: stitchResponse.height || totalHeight,
+      };
     }
     if (stitchResponse.kind === "multi" && Array.isArray(stitchResponse.parts)) {
       const parts = [];
@@ -4291,6 +4307,11 @@ async function captureFullPageScreenshot(requestedTabId) {
         let blob = part.blob;
         if (!blob) {
           continue;
+        }
+        if (!(blob instanceof Blob)) {
+          const err = new Error("Full capture produced an invalid image blob.");
+          err.code = "FULLPAGE_ERR_INVALID_BLOB";
+          throw err;
         }
         let dataUrl = null;
         try {
@@ -4317,7 +4338,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         parts.push({ fileName });
       }
       clearStatusMessage();
-      return { parts };
+      return { kind: "multi", parts };
     }
     const err = new Error("Stitching returned no image.");
     err.code = "FULLPAGE_ERR_STITCH";

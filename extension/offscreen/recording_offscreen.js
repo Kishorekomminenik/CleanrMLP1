@@ -107,13 +107,17 @@ async function stitchFullPageTiles(payload) {
   const overlayText =
     payload && typeof payload.overlayText === "string" ? payload.overlayText : null;
   if (!tiles.length || !totalWidth || !totalHeight) {
-    return { ok: false, error: "STITCH_FAILED" };
+    return {
+      ok: false,
+      code: "FULLPAGE_ERR_STITCH_FAILED",
+      message: "Image stitching failed.",
+    };
   }
   if (totalWidth > FULLPAGE_CANVAS_MAX_EDGE) {
     return {
       ok: false,
-      error: "STITCH_FAILED",
       code: "FULLPAGE_ERR_STITCH_CANVAS_LIMIT",
+      message: "Image stitching failed.",
     };
   }
   const drawOverlay = (ctx, width, height) => {
@@ -151,11 +155,27 @@ async function stitchFullPageTiles(payload) {
         canvas.toBlob((b) => resolve(b || null), "image/png");
       });
       if (!(blob instanceof Blob)) {
-        return { ok: false, error: "STITCH_FAILED" };
+        return {
+          ok: false,
+          code: "FULLPAGE_ERR_INVALID_BLOB",
+          message: "Full capture produced an invalid image blob.",
+        };
       }
-      return { ok: true, kind: "single", blob };
+      return {
+        ok: true,
+        kind: "single",
+        parts: 1,
+        blob,
+        mimeType: "image/png",
+        width: canvas.width,
+        height: canvas.height,
+      };
     } catch (error) {
-      return { ok: false, error: "STITCH_FAILED" };
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH_FAILED",
+        message: "Image stitching failed.",
+      };
     }
   }
   const partHeight = Math.min(FULLPAGE_PART_HEIGHT, FULLPAGE_CANVAS_MAX_EDGE);
@@ -175,14 +195,29 @@ async function stitchFullPageTiles(payload) {
         canvas.toBlob((b) => resolve(b || null), "image/png");
       });
       if (!(blob instanceof Blob)) {
-        return { ok: false, error: "STITCH_FAILED" };
+        return {
+          ok: false,
+          code: "FULLPAGE_ERR_INVALID_BLOB",
+          message: "Full capture produced an invalid image blob.",
+        };
       }
-      parts.push({ blob, index });
+      parts.push({ blob, index, width: canvas.width, height: canvas.height });
     }
   } catch (error) {
-    return { ok: false, error: "STITCH_FAILED" };
+    return {
+      ok: false,
+      code: "FULLPAGE_ERR_STITCH_FAILED",
+      message: "Image stitching failed.",
+    };
   }
-  return { ok: true, kind: "multi", parts };
+  return {
+    ok: true,
+    kind: "multi",
+    parts,
+    mimeType: "image/png",
+    width: totalWidth,
+    height: totalHeight,
+  };
 }
 
 function sumChunkBytes(chunks) {

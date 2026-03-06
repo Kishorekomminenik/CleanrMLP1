@@ -2200,6 +2200,13 @@ async function handleFullPageScreenshot() {
     tabId: activeTab && activeTab.id ? activeTab.id : null,
   });
   setFullPageInProgress(false);
+  console.log("[FULLPAGE_RESPONSE]", {
+    ok: response && response.ok,
+    code: response && response.error ? response.error.code : null,
+    hasBlob: Boolean(response && response.blob),
+    blobSize:
+      response && response.blob instanceof Blob ? response.blob.size : null,
+  });
   if (!response.ok) {
     const errorInfo = response.error || {};
     const code = errorInfo.code || "UNKNOWN";
@@ -2230,12 +2237,10 @@ async function handleFullPageScreenshot() {
   }
   if (response.blob) {
     if (!(response.blob instanceof Blob)) {
-      setStatus(
-        statusElements.message,
-        "Full page capture failed. Try Snap instead.",
-        "error"
-      );
-      showToast("Full page capture failed. Try Snap instead.", "error");
+      const message =
+        response.message || "Full page capture failed. Try Snap instead.";
+      setStatus(statusElements.message, message, "error");
+      showToast(message, "error");
       await refreshStatus();
       return;
     }
@@ -2260,6 +2265,7 @@ async function handleFullPageScreenshot() {
         error && error.message ? error.message : "Failed to open viewer.";
       setStatus(statusElements.message, message, "error");
       showToast(message, "error");
+      console.warn("[FULLPAGE_VIEWER_OPEN_FAILED]", message);
       await refreshStatus();
       return;
     }
@@ -2286,6 +2292,13 @@ async function handleFullPageScreenshot() {
       : "Full capture exported in parts.";
     setStatus(statusElements.message, message, "success");
     showToast("Full capture exported");
+    await refreshStatus();
+    return;
+  } else {
+    const message =
+      response.message || "Full page capture failed. Try Snap instead.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
     await refreshStatus();
     return;
   }
