@@ -4273,15 +4273,19 @@ async function captureFullPageScreenshot(requestedTabId) {
         err.code = "FULLPAGE_ERR_STITCH";
         throw err;
       }
-      const blob = new Blob([buffer], {
-        type: stitchResponse.mimeType || "image/png",
-      });
+      const mimeType = stitchResponse.mimeType || "image/png";
+      const blob = new Blob([buffer], { type: mimeType });
       reconstructedBlobSize = blob.size;
+      console.log("[FULLPAGE][SW][RECONSTRUCTED_BLOB]", {
+        size: reconstructedBlobSize,
+        mimeType,
+      });
       normalizedStitchResponse = {
         ...stitchResponse,
-        kind: "single",
+        kind: "blob",
         blob,
-        mimeType: stitchResponse.mimeType || "image/png",
+        mimeType,
+        blobSize: reconstructedBlobSize,
       };
     }
     if (DEBUG_FULLPAGE) {
@@ -4319,14 +4323,13 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = code;
       throw err;
     }
-    const hasBlob =
-      normalizedStitchResponse.kind === "single"
-        ? normalizedStitchResponse.blob instanceof Blob
-        : false;
-    const blobSize =
-      normalizedStitchResponse.kind === "single" && hasBlob
-        ? normalizedStitchResponse.blob.size
-        : 0;
+    const isSingleBlob =
+      normalizedStitchResponse.kind === "single" ||
+      normalizedStitchResponse.kind === "blob";
+    const hasBlob = isSingleBlob
+      ? normalizedStitchResponse.blob instanceof Blob
+      : false;
+    const blobSize = isSingleBlob && hasBlob ? normalizedStitchResponse.blob.size : 0;
     console.log("[FULLPAGE_STITCH_DONE]", {
       kind: normalizedStitchResponse.kind,
       parts: normalizedStitchResponse.parts ? normalizedStitchResponse.parts.length : 1,
@@ -4335,7 +4338,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     });
     sendFullPageProgress("stitch", tiles.length, tiles.length);
     const exportTimestamp = formatExportTimestamp(new Date());
-    if (normalizedStitchResponse.kind === "single" && normalizedStitchResponse.blob) {
+    if (isSingleBlob && normalizedStitchResponse.blob) {
       const blob = normalizedStitchResponse.blob;
       if (!(blob instanceof Blob)) {
         const err = new Error("Full capture produced an invalid image blob.");
@@ -4365,8 +4368,10 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       clearStatusMessage();
       return {
+        kind: "blob",
         blob,
         mimeType: normalizedStitchResponse.mimeType || "image/png",
+        blobSize: blob.size,
         width: normalizedStitchResponse.width || totalWidth,
         height: normalizedStitchResponse.height || totalHeight,
       };
@@ -5915,6 +5920,7 @@ async function handleMessage(message, sender) {
           hasBlob: result?.blob instanceof Blob,
           blobType: result?.blob?.type,
           blobSize: result?.blob?.size,
+          responseBlobSize: result?.blobSize,
           mimeType: result?.mimeType,
           keys: result ? Object.keys(result) : null,
         });
