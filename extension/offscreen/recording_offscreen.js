@@ -19,6 +19,7 @@ let recordingFinalChunkLogged = false;
 const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
 const FULLPAGE_PART_HEIGHT = 12000;
+let fullpagePort = null;
 
 chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
 
@@ -58,6 +59,18 @@ async function dataUrlToBitmap(dataUrl) {
 
 function delay() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function getFullpagePort() {
+  if (fullpagePort) {
+    return fullpagePort;
+  }
+  fullpagePort = chrome.runtime.connect({ name: "fullpage-stitch" });
+  console.log("[FULLPAGE][OFFSCREEN][PORT_OPEN]", { portName: fullpagePort.name });
+  fullpagePort.onDisconnect.addListener(() => {
+    fullpagePort = null;
+  });
+  return fullpagePort;
 }
 
 async function drawTilesToCanvas({
@@ -267,13 +280,40 @@ async function handleFullpageStitch(data) {
         mimeType: "image/png",
       });
     }
+    const captureRunId =
+      data && typeof data.captureRunId === "string" ? data.captureRunId : null;
+    const bytes = new Uint8Array(arrayBuffer);
+    console.log("[FULLPAGE][OFFSCREEN][SEND_TYPED_ARRAY]", {
+      byteLength: bytes.byteLength,
+      mimeType: "image/png",
+      ctor: bytes.constructor ? bytes.constructor.name : null,
+      tag: Object.prototype.toString.call(bytes),
+    });
+    try {
+      const port = getFullpagePort();
+      port.postMessage({
+        type: "FULLPAGE_STITCH_RESULT",
+        ok: true,
+        kind: "arraybuffer",
+        mimeType: "image/png",
+        buffer: bytes,
+        byteLength: bytes.byteLength,
+        captureRunId,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
+        message: error?.message || "Failed to send stitched bytes.",
+      };
+    }
 
     return {
       ok: true,
       kind: "arraybuffer",
       mimeType: "image/png",
-      buffer: arrayBuffer,
       byteLength: arrayBuffer.byteLength,
+      captureRunId,
     };
   } catch (err) {
     return {

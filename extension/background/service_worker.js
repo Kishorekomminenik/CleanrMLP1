@@ -137,6 +137,120 @@ const state = {
   },
 };
 
+const FULLPAGE_PORT_NAME = "fullpage-stitch";
+const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
+const fullpageStitchPending = new Map();
+
+function waitForFullpageStitchResult(captureRunId) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      fullpageStitchPending.delete(captureRunId);
+      const err = new Error("Full page stitch timed out.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      reject(err);
+    }, FULLPAGE_STITCH_TIMEOUT_MS);
+    fullpageStitchPending.set(captureRunId, { resolve, reject, timeoutId });
+  });
+}
+
+function resolveFullpageStitchResult(captureRunId, result) {
+  const pending = fullpageStitchPending.get(captureRunId);
+  if (!pending) {
+    return;
+  }
+  clearTimeout(pending.timeoutId);
+  fullpageStitchPending.delete(captureRunId);
+  pending.resolve(result);
+}
+
+function rejectFullpageStitchResult(captureRunId, error) {
+  const pending = fullpageStitchPending.get(captureRunId);
+  if (!pending) {
+    return;
+  }
+  clearTimeout(pending.timeoutId);
+  fullpageStitchPending.delete(captureRunId);
+  pending.reject(error);
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port || port.name !== FULLPAGE_PORT_NAME) {
+    return;
+  }
+  console.log("[FULLPAGE][SW][PORT_CONNECTED]", { portName: port.name });
+  port.onMessage.addListener((message) => {
+    const hasBuffer = !!message?.buffer;
+    const bufferTag = Object.prototype.toString.call(message?.buffer);
+    const bufferCtor = message?.buffer?.constructor?.name;
+    console.log("[FULLPAGE][SW][PORT_MESSAGE_RAW]", {
+      type: message?.type,
+      ok: message?.ok,
+      kind: message?.kind,
+      mimeType: message?.mimeType,
+      hasBuffer,
+      ctor: bufferCtor,
+      tag: bufferTag,
+      byteLengthField: message?.byteLength,
+      bufferByteLength: message?.buffer?.byteLength,
+      captureRunId: message?.captureRunId,
+    });
+    if (!message || message.type !== "FULLPAGE_STITCH_RESULT") {
+      return;
+    }
+    const captureRunId = message.captureRunId;
+    if (!captureRunId) {
+      return;
+    }
+    if (!message.ok) {
+      const err = new Error(message.message || "Full page stitch failed.");
+      err.code = message.code || "FULLPAGE_ERR_STITCH";
+      rejectFullpageStitchResult(captureRunId, err);
+      return;
+    }
+    if (message.kind !== "arraybuffer") {
+      const err = new Error("Unexpected stitch response.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      rejectFullpageStitchResult(captureRunId, err);
+      return;
+    }
+    const bytes = message.buffer;
+    const isView = ArrayBuffer.isView(bytes);
+    const byteLength = bytes && typeof bytes.byteLength === "number" ? bytes.byteLength : 0;
+    const byteOffset = bytes && typeof bytes.byteOffset === "number" ? bytes.byteOffset : 0;
+    console.log("[FULLPAGE][SW][PORT_TYPED_ARRAY_VALID]", {
+      isView,
+      byteLength,
+      byteOffset,
+    });
+    if (!bytes || !isView || byteLength <= 0) {
+      const err = new Error("Stitching returned no image bytes.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      rejectFullpageStitchResult(captureRunId, err);
+      return;
+    }
+    const buffer = bytes.buffer.slice(byteOffset, byteOffset + byteLength);
+    const mimeType = message.mimeType || "image/png";
+    const blob = new Blob([buffer], { type: mimeType });
+    if (!blob || blob.size <= 0) {
+      const err = new Error("Stitching returned no image bytes.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      rejectFullpageStitchResult(captureRunId, err);
+      return;
+    }
+    console.log("[FULLPAGE][SW][RECONSTRUCTED_BLOB]", {
+      size: blob.size,
+      mimeType,
+    });
+    resolveFullpageStitchResult(captureRunId, {
+      ok: true,
+      kind: "blob",
+      blob,
+      mimeType,
+      blobSize: blob.size,
+    });
+  });
+});
+
 const captureState = {
   sessionId: null,
   partId: null,
@@ -4239,6 +4353,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         totalHeight,
         overlayText,
         debug: DEBUG_FULLPAGE === true,
+        captureRunId,
       },
     });
     console.log("[FULLPAGE][SW][RAW_RESPONSE]", stitchResponse);
@@ -4252,49 +4367,36 @@ async function captureFullPageScreenshot(requestedTabId) {
       byteLengthField: stitchResponse?.byteLength,
       bufferByteLength: stitchResponse?.buffer?.byteLength,
     });
-    let normalizedStitchResponse = stitchResponse;
-    let hasArrayBuffer = false;
-    let byteLength = 0;
-    let reconstructedBlobSize = null;
-    let bufferType = null;
-    let bufferCtor = null;
-    if (stitchResponse && stitchResponse.ok && stitchResponse.kind === "arraybuffer") {
-      const buffer = stitchResponse.buffer;
-      bufferType = typeof buffer;
-      bufferCtor = buffer && buffer.constructor ? buffer.constructor.name : null;
-      const isArrayBuffer =
-        buffer && Object.prototype.toString.call(buffer) === "[object ArrayBuffer]";
-      byteLength =
-        typeof stitchResponse.byteLength === "number"
-          ? stitchResponse.byteLength
-          : isArrayBuffer
-            ? buffer.byteLength
-            : 0;
-      hasArrayBuffer = isArrayBuffer;
-      if (!hasArrayBuffer || byteLength <= 0) {
-        const err = new Error("Stitching returned no image bytes.");
-        err.code = "FULLPAGE_ERR_STITCH";
-        throw err;
-      }
-      const mimeType = stitchResponse.mimeType || "image/png";
-      const blob = new Blob([buffer], { type: mimeType });
-      reconstructedBlobSize = blob.size;
-      console.log("[FULLPAGE][SW][RECONSTRUCTED_BLOB]", {
-        size: reconstructedBlobSize,
-        mimeType,
-      });
-      normalizedStitchResponse = {
-        ok: true,
-        kind: "blob",
-        blob,
-        mimeType,
-        blobSize: reconstructedBlobSize,
-      };
-    } else if (stitchResponse && stitchResponse.ok) {
+    if (!stitchResponse || stitchResponse.ok === false) {
+      const message =
+        stitchResponse && stitchResponse.message
+          ? stitchResponse.message
+          : stitchResponse && stitchResponse.error
+            ? stitchResponse.error
+            : "Image stitching failed.";
+      const code =
+        stitchResponse && stitchResponse.code
+          ? stitchResponse.code
+          : "FULLPAGE_ERR_STITCH_FAILED";
+      const err = new Error(message);
+      err.code = code;
+      throw err;
+    }
+    if (stitchResponse.kind !== "arraybuffer") {
       const err = new Error("Unexpected stitch response.");
       err.code = "FULLPAGE_ERR_STITCH";
       throw err;
     }
+    const runId =
+      stitchResponse.captureRunId && typeof stitchResponse.captureRunId === "string"
+        ? stitchResponse.captureRunId
+        : captureRunId;
+    if (!runId) {
+      const err = new Error("Missing stitch response id.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      throw err;
+    }
+    const normalizedStitchResponse = await waitForFullpageStitchResult(runId);
     if (DEBUG_FULLPAGE) {
       console.log("[FULLPAGE][SW][STITCH_RESULT]", {
         ok: normalizedStitchResponse?.ok,
@@ -4302,32 +4404,12 @@ async function captureFullPageScreenshot(requestedTabId) {
         message: normalizedStitchResponse?.message,
         kind: normalizedStitchResponse?.kind,
         parts: normalizedStitchResponse?.parts,
-        hasArrayBuffer,
-        byteLength,
-        bufferType,
-        bufferCtor,
-        reconstructedBlobSize,
         hasBlob: normalizedStitchResponse?.blob instanceof Blob,
         blobType: normalizedStitchResponse?.blob?.type,
         blobSize: normalizedStitchResponse?.blob?.size,
         mimeType: normalizedStitchResponse?.mimeType,
         keys: normalizedStitchResponse ? Object.keys(normalizedStitchResponse) : null,
       });
-    }
-    if (!normalizedStitchResponse || normalizedStitchResponse.ok === false) {
-      const message =
-        normalizedStitchResponse && normalizedStitchResponse.message
-          ? normalizedStitchResponse.message
-          : normalizedStitchResponse && normalizedStitchResponse.error
-            ? normalizedStitchResponse.error
-            : "Image stitching failed.";
-      const code =
-        normalizedStitchResponse && normalizedStitchResponse.code
-          ? normalizedStitchResponse.code
-          : "FULLPAGE_ERR_STITCH_FAILED";
-      const err = new Error(message);
-      err.code = code;
-      throw err;
     }
     const hasBlob =
       normalizedStitchResponse.kind === "blob"
