@@ -116,12 +116,37 @@ async function normalizeToBlob(input) {
   throw new Error("FULLPAGE_ERR_INVALID_BLOB");
 }
 
+async function canvasToPngBlob(canvas) {
+  if (canvas && typeof canvas.convertToBlob === "function") {
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    if (!blob) {
+      throw new Error("Canvas toBlob returned null");
+    }
+    return blob;
+  }
+  if (canvas && typeof canvas.toBlob === "function") {
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error("Canvas toBlob returned null"));
+            return;
+          }
+          resolve(blob);
+        },
+        "image/png"
+      );
+    });
+  }
+  throw new Error("Canvas toBlob returned null");
+}
+
 async function handleFullpageStitch(data) {
   try {
     if (!data || !Array.isArray(data.tiles) || data.tiles.length === 0) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_NO_TILES",
+        code: "FULLPAGE_ERR_STITCH",
         message: "No tiles provided for stitching.",
       };
     }
@@ -131,7 +156,7 @@ async function handleFullpageStitch(data) {
     if (!totalWidth || !totalHeight) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_INVALID_DIMENSIONS",
+        code: "FULLPAGE_ERR_STITCH",
         message: "Invalid canvas dimensions.",
       };
     }
@@ -142,7 +167,7 @@ async function handleFullpageStitch(data) {
     if (!ctx) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_NO_CONTEXT",
+        code: "FULLPAGE_ERR_STITCH",
         message: "Could not acquire 2D context.",
       };
     }
@@ -169,37 +194,40 @@ async function handleFullpageStitch(data) {
     if (canvas.width === 0 || canvas.height === 0) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_ZERO_CANVAS",
+        code: "FULLPAGE_ERR_STITCH",
         message: "Canvas has zero dimension.",
       };
     }
 
-    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const blob = await canvasToPngBlob(canvas);
 
-    if (!blob || blob.size === 0) {
+    if (!(blob instanceof Blob)) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_EMPTY_BLOB",
+        code: "FULLPAGE_ERR_STITCH",
+        message: "Stitch did not return a valid Blob.",
+      };
+    }
+    if (blob.size === 0) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
         message: "Generated blob is empty.",
       };
     }
 
     return {
       ok: true,
-      blob,
+      kind: "blob",
       mimeType: "image/png",
+      blob,
+      blobSize: blob.size,
     };
   } catch (err) {
     return {
       ok: false,
-      code:
-        err && err.message === "FULLPAGE_ERR_INVALID_BLOB"
-          ? "FULLPAGE_ERR_INVALID_BLOB"
-          : "FULLPAGE_ERR_STITCH_EXCEPTION",
-      message:
-        err && err.message === "FULLPAGE_ERR_INVALID_BLOB"
-          ? "Tile was not a valid Blob"
-          : err?.message || "Unexpected stitch error.",
+      code: "FULLPAGE_ERR_STITCH",
+      message: err?.message || "Unexpected stitch error.",
     };
   }
 }
