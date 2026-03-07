@@ -172,6 +172,13 @@ async function handleFullpageStitch(data) {
       };
     }
 
+    let drawnTileCount = 0;
+    if (data && data.debug) {
+      console.log("[FULLPAGE][OFFSCREEN][CANVAS]", {
+        width: canvas.width,
+        height: canvas.height,
+      });
+    }
     for (const tile of data.tiles) {
       if (data && data.debug) {
         console.log("[FULLPAGE][OFFSCREEN][TILE]", {
@@ -186,17 +193,43 @@ async function handleFullpageStitch(data) {
           : tile;
       const blob = await normalizeToBlob(candidate);
       const img = await createImageBitmap(blob);
+      if (data && data.debug) {
+        console.log("[FULLPAGE][OFFSCREEN][TILE_DIMENSIONS]", {
+          width: img.width,
+          height: img.height,
+        });
+      }
+      if (!img.width || !img.height) {
+        return {
+          ok: false,
+          code: "FULLPAGE_ERR_STITCH",
+          message: "Decoded tile has zero dimensions.",
+        };
+      }
       const x = tile && typeof tile.x === "number" ? tile.x : 0;
       const y = tile && typeof tile.y === "number" ? tile.y : 0;
       ctx.drawImage(img, x, y);
+      drawnTileCount += 1;
     }
 
     if (canvas.width === 0 || canvas.height === 0) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
-        message: "Canvas has zero dimension.",
+        message: "Final canvas has zero dimensions.",
       };
+    }
+    if (drawnTileCount === 0) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
+        message: "No tiles were drawn onto final canvas.",
+      };
+    }
+    if (data && data.debug) {
+      console.log("[FULLPAGE][OFFSCREEN][TILES_DRAWN]", {
+        count: drawnTileCount,
+      });
     }
 
     const blob = await canvasToPngBlob(canvas);
@@ -212,8 +245,13 @@ async function handleFullpageStitch(data) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
-        message: "Generated blob is empty.",
+        message: "Canvas export produced empty blob.",
       };
+    }
+    if (data && data.debug) {
+      console.log("[FULLPAGE][OFFSCREEN][BLOB]", {
+        size: blob.size,
+      });
     }
 
     const arrayBuffer = await blob.arrayBuffer();
@@ -221,7 +259,7 @@ async function handleFullpageStitch(data) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
-        message: "Stitching returned no image bytes.",
+        message: "Blob converted to empty byte array.",
       };
     }
     if (data && data.debug) {
