@@ -4245,19 +4245,38 @@ async function captureFullPageScreenshot(requestedTabId) {
     let hasArrayBuffer = false;
     let byteLength = 0;
     let reconstructedBlobSize = null;
+    let bytesType = null;
+    let bytesCtor = null;
+    let bytesIsView = false;
     if (
       stitchResponse &&
       stitchResponse.ok &&
       stitchResponse.kind === "arraybuffer"
     ) {
-      hasArrayBuffer = stitchResponse.bytes instanceof ArrayBuffer;
-      byteLength = hasArrayBuffer ? stitchResponse.bytes.byteLength : 0;
+      const bytes = stitchResponse.bytes;
+      bytesType = typeof bytes;
+      bytesCtor = bytes && bytes.constructor ? bytes.constructor.name : null;
+      bytesIsView = bytes ? ArrayBuffer.isView(bytes) : false;
+      const isArrayBuffer =
+        bytes && Object.prototype.toString.call(bytes) === "[object ArrayBuffer]";
+      let buffer = null;
+      if (isArrayBuffer) {
+        buffer = bytes;
+      } else if (bytesIsView && bytes.buffer) {
+        const start = bytes.byteOffset || 0;
+        const end = start + (bytes.byteLength || 0);
+        buffer = bytes.buffer.slice(start, end);
+      } else if (Array.isArray(bytes)) {
+        buffer = new Uint8Array(bytes).buffer;
+      }
+      hasArrayBuffer = Boolean(buffer);
+      byteLength = buffer ? buffer.byteLength : 0;
       if (!hasArrayBuffer || byteLength <= 0) {
         const err = new Error("Stitching returned no image bytes.");
         err.code = "FULLPAGE_ERR_STITCH";
         throw err;
       }
-      const blob = new Blob([stitchResponse.bytes], {
+      const blob = new Blob([buffer], {
         type: stitchResponse.mimeType || "image/png",
       });
       reconstructedBlobSize = blob.size;
@@ -4277,6 +4296,9 @@ async function captureFullPageScreenshot(requestedTabId) {
         parts: normalizedStitchResponse?.parts,
         hasArrayBuffer,
         byteLength,
+        bytesType,
+        bytesCtor,
+        bytesIsView,
         reconstructedBlobSize,
         hasBlob: normalizedStitchResponse?.blob instanceof Blob,
         blobType: normalizedStitchResponse?.blob?.type,
