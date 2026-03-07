@@ -216,12 +216,28 @@ async function handleFullpageStitch(data) {
       };
     }
 
+    const arrayBuffer = await blob.arrayBuffer();
+    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
+        message: "Stitching returned no image bytes.",
+      };
+    }
+    if (data && data.debug) {
+      console.log("[FULLPAGE][OFFSCREEN][STITCH_RESULT]", {
+        byteLength: arrayBuffer.byteLength,
+        mimeType: "image/png",
+      });
+    }
+
     return {
       ok: true,
-      kind: "blob",
+      kind: "arraybuffer",
       mimeType: "image/png",
-      blob,
-      blobSize: blob.size,
+      bytes: arrayBuffer,
+      byteLength: arrayBuffer.byteLength,
+      parts: 1,
     };
   } catch (err) {
     return {

@@ -4241,49 +4241,83 @@ async function captureFullPageScreenshot(requestedTabId) {
         debug: DEBUG_FULLPAGE === true,
       },
     });
+    let normalizedStitchResponse = stitchResponse;
+    let hasArrayBuffer = false;
+    let byteLength = 0;
+    let reconstructedBlobSize = null;
+    if (
+      stitchResponse &&
+      stitchResponse.ok &&
+      stitchResponse.kind === "arraybuffer"
+    ) {
+      hasArrayBuffer = stitchResponse.bytes instanceof ArrayBuffer;
+      byteLength = hasArrayBuffer ? stitchResponse.bytes.byteLength : 0;
+      if (!hasArrayBuffer || byteLength <= 0) {
+        const err = new Error("Stitching returned no image bytes.");
+        err.code = "FULLPAGE_ERR_STITCH";
+        throw err;
+      }
+      const blob = new Blob([stitchResponse.bytes], {
+        type: stitchResponse.mimeType || "image/png",
+      });
+      reconstructedBlobSize = blob.size;
+      normalizedStitchResponse = {
+        ...stitchResponse,
+        kind: "single",
+        blob,
+        mimeType: stitchResponse.mimeType || "image/png",
+      };
+    }
     if (DEBUG_FULLPAGE) {
       console.log("[FULLPAGE][SW][STITCH_RESULT]", {
-        ok: stitchResponse?.ok,
-        code: stitchResponse?.code,
-        message: stitchResponse?.message,
-        kind: stitchResponse?.kind,
-        parts: stitchResponse?.parts,
-        hasBlob: stitchResponse?.blob instanceof Blob,
-        blobType: stitchResponse?.blob?.type,
-        blobSize: stitchResponse?.blob?.size,
-        mimeType: stitchResponse?.mimeType,
-        keys: stitchResponse ? Object.keys(stitchResponse) : null,
+        ok: normalizedStitchResponse?.ok,
+        code: normalizedStitchResponse?.code,
+        message: normalizedStitchResponse?.message,
+        kind: normalizedStitchResponse?.kind,
+        parts: normalizedStitchResponse?.parts,
+        hasArrayBuffer,
+        byteLength,
+        reconstructedBlobSize,
+        hasBlob: normalizedStitchResponse?.blob instanceof Blob,
+        blobType: normalizedStitchResponse?.blob?.type,
+        blobSize: normalizedStitchResponse?.blob?.size,
+        mimeType: normalizedStitchResponse?.mimeType,
+        keys: normalizedStitchResponse ? Object.keys(normalizedStitchResponse) : null,
       });
     }
-    if (!stitchResponse || stitchResponse.ok === false) {
+    if (!normalizedStitchResponse || normalizedStitchResponse.ok === false) {
       const message =
-        stitchResponse && stitchResponse.message
-          ? stitchResponse.message
-          : stitchResponse && stitchResponse.error
-            ? stitchResponse.error
+        normalizedStitchResponse && normalizedStitchResponse.message
+          ? normalizedStitchResponse.message
+          : normalizedStitchResponse && normalizedStitchResponse.error
+            ? normalizedStitchResponse.error
             : "Image stitching failed.";
       const code =
-        stitchResponse && stitchResponse.code
-          ? stitchResponse.code
+        normalizedStitchResponse && normalizedStitchResponse.code
+          ? normalizedStitchResponse.code
           : "FULLPAGE_ERR_STITCH_FAILED";
       const err = new Error(message);
       err.code = code;
       throw err;
     }
     const hasBlob =
-      stitchResponse.kind === "single" ? stitchResponse.blob instanceof Blob : false;
+      normalizedStitchResponse.kind === "single"
+        ? normalizedStitchResponse.blob instanceof Blob
+        : false;
     const blobSize =
-      stitchResponse.kind === "single" && hasBlob ? stitchResponse.blob.size : 0;
+      normalizedStitchResponse.kind === "single" && hasBlob
+        ? normalizedStitchResponse.blob.size
+        : 0;
     console.log("[FULLPAGE_STITCH_DONE]", {
-      kind: stitchResponse.kind,
-      parts: stitchResponse.parts ? stitchResponse.parts.length : 1,
+      kind: normalizedStitchResponse.kind,
+      parts: normalizedStitchResponse.parts ? normalizedStitchResponse.parts.length : 1,
       hasBlob,
       blobSize,
     });
     sendFullPageProgress("stitch", tiles.length, tiles.length);
     const exportTimestamp = formatExportTimestamp(new Date());
-    if (stitchResponse.kind === "single" && stitchResponse.blob) {
-      const blob = stitchResponse.blob;
+    if (normalizedStitchResponse.kind === "single" && normalizedStitchResponse.blob) {
+      const blob = normalizedStitchResponse.blob;
       if (!(blob instanceof Blob)) {
         const err = new Error("Full capture produced an invalid image blob.");
         err.code = "FULLPAGE_ERR_INVALID_BLOB";
@@ -4313,15 +4347,18 @@ async function captureFullPageScreenshot(requestedTabId) {
       clearStatusMessage();
       return {
         blob,
-        mimeType: stitchResponse.mimeType || "image/png",
-        width: stitchResponse.width || totalWidth,
-        height: stitchResponse.height || totalHeight,
+        mimeType: normalizedStitchResponse.mimeType || "image/png",
+        width: normalizedStitchResponse.width || totalWidth,
+        height: normalizedStitchResponse.height || totalHeight,
       };
     }
-    if (stitchResponse.kind === "multi" && Array.isArray(stitchResponse.parts)) {
+    if (
+      normalizedStitchResponse.kind === "multi" &&
+      Array.isArray(normalizedStitchResponse.parts)
+    ) {
       const parts = [];
       let partIndex = 0;
-      for (const part of stitchResponse.parts) {
+      for (const part of normalizedStitchResponse.parts) {
         partIndex += 1;
         let blob = part.blob;
         if (!blob) {
