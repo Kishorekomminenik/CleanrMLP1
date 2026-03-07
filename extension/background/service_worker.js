@@ -4248,12 +4248,9 @@ async function captureFullPageScreenshot(requestedTabId) {
     let bytesType = null;
     let bytesCtor = null;
     let bytesIsView = false;
-    if (
-      stitchResponse &&
-      stitchResponse.ok &&
-      stitchResponse.kind === "arraybuffer"
-    ) {
-      const bytes = stitchResponse.bytes;
+    if (stitchResponse && stitchResponse.ok && stitchResponse.kind === "arraybuffer") {
+      const bytes =
+        stitchResponse.bytes ?? stitchResponse.buffer ?? stitchResponse.arrayBuffer;
       bytesType = typeof bytes;
       bytesCtor = bytes && bytes.constructor ? bytes.constructor.name : null;
       bytesIsView = bytes ? ArrayBuffer.isView(bytes) : false;
