@@ -100,124 +100,72 @@ async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }
   }
 }
 
-async function stitchFullPageTiles(payload) {
-  const tiles = payload && Array.isArray(payload.tiles) ? payload.tiles : [];
-  const totalWidth = payload?.totalWidth;
-  const totalHeight = payload?.totalHeight;
-  const overlayText =
-    payload && typeof payload.overlayText === "string" ? payload.overlayText : null;
-  if (!tiles.length || !totalWidth || !totalHeight) {
-    return {
-      ok: false,
-      code: "FULLPAGE_ERR_STITCH_FAILED",
-      message: "Image stitching failed.",
-    };
-  }
-  if (totalWidth > FULLPAGE_CANVAS_MAX_EDGE) {
-    return {
-      ok: false,
-      code: "FULLPAGE_ERR_STITCH_CANVAS_LIMIT",
-      message: "Image stitching failed.",
-    };
-  }
-  const drawOverlay = (ctx, width, height) => {
-    if (!overlayText) {
-      return;
-    }
-    const paddingX = 8;
-    const paddingY = 6;
-    const margin = 10;
-    ctx.save();
-    ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
-    const metrics = ctx.measureText(overlayText);
-    const textWidth = metrics.width;
-    const textHeight = 14;
-    const boxWidth = Math.ceil(textWidth + paddingX * 2);
-    const boxHeight = textHeight + paddingY * 2;
-    const x = Math.max(margin, width - boxWidth - margin);
-    const y = Math.max(margin, height - boxHeight - margin);
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(x, y, boxWidth, boxHeight);
-    ctx.fillStyle = "#ffffff";
-    ctx.textBaseline = "top";
-    ctx.fillText(overlayText, x + paddingX, y + paddingY);
-    ctx.restore();
-  };
-  if (totalHeight <= FULLPAGE_CANVAS_MAX_EDGE) {
-    try {
-      const canvas = document.createElement("canvas");
-      canvas.width = totalWidth;
-      canvas.height = totalHeight;
-      const ctx = canvas.getContext("2d");
-      await drawTilesToCanvas({ ctx, tiles });
-      drawOverlay(ctx, canvas.width, canvas.height);
-      const blob = await new Promise((resolve) => {
-        canvas.toBlob((b) => resolve(b || null), "image/png");
-      });
-      if (!(blob instanceof Blob)) {
-        return {
-          ok: false,
-          code: "FULLPAGE_ERR_INVALID_BLOB",
-          message: "Full capture produced an invalid image blob.",
-        };
-      }
-      return {
-        ok: true,
-        kind: "single",
-        parts: 1,
-        blob,
-        mimeType: "image/png",
-        width: canvas.width,
-        height: canvas.height,
-      };
-    } catch (error) {
+async function handleFullpageStitch(data) {
+  try {
+    if (!data || !Array.isArray(data.tiles) || data.tiles.length === 0) {
       return {
         ok: false,
-        code: "FULLPAGE_ERR_STITCH_FAILED",
-        message: "Image stitching failed.",
+        code: "FULLPAGE_ERR_NO_TILES",
+        message: "No tiles provided for stitching.",
       };
     }
-  }
-  const partHeight = Math.min(FULLPAGE_PART_HEIGHT, FULLPAGE_CANVAS_MAX_EDGE);
-  const parts = [];
-  let index = 0;
-  try {
-    for (let offsetY = 0; offsetY < totalHeight; offsetY += partHeight) {
-      index += 1;
-      const height = Math.min(partHeight, totalHeight - offsetY);
-      const canvas = document.createElement("canvas");
-      canvas.width = totalWidth;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      await drawTilesToCanvas({ ctx, tiles, offsetY, heightLimit: height });
-      drawOverlay(ctx, canvas.width, canvas.height);
-      const blob = await new Promise((resolve) => {
-        canvas.toBlob((b) => resolve(b || null), "image/png");
-      });
-      if (!(blob instanceof Blob)) {
-        return {
-          ok: false,
-          code: "FULLPAGE_ERR_INVALID_BLOB",
-          message: "Full capture produced an invalid image blob.",
-        };
-      }
-      parts.push({ blob, index, width: canvas.width, height: canvas.height });
+
+    const { totalWidth, totalHeight } = data;
+
+    if (!totalWidth || !totalHeight) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_INVALID_DIMENSIONS",
+        message: "Invalid canvas dimensions.",
+      };
     }
-  } catch (error) {
+
+    const canvas = new OffscreenCanvas(totalWidth, totalHeight);
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_NO_CONTEXT",
+        message: "Could not acquire 2D context.",
+      };
+    }
+
+    for (const tile of data.tiles) {
+      const img = await createImageBitmap(tile.bitmap);
+      ctx.drawImage(img, tile.x, tile.y);
+    }
+
+    if (canvas.width === 0 || canvas.height === 0) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_ZERO_CANVAS",
+        message: "Canvas has zero dimension.",
+      };
+    }
+
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+
+    if (!blob || blob.size === 0) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_EMPTY_BLOB",
+        message: "Generated blob is empty.",
+      };
+    }
+
+    return {
+      ok: true,
+      blob,
+      mimeType: "image/png",
+    };
+  } catch (err) {
     return {
       ok: false,
-      code: "FULLPAGE_ERR_STITCH_FAILED",
-      message: "Image stitching failed.",
+      code: "FULLPAGE_ERR_STITCH_EXCEPTION",
+      message: err?.message || "Unexpected stitch error.",
     };
   }
-  return {
-    ok: true,
-    kind: "multi",
-    parts,
-    mimeType: "image/png",
-    width: totalWidth,
-    height: totalHeight,
-  };
 }
 
 function sumChunkBytes(chunks) {
@@ -994,7 +942,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
         case "FULLPAGE_STITCH":
-          result = await stitchFullPageTiles(message.payload || {});
+          result = await handleFullpageStitch(message.payload || {});
           break;
         default:
           result = { ok: false, error: "Unknown message type." };
