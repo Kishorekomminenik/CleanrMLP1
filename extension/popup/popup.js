@@ -2202,7 +2202,8 @@ async function handleFullPageScreenshot() {
   setFullPageInProgress(false);
   console.log("[FULLPAGE_RESPONSE]", {
     ok: response && response.ok,
-    code: response && response.error ? response.error.code : null,
+    code: response && response.code ? response.code : null,
+    message: response && response.message ? response.message : null,
     hasBlob: Boolean(response && response.blob),
     blobSize:
       response && response.blob instanceof Blob ? response.blob.size : null,
@@ -2220,14 +2221,12 @@ async function handleFullPageScreenshot() {
     });
   }
   if (!response.ok) {
-    const errorInfo = response.error || {};
-    const code = errorInfo.code || "UNKNOWN";
+    const code = response.code || "UNKNOWN";
     let message =
-      errorInfo.message ||
-      "Full capture failed. Try again, or use Snap.";
+      response.message || "Full capture failed. Try again, or use Snap.";
     if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
       message =
-        errorInfo.message ||
+        response.message ||
         "Full capture isn’t supported on this page. Open a regular website tab and try again.";
     } else if (code === "FULLPAGE_ERR_TOO_TALL") {
       message = "Page too tall for full capture. Try Snap or segment capture.";
@@ -2236,7 +2235,7 @@ async function handleFullPageScreenshot() {
     } else if (code === "FULLPAGE_ERR_SCROLL_MISMATCH") {
       message = "Page layout changed during capture. Try again.";
     } else if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
-      message = errorInfo.message || "captureVisibleTab failed.";
+      message = response.message || "captureVisibleTab failed.";
     } else if (code === "FULLPAGE_ERR_STITCH_CANVAS_LIMIT") {
       message = "Stitching exceeded canvas limits. Exported in parts.";
     } else if (code === "FULLPAGE_ERR_OFFSCREEN") {

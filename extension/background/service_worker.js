@@ -4255,15 +4255,18 @@ async function captureFullPageScreenshot(requestedTabId) {
       });
     }
     if (!stitchResponse || stitchResponse.ok === false) {
-      const err = new Error(
+      const message =
         stitchResponse && stitchResponse.message
           ? stitchResponse.message
-          : "Image stitching failed."
-      );
-      err.code =
+          : stitchResponse && stitchResponse.error
+            ? stitchResponse.error
+            : "Image stitching failed.";
+      const code =
         stitchResponse && stitchResponse.code
           ? stitchResponse.code
           : "FULLPAGE_ERR_STITCH_FAILED";
+      const err = new Error(message);
+      err.code = code;
       throw err;
     }
     const hasBlob =
@@ -5840,14 +5843,11 @@ async function handleMessage(message, sender) {
         });
         result = {
           ok: false,
-          error: {
-            code: error && error.code ? error.code : "UNKNOWN",
-            message:
-              error && error.message
-                ? error.message
-                : "Full page screenshot failed.",
-            details: error && error.details ? error.details : undefined,
-          },
+          code: error && error.code ? error.code : "UNKNOWN",
+          message:
+            error && error.message
+              ? error.message
+              : "Full page screenshot failed.",
         };
       }
       if (DEBUG_FULLPAGE) {
