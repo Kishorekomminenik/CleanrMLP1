@@ -4242,6 +4242,16 @@ async function captureFullPageScreenshot(requestedTabId) {
       },
     });
     console.log("[FULLPAGE][SW][RAW_RESPONSE]", stitchResponse);
+    console.log("[FULLPAGE][SW][BUFFER_DIAGNOSTICS]", {
+      ok: stitchResponse?.ok,
+      kind: stitchResponse?.kind,
+      hasBuffer: !!stitchResponse?.buffer,
+      typeofBuffer: typeof stitchResponse?.buffer,
+      tag: Object.prototype.toString.call(stitchResponse?.buffer),
+      ctor: stitchResponse?.buffer?.constructor?.name,
+      byteLengthField: stitchResponse?.byteLength,
+      bufferByteLength: stitchResponse?.buffer?.byteLength,
+    });
     let normalizedStitchResponse = stitchResponse;
     let hasArrayBuffer = false;
     let byteLength = 0;
