@@ -100,6 +100,22 @@ async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }
   }
 }
 
+async function normalizeToBlob(input) {
+  if (input instanceof Blob) {
+    return input;
+  }
+  if (typeof input === "string" && input.startsWith("data:")) {
+    return dataUrlToBlob(input);
+  }
+  if (input && input.blob instanceof Blob) {
+    return input.blob;
+  }
+  if (input instanceof ArrayBuffer) {
+    return new Blob([input], { type: "image/png" });
+  }
+  throw new Error("FULLPAGE_ERR_INVALID_BLOB");
+}
+
 async function handleFullpageStitch(data) {
   try {
     if (!data || !Array.isArray(data.tiles) || data.tiles.length === 0) {
@@ -132,8 +148,22 @@ async function handleFullpageStitch(data) {
     }
 
     for (const tile of data.tiles) {
-      const img = await createImageBitmap(tile.bitmap);
-      ctx.drawImage(img, tile.x, tile.y);
+      if (data && data.debug) {
+        console.log("[FULLPAGE][OFFSCREEN][TILE]", {
+          type: typeof tile,
+          ctor: tile && tile.constructor ? tile.constructor.name : null,
+          keys: tile && typeof tile === "object" ? Object.keys(tile) : null,
+        });
+      }
+      const candidate =
+        tile && typeof tile === "object"
+          ? tile.bitmap ?? tile.dataUrl ?? tile.blob ?? tile
+          : tile;
+      const blob = await normalizeToBlob(candidate);
+      const img = await createImageBitmap(blob);
+      const x = tile && typeof tile.x === "number" ? tile.x : 0;
+      const y = tile && typeof tile.y === "number" ? tile.y : 0;
+      ctx.drawImage(img, x, y);
     }
 
     if (canvas.width === 0 || canvas.height === 0) {
@@ -162,8 +192,14 @@ async function handleFullpageStitch(data) {
   } catch (err) {
     return {
       ok: false,
-      code: "FULLPAGE_ERR_STITCH_EXCEPTION",
-      message: err?.message || "Unexpected stitch error.",
+      code:
+        err && err.message === "FULLPAGE_ERR_INVALID_BLOB"
+          ? "FULLPAGE_ERR_INVALID_BLOB"
+          : "FULLPAGE_ERR_STITCH_EXCEPTION",
+      message:
+        err && err.message === "FULLPAGE_ERR_INVALID_BLOB"
+          ? "Tile was not a valid Blob"
+          : err?.message || "Unexpected stitch error.",
     };
   }
 }

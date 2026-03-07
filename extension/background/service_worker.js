@@ -4238,6 +4238,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         totalWidth,
         totalHeight,
         overlayText,
+        debug: DEBUG_FULLPAGE === true,
       },
     });
     if (DEBUG_FULLPAGE) {
