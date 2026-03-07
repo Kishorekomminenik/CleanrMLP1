@@ -189,12 +189,10 @@ async function handleFullpageStitch(data) {
       };
     }
 
-    if (data && data.debug) {
-      console.log("[FULLPAGE][OFFSCREEN][CANVAS]", {
-        width: canvas.width,
-        height: canvas.height,
-      });
-    }
+    console.log("[FULLPAGE][OFFSCREEN][CANVAS]", {
+      width: canvas.width,
+      height: canvas.height,
+    });
     const drawnTileCount = await drawTilesToCanvas({
       ctx,
       tiles: data.tiles,
@@ -239,11 +237,9 @@ async function handleFullpageStitch(data) {
         message: "Canvas export produced empty blob.",
       };
     }
-    if (data && data.debug) {
-      console.log("[FULLPAGE][OFFSCREEN][BLOB]", {
-        size: blob.size,
-      });
-    }
+    console.log("[FULLPAGE][OFFSCREEN][BLOB]", {
+      size: blob.size,
+    });
 
     const arrayBuffer = await blob.arrayBuffer();
     if (!arrayBuffer || arrayBuffer.byteLength === 0) {
