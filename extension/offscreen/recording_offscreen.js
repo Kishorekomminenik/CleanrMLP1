@@ -272,9 +272,8 @@ async function handleFullpageStitch(data) {
       ok: true,
       kind: "arraybuffer",
       mimeType: "image/png",
-      bytes: arrayBuffer,
+      buffer: arrayBuffer,
       byteLength: arrayBuffer.byteLength,
-      parts: 1,
     };
   } catch (err) {
     return {

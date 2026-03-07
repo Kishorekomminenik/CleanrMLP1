@@ -2246,6 +2246,18 @@ async function handleFullPageScreenshot() {
     await refreshStatus();
     return;
   }
+  const hasValidBlob =
+    response.kind === "blob" &&
+    response.blob instanceof Blob &&
+    typeof response.blobSize === "number" &&
+    response.blobSize > 0;
+  if (!hasValidBlob) {
+    const message = "Full capture failed. Invalid image payload.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    await refreshStatus();
+    return;
+  }
   if (response.blob) {
     if (!(response.blob instanceof Blob)) {
       const message =
