@@ -137,119 +137,7 @@ const state = {
   },
 };
 
-const FULLPAGE_PORT_NAME = "fullpage-stitch";
 const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
-const fullpageStitchPending = new Map();
-
-function waitForFullpageStitchResult(captureRunId) {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      fullpageStitchPending.delete(captureRunId);
-      const err = new Error("Full page stitch timed out.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      reject(err);
-    }, FULLPAGE_STITCH_TIMEOUT_MS);
-    fullpageStitchPending.set(captureRunId, { resolve, reject, timeoutId });
-  });
-}
-
-function resolveFullpageStitchResult(captureRunId, result) {
-  const pending = fullpageStitchPending.get(captureRunId);
-  if (!pending) {
-    return;
-  }
-  clearTimeout(pending.timeoutId);
-  fullpageStitchPending.delete(captureRunId);
-  pending.resolve(result);
-}
-
-function rejectFullpageStitchResult(captureRunId, error) {
-  const pending = fullpageStitchPending.get(captureRunId);
-  if (!pending) {
-    return;
-  }
-  clearTimeout(pending.timeoutId);
-  fullpageStitchPending.delete(captureRunId);
-  pending.reject(error);
-}
-
-chrome.runtime.onConnect.addListener((port) => {
-  if (!port || port.name !== FULLPAGE_PORT_NAME) {
-    return;
-  }
-  console.log("[FULLPAGE][SW][PORT_CONNECTED]", { portName: port.name });
-  port.onMessage.addListener((message) => {
-    const hasBuffer = !!message?.buffer;
-    const bufferTag = Object.prototype.toString.call(message?.buffer);
-    const bufferCtor = message?.buffer?.constructor?.name;
-    console.log("[FULLPAGE][SW][PORT_MESSAGE_RAW]", {
-      type: message?.type,
-      ok: message?.ok,
-      kind: message?.kind,
-      mimeType: message?.mimeType,
-      hasBuffer,
-      ctor: bufferCtor,
-      tag: bufferTag,
-      byteLengthField: message?.byteLength,
-      bufferByteLength: message?.buffer?.byteLength,
-      captureRunId: message?.captureRunId,
-    });
-    if (!message || message.type !== "FULLPAGE_STITCH_RESULT") {
-      return;
-    }
-    const captureRunId = message.captureRunId;
-    if (!captureRunId) {
-      return;
-    }
-    if (!message.ok) {
-      const err = new Error(message.message || "Full page stitch failed.");
-      err.code = message.code || "FULLPAGE_ERR_STITCH";
-      rejectFullpageStitchResult(captureRunId, err);
-      return;
-    }
-    if (message.kind !== "arraybuffer") {
-      const err = new Error("Unexpected stitch response.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      rejectFullpageStitchResult(captureRunId, err);
-      return;
-    }
-    const bytes = message.buffer;
-    const isView = ArrayBuffer.isView(bytes);
-    const byteLength = bytes && typeof bytes.byteLength === "number" ? bytes.byteLength : 0;
-    const byteOffset = bytes && typeof bytes.byteOffset === "number" ? bytes.byteOffset : 0;
-    console.log("[FULLPAGE][SW][PORT_TYPED_ARRAY_VALID]", {
-      isView,
-      byteLength,
-      byteOffset,
-    });
-    if (!bytes || !isView || byteLength <= 0) {
-      const err = new Error("Stitching returned no image bytes.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      rejectFullpageStitchResult(captureRunId, err);
-      return;
-    }
-    const buffer = bytes.buffer.slice(byteOffset, byteOffset + byteLength);
-    const mimeType = message.mimeType || "image/png";
-    const blob = new Blob([buffer], { type: mimeType });
-    if (!blob || blob.size <= 0) {
-      const err = new Error("Stitching returned no image bytes.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      rejectFullpageStitchResult(captureRunId, err);
-      return;
-    }
-    console.log("[FULLPAGE][SW][RECONSTRUCTED_BLOB]", {
-      size: blob.size,
-      mimeType,
-    });
-    resolveFullpageStitchResult(captureRunId, {
-      ok: true,
-      kind: "blob",
-      blob,
-      mimeType,
-      blobSize: blob.size,
-    });
-  });
-});
 
 const captureState = {
   sessionId: null,
@@ -4078,6 +3966,101 @@ async function captureScreenshot() {
   }
 }
 
+async function saveCaptureRun(run) {
+  await ReproIdb.putOne("capture_runs", run);
+  return run;
+}
+
+async function updateCaptureRun(captureRunId, updates) {
+  const existing = await ReproIdb.getByKey("capture_runs", captureRunId);
+  if (!existing) {
+    return null;
+  }
+  const next = {
+    ...existing,
+    ...updates,
+    updatedAt: Date.now(),
+  };
+  await ReproIdb.putOne("capture_runs", next);
+  return next;
+}
+
+async function persistCaptureTile({ captureRunId, tileIndex, tile, blob }) {
+  const blobKey = `tile_${captureRunId}_${String(tileIndex).padStart(4, "0")}`;
+  await ReproIdb.putOne("capture_blobs", {
+    key: blobKey,
+    captureRunId,
+    kind: "tile",
+    blob,
+    createdAt: Date.now(),
+  });
+  const tileId = `${captureRunId}:${tileIndex}`;
+  await ReproIdb.putOne("capture_tiles", {
+    tileId,
+    captureRunId,
+    tileIndex,
+    scrollY: tile.scrollY,
+    cssTop: tile.scrollY,
+    yPx: tile.y,
+    widthPx: tile.width,
+    heightPx: tile.height,
+    clipTopPx: tile.clipTop,
+    clipHeightPx: tile.clipHeight,
+    blobKey,
+    status: "committed",
+    capturedAt: Date.now(),
+  });
+  return blobKey;
+}
+
+async function composeFullpageArtifact(captureRunId, isFinal) {
+  await updateCaptureRun(captureRunId, { status: "composing" });
+  const response = await sendMessageToOffscreen({
+    type: isFinal ? "FULLPAGE_COMPOSE_FINAL" : "FULLPAGE_COMPOSE_PARTIAL",
+    payload: { captureRunId },
+  });
+  if (!response || response.ok === false) {
+    const err = new Error(
+      response && response.message ? response.message : "Full page compose failed."
+    );
+    err.code = response && response.code ? response.code : "FULLPAGE_ERR_STITCH";
+    throw err;
+  }
+  return response;
+}
+
+async function scanFullpageRuns() {
+  try {
+    const activeRuns = await ReproIdb.getAllByIndex(
+      "capture_runs",
+      "status",
+      IDBKeyRange.only("capturing")
+    );
+    const composingRuns = await ReproIdb.getAllByIndex(
+      "capture_runs",
+      "status",
+      IDBKeyRange.only("composing")
+    );
+    const recoverableRuns = [...activeRuns, ...composingRuns];
+    console.log("[FULLPAGE][SW][RECOVERY_SCAN]", {
+      activeRuns: recoverableRuns.length,
+      recoverableRuns: recoverableRuns.map((run) => run.captureRunId),
+    });
+    await Promise.all(
+      recoverableRuns.map((run) =>
+        updateCaptureRun(run.captureRunId, {
+          status: "recovered_after_restart",
+          failureReason: "Service worker restarted.",
+        })
+      )
+    );
+  } catch (error) {
+    console.warn("[FULLPAGE][SW][RECOVERY_SCAN_FAILED]", error);
+  }
+}
+
+scanFullpageRuns();
+
 async function captureFullPageScreenshot(requestedTabId) {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
@@ -4216,6 +4199,44 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = "FULLPAGE_ERR_TOO_TALL";
       throw err;
     }
+    const totalWidthPx = Math.round(viewportWidth * devicePixelRatio);
+    const totalHeightPx = Math.round(scrollHeight * devicePixelRatio);
+    const runRecord = {
+      captureRunId,
+      tabId,
+      url: tab.url || null,
+      status: "capturing",
+      devicePixelRatio,
+      totalWidthPx,
+      totalHeightPx,
+      viewportWidthPx: Math.round(viewportWidth * devicePixelRatio),
+      viewportHeightPx: Math.round(viewportHeight * devicePixelRatio),
+      tileCountExpected: totalTiles,
+      tileCountCaptured: 0,
+      tileCountCommitted: 0,
+      tileCountFailed: 0,
+      coveragePercent: 0,
+      partialArtifactKey: null,
+      finalArtifactKey: null,
+      isPartial: false,
+      failureReason: null,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    await saveCaptureRun(runRecord);
+    console.log("[FULLPAGE][SW][RUN_CREATED]", {
+      captureRunId,
+      tabId,
+      url: tab.url || null,
+      tileCountExpected: totalTiles,
+    });
+    try {
+      await ensureOffscreenReady();
+    } catch (error) {
+      const err = new Error("Full page capture failed. Try Snap instead.");
+      err.code = "FULLPAGE_ERR_OFFSCREEN";
+      throw err;
+    }
     if (windowId && tab.active === false) {
       try {
         await chrome.windows.update(windowId, { focused: true });
@@ -4225,7 +4246,10 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
     sendFullPageProgress("capture", 0, totalTiles);
-    const tiles = [];
+    let tileCountCaptured = 0;
+    let tileCountCommitted = 0;
+    let tileCountFailed = 0;
+    let lastArtifactKey = null;
     let prevY = null;
     let currentScroll = scrollTop;
     for (let i = 0; i < positions.length; i += 1) {
@@ -4304,24 +4328,61 @@ async function captureFullPageScreenshot(requestedTabId) {
         prevY = targetY;
         continue;
       }
-      tiles.push({
-        dataUrl,
+      const tileMeta = {
+        scrollY: Math.round(targetY),
         y: Math.round(targetY * devicePixelRatio),
         width: Math.round(viewportWidth * devicePixelRatio),
         height: Math.round(viewportHeight * devicePixelRatio),
         clipTop: Math.round(clipTop * devicePixelRatio),
         clipHeight: Math.round(clipHeight * devicePixelRatio),
+      };
+      const tileIndex = i + 1;
+      const blob = dataUrlToBlob(dataUrl);
+      await persistCaptureTile({
+        captureRunId,
+        tileIndex,
+        tile: tileMeta,
+        blob,
       });
+      tileCountCaptured += 1;
+      tileCountCommitted += 1;
+      const coveragePercent = totalTiles
+        ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
+        : 0;
+      await updateCaptureRun(captureRunId, {
+        tileCountCaptured,
+        tileCountCommitted,
+        tileCountFailed,
+        coveragePercent,
+      });
+      console.log("[FULLPAGE][SW][TILE_COMMITTED]", {
+        captureRunId,
+        tileIndex,
+        tileCountCommitted,
+        tileCountExpected: totalTiles,
+      });
+      try {
+        const partial = await composeFullpageArtifact(captureRunId, false);
+        if (partial && partial.artifactKey) {
+          lastArtifactKey = partial.artifactKey;
+          await updateCaptureRun(captureRunId, {
+            partialArtifactKey: partial.artifactKey,
+            coveragePercent: partial.coveragePercent,
+            status: "capturing",
+            updatedAt: Date.now(),
+          });
+          console.log("[FULLPAGE][SW][PARTIAL_ARTIFACT_SAVED]", {
+            captureRunId,
+            artifactKey: partial.artifactKey,
+            coveragePercent: partial.coveragePercent,
+            completedThroughTile: partial.completedThroughTile,
+          });
+        }
+      } catch (error) {
+        // Partial compose failure should not abort capture.
+      }
       prevY = targetY;
     }
-    const totalWidth = Math.round(viewportWidth * devicePixelRatio);
-    const totalHeight = Math.round(scrollHeight * devicePixelRatio);
-    console.log("[FULLPAGE_STITCH_START]", {
-      tiles: tiles.length,
-      totalWidth,
-      totalHeight,
-    });
-    sendFullPageProgress("stitch", 0, tiles.length);
     await loadTimestampOverlaySetting();
     const overlayText = (() => {
       if (!timestampOverlayEnabled) {
@@ -4338,134 +4399,84 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       return text;
     })();
-    try {
-      await ensureOffscreenReady();
-    } catch (error) {
-      const err = new Error("Full page capture failed. Try Snap instead.");
-      err.code = "FULLPAGE_ERR_OFFSCREEN";
-      throw err;
+    if (overlayText) {
+      await updateCaptureRun(captureRunId, { overlayText });
     }
-    const stitchResponse = await sendMessageToOffscreen({
-      type: "FULLPAGE_STITCH",
-      payload: {
-        tiles,
-        totalWidth,
-        totalHeight,
-        overlayText,
-        debug: DEBUG_FULLPAGE === true,
-        captureRunId,
-      },
+    const finalArtifact = await composeFullpageArtifact(captureRunId, true);
+    await updateCaptureRun(captureRunId, {
+      status: "complete",
+      finalArtifactKey: finalArtifact.artifactKey || null,
+      isPartial: false,
+      coveragePercent: finalArtifact.coveragePercent || 100,
+      updatedAt: Date.now(),
     });
-    console.log("[FULLPAGE][SW][RAW_RESPONSE]", stitchResponse);
-    console.log("[FULLPAGE][SW][BUFFER_DIAGNOSTICS]", {
-      ok: stitchResponse?.ok,
-      kind: stitchResponse?.kind,
-      hasBuffer: !!stitchResponse?.buffer,
-      typeofBuffer: typeof stitchResponse?.buffer,
-      tag: Object.prototype.toString.call(stitchResponse?.buffer),
-      ctor: stitchResponse?.buffer?.constructor?.name,
-      byteLengthField: stitchResponse?.byteLength,
-      bufferByteLength: stitchResponse?.buffer?.byteLength,
+    console.log("[FULLPAGE][SW][FINAL_ARTIFACT_SAVED]", {
+      captureRunId,
+      artifactKey: finalArtifact.artifactKey,
+      size: finalArtifact.byteLength || null,
+      coveragePercent: finalArtifact.coveragePercent,
     });
-    if (!stitchResponse || stitchResponse.ok === false) {
-      const message =
-        stitchResponse && stitchResponse.message
-          ? stitchResponse.message
-          : stitchResponse && stitchResponse.error
-            ? stitchResponse.error
-            : "Image stitching failed.";
-      const code =
-        stitchResponse && stitchResponse.code
-          ? stitchResponse.code
-          : "FULLPAGE_ERR_STITCH_FAILED";
-      const err = new Error(message);
-      err.code = code;
-      throw err;
-    }
-    if (stitchResponse.kind !== "arraybuffer") {
-      const err = new Error("Unexpected stitch response.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      throw err;
-    }
-    const runId =
-      stitchResponse.captureRunId && typeof stitchResponse.captureRunId === "string"
-        ? stitchResponse.captureRunId
-        : captureRunId;
-    if (!runId) {
-      const err = new Error("Missing stitch response id.");
-      err.code = "FULLPAGE_ERR_STITCH";
-      throw err;
-    }
-    const normalizedStitchResponse = await waitForFullpageStitchResult(runId);
-    if (DEBUG_FULLPAGE) {
-      console.log("[FULLPAGE][SW][STITCH_RESULT]", {
-        ok: normalizedStitchResponse?.ok,
-        code: normalizedStitchResponse?.code,
-        message: normalizedStitchResponse?.message,
-        kind: normalizedStitchResponse?.kind,
-        parts: normalizedStitchResponse?.parts,
-        hasBlob: normalizedStitchResponse?.blob instanceof Blob,
-        blobType: normalizedStitchResponse?.blob?.type,
-        blobSize: normalizedStitchResponse?.blob?.size,
-        mimeType: normalizedStitchResponse?.mimeType,
-        keys: normalizedStitchResponse ? Object.keys(normalizedStitchResponse) : null,
-      });
-    }
-    const hasBlob =
-      normalizedStitchResponse.kind === "blob"
-        ? normalizedStitchResponse.blob instanceof Blob
-        : false;
-    const blobSize =
-      normalizedStitchResponse.kind === "blob" && hasBlob
-        ? normalizedStitchResponse.blob.size
-        : 0;
-    console.log("[FULLPAGE_STITCH_DONE]", {
-      kind: normalizedStitchResponse.kind,
-      parts: normalizedStitchResponse.parts ? normalizedStitchResponse.parts.length : 1,
-      hasBlob,
-      blobSize,
+    console.log("[FULLPAGE][SW][RUN_FINALIZED]", {
+      captureRunId,
+      status: "complete",
+      isPartial: false,
+      failureReason: null,
     });
-    sendFullPageProgress("stitch", tiles.length, tiles.length);
-    const exportTimestamp = formatExportTimestamp(new Date());
-    if (normalizedStitchResponse.kind === "blob" && normalizedStitchResponse.blob) {
-      const blob = normalizedStitchResponse.blob;
-      if (!(blob instanceof Blob)) {
-        const err = new Error("Full capture produced an invalid image blob.");
-        err.code = "FULLPAGE_ERR_INVALID_BLOB";
-        throw err;
-      }
-      let dataUrl = null;
+    clearStatusMessage();
+    return {
+      status: "complete",
+      captureRunId,
+      artifactKey: finalArtifact.artifactKey,
+      isPartial: false,
+      coveragePercent: finalArtifact.coveragePercent || 100,
+      tileCountCaptured,
+      tileCountExpected: totalTiles,
+    };
+  } catch (error) {
+    tileCountFailed += 1;
+    const hasPartial = tileCountCommitted > 0;
+    let artifactKey = lastArtifactKey;
+    if (hasPartial && !artifactKey) {
       try {
-        dataUrl = await blobToDataUrl(blob);
-      } catch (error) {
-        dataUrl = null;
+        const partial = await composeFullpageArtifact(captureRunId, false);
+        artifactKey = partial.artifactKey || null;
+      } catch (composeError) {
+        artifactKey = null;
       }
-      state.screenshot.dataUrl = dataUrl;
-      state.screenshot.capturedAt = triggerTimestampIso;
-      if (session) {
-        session.screenshots = session.screenshots.filter((entry) => !entry.fullPage);
-        const index = session.screenshots.length + 1;
-        session.screenshots.push({
-          index,
-          timestampIso: triggerTimestampIso,
-          t_ms: triggerTms,
-          blob,
-          dataUrl,
-          fullPage: true,
-          fileName: `qa-screenshot-fullpage-${exportTimestamp}.png`,
-        });
-      }
-      clearStatusMessage();
+    }
+    if (hasPartial) {
+      await updateCaptureRun(captureRunId, {
+        status: "partial_complete",
+        isPartial: true,
+        failureReason: error && error.message ? error.message : "Capture failed.",
+        partialArtifactKey: artifactKey,
+        tileCountFailed,
+      });
+      console.log("[FULLPAGE][SW][RUN_FINALIZED]", {
+        captureRunId,
+        status: "partial_complete",
+        isPartial: true,
+        failureReason: error && error.message ? error.message : "Capture failed.",
+      });
       return {
-        kind: "blob",
-        blob,
-        mimeType: normalizedStitchResponse.mimeType || "image/png",
-        blobSize: blob.size,
+        status: "partial_complete",
+        captureRunId,
+        artifactKey,
+        isPartial: true,
+        coveragePercent: totalTiles
+          ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
+          : 0,
+        tileCountCaptured,
+        tileCountExpected: totalTiles,
       };
     }
-    const err = new Error("Stitching returned no image.");
-    err.code = "FULLPAGE_ERR_STITCH";
-    throw err;
+    await updateCaptureRun(captureRunId, {
+      status: "failed_before_first_tile",
+      isPartial: false,
+      failureReason: error && error.message ? error.message : "Capture failed.",
+      tileCountFailed,
+    });
+    throw error;
   } finally {
     if (restoreNeeded) {
       try {
@@ -5965,7 +5976,22 @@ async function handleMessage(message, sender) {
           blobSize: result?.blob?.size,
           responseBlobSize: result?.blobSize,
           mimeType: result?.mimeType,
+          status: result?.status,
+          captureRunId: result?.captureRunId,
+          artifactKey: result?.artifactKey,
+          isPartial: result?.isPartial,
+          coveragePercent: result?.coveragePercent,
+          tileCountCaptured: result?.tileCountCaptured,
+          tileCountExpected: result?.tileCountExpected,
           keys: result ? Object.keys(result) : null,
+        });
+        console.log("[FULLPAGE][SW][POPUP_RESPONSE]", {
+          ok: result?.ok,
+          status: result?.status,
+          captureRunId: result?.captureRunId,
+          artifactKey: result?.artifactKey,
+          isPartial: result?.isPartial,
+          coveragePercent: result?.coveragePercent,
         });
       }
       break;

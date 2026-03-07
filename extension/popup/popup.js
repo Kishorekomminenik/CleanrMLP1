@@ -2258,76 +2258,89 @@ async function handleFullPageScreenshot() {
     await refreshStatus();
     return;
   }
-  if (response.blob) {
-    if (!(response.blob instanceof Blob)) {
-      const message =
-        response.message || "Full page capture failed. Try Snap instead.";
-      setStatus(statusElements.message, message, "error");
-      showToast(message, "error");
-      await refreshStatus();
-      return;
-    }
-    try {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(response.blob);
-      });
-      if (typeof dataUrl !== "string") {
-        throw new Error("Invalid image data.");
-      }
-      await chrome.storage.session.set({
-        latestScreenshotDataUrl: dataUrl,
-      });
-      await chrome.tabs.create({
-        url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
-      });
-    } catch (error) {
-      const message =
-        error && error.message ? error.message : "Failed to open viewer.";
-      setStatus(statusElements.message, message, "error");
-      showToast(message, "error");
-      console.warn("[FULLPAGE_VIEWER_OPEN_FAILED]", message);
-      await refreshStatus();
-      return;
-    }
-  } else if (response.dataUrl && typeof response.dataUrl === "string") {
-    try {
-      await chrome.storage.session.set({
-        latestScreenshotDataUrl: response.dataUrl,
-      });
-      await chrome.tabs.create({
-        url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
-      });
-    } catch (error) {
-      const message =
-        error && error.message ? error.message : "Failed to open viewer.";
-      setStatus(statusElements.message, message, "error");
-      showToast(message, "error");
-      await refreshStatus();
-      return;
-    }
-  } else if (response.parts && Array.isArray(response.parts)) {
-    const names = response.parts.map((part) => part.fileName).filter(Boolean);
-    const message = names.length
-      ? `Full capture exported in parts: ${names.join(", ")}`
-      : "Full capture exported in parts.";
-    setStatus(statusElements.message, message, "success");
-    showToast("Full capture exported");
-    await refreshStatus();
-    return;
-  } else {
+  const artifactKey = response.artifactKey;
+  if (!artifactKey) {
     const message =
-      response.message || "Full page capture failed. Try Snap instead.";
+      response.message || "Full page capture failed. Missing artifact.";
     setStatus(statusElements.message, message, "error");
     showToast(message, "error");
     await refreshStatus();
     return;
   }
-  setStatus(statusElements.message, "Full page screenshot captured.", "success");
-  showToast("Full captured");
+  const blob = await loadFullpageArtifactBlob(artifactKey);
+  if (!blob) {
+    const message =
+      response.message || "Full page capture failed. Artifact unavailable.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    await refreshStatus();
+    return;
+  }
+  try {
+    const dataUrl = await blobToDataUrl(blob);
+    if (typeof dataUrl !== "string") {
+      throw new Error("Invalid image data.");
+    }
+    await chrome.storage.session.set({
+      latestScreenshotDataUrl: dataUrl,
+    });
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
+    });
+  } catch (error) {
+    const message =
+      error && error.message ? error.message : "Failed to open viewer.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    console.warn("[FULLPAGE_VIEWER_OPEN_FAILED]", message);
+    await refreshStatus();
+    return;
+  }
+  const isPartial = response.isPartial === true || response.status === "partial_complete";
+  const coverageText =
+    typeof response.coveragePercent === "number"
+      ? ` (${response.coveragePercent}% coverage)`
+      : "";
+  const successMessage = isPartial
+    ? `Partial full capture saved${coverageText}.`
+    : "Full page screenshot captured.";
+  setStatus(statusElements.message, successMessage, "success");
+  showToast(isPartial ? "Partial full capture saved" : "Full captured");
+  console.log("[FULLPAGE][POPUP][RESULT]", {
+    ok: true,
+    status: response.status,
+    captureRunId: response.captureRunId,
+    artifactKey: response.artifactKey,
+    isPartial,
+    coveragePercent: response.coveragePercent,
+    tileCountCaptured: response.tileCountCaptured,
+    tileCountExpected: response.tileCountExpected,
+  });
   await refreshStatus();
+}
+
+async function blobToDataUrl(blob) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadFullpageArtifactBlob(artifactKey) {
+  if (!artifactKey || !window.ReproIdb) {
+    return null;
+  }
+  const artifact = await ReproIdb.getByKey("capture_artifacts", artifactKey);
+  if (!artifact || !artifact.blobKey) {
+    return null;
+  }
+  const blobRecord = await ReproIdb.getByKey("capture_blobs", artifact.blobKey);
+  if (!blobRecord || !(blobRecord.blob instanceof Blob)) {
+    return null;
+  }
+  return blobRecord.blob;
 }
 
 async function handleRecordingStart() {

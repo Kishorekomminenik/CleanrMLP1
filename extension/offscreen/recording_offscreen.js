@@ -19,7 +19,8 @@ let recordingFinalChunkLogged = false;
 const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
 const FULLPAGE_PART_HEIGHT = 12000;
-let fullpagePort = null;
+const FULLPAGE_DB_NAME = "repro_evidence_db";
+let fullpageDbPromise = null;
 
 chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
 
@@ -61,16 +62,80 @@ function delay() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function getFullpagePort() {
-  if (fullpagePort) {
-    return fullpagePort;
+function openFullpageDb() {
+  if (fullpageDbPromise) {
+    return fullpageDbPromise;
   }
-  fullpagePort = chrome.runtime.connect({ name: "fullpage-stitch" });
-  console.log("[FULLPAGE][OFFSCREEN][PORT_OPEN]", { portName: fullpagePort.name });
-  fullpagePort.onDisconnect.addListener(() => {
-    fullpagePort = null;
+  fullpageDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(FULLPAGE_DB_NAME);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
   });
-  return fullpagePort;
+  return fullpageDbPromise;
+}
+
+function withStore(storeName, mode, handler) {
+  return openFullpageDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, mode);
+        const store = tx.objectStore(storeName);
+        let resultPromise = Promise.resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () =>
+          reject(tx.error || new Error("IndexedDB transaction aborted"));
+        tx.oncomplete = () => {
+          resultPromise.then(resolve).catch(reject);
+        };
+        try {
+          resultPromise = Promise.resolve(handler(store, tx));
+        } catch (error) {
+          try {
+            tx.abort();
+          } catch (abortError) {
+            // Ignore abort errors.
+          }
+          reject(error);
+        }
+      })
+  );
+}
+
+function requestToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function getByKey(storeName, key) {
+  return withStore(storeName, "readonly", (store) =>
+    requestToPromise(store.get(key))
+  );
+}
+
+function putOne(storeName, item) {
+  return withStore(storeName, "readwrite", (store) => store.put(item));
+}
+
+function getAllByIndex(storeName, indexName, keyRange) {
+  return withStore(storeName, "readonly", (store) => {
+    const index = store.index(indexName);
+    const results = [];
+    return new Promise((resolve, reject) => {
+      const request = index.openCursor(keyRange, "next");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(results);
+          return;
+        }
+        results.push(cursor.value);
+        cursor.continue();
+      };
+    });
+  });
 }
 
 async function drawTilesToCanvas({
@@ -130,6 +195,59 @@ async function drawTilesToCanvas({
   return drawn;
 }
 
+async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
+  let drawn = 0;
+  for (const tile of tiles) {
+    const tileTop = tile.yPx + tile.clipTopPx;
+    const tileBottom = tileTop + tile.clipHeightPx;
+    if (!tile.blobKey) {
+      throw new Error("Tile missing blobKey.");
+    }
+    if (tileBottom <= 0 || tileTop >= ctx.canvas.height) {
+      continue;
+    }
+    const drawTop = Math.max(tileTop, 0);
+    const drawBottom = Math.min(tileBottom, ctx.canvas.height);
+    const drawHeight = Math.max(0, drawBottom - drawTop);
+    if (drawHeight <= 0) {
+      continue;
+    }
+    const blobRecord = await getByKey("capture_blobs", tile.blobKey);
+    const blob = blobRecord && blobRecord.blob;
+    if (!(blob instanceof Blob)) {
+      throw new Error("Missing tile blob.");
+    }
+    const bmp = await createImageBitmap(blob);
+    if (!bmp.width || !bmp.height) {
+      throw new Error("Decoded tile has zero dimensions.");
+    }
+    if (debug) {
+      console.log("[FULLPAGE][OFFSCREEN][TILE_DIMENSIONS]", {
+        width: bmp.width,
+        height: bmp.height,
+      });
+    }
+    const srcY = tile.clipTopPx + (drawTop - tileTop);
+    const frameWidth = tile.widthPx || ctx.canvas.width;
+    ctx.drawImage(
+      bmp,
+      0,
+      srcY,
+      frameWidth,
+      drawHeight,
+      0,
+      drawTop,
+      frameWidth,
+      drawHeight
+    );
+    drawn += 1;
+    if (drawn % 2 === 0) {
+      await delay();
+    }
+  }
+  return drawn;
+}
+
 async function normalizeToBlob(input) {
   if (input instanceof Blob) {
     return input;
@@ -172,28 +290,56 @@ async function canvasToPngBlob(canvas) {
 }
 
 async function handleFullpageStitch(data) {
+  return {
+    ok: false,
+    code: "FULLPAGE_ERR_STITCH",
+    message: "Fullpage stitch transport disabled.",
+  };
+}
+
+async function composeFullpageArtifact(captureRunId, isFinal) {
   try {
-    if (!data || !Array.isArray(data.tiles) || data.tiles.length === 0) {
+    if (!captureRunId) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
-        message: "No tiles provided for stitching.",
+        message: "Missing capture run id.",
       };
     }
-
-    const { totalWidth, totalHeight } = data;
-
-    if (!totalWidth || !totalHeight) {
+    const run = await getByKey("capture_runs", captureRunId);
+    if (!run) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
-        message: "Invalid canvas dimensions.",
+        message: "Missing capture run.",
       };
     }
-
-    const canvas = new OffscreenCanvas(totalWidth, totalHeight);
+    const tiles = await getAllByIndex(
+      "capture_tiles",
+      "captureRunId",
+      IDBKeyRange.only(captureRunId)
+    );
+    const committed = tiles.filter((tile) => tile.status === "committed");
+    if (!committed.length) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
+        message: "No tiles committed for compose.",
+      };
+    }
+    committed.sort((a, b) => a.tileIndex - b.tileIndex);
+    const tileCountExpected = run.tileCountExpected || committed.length;
+    const coveragePercent = tileCountExpected
+      ? Math.min(100, Math.round((committed.length / tileCountExpected) * 100))
+      : 0;
+    const completedThroughTile = committed[committed.length - 1].tileIndex || 0;
+    const logPrefix = isFinal ? "FINAL" : "PARTIAL";
+    console.log(`[FULLPAGE][OFFSCREEN][COMPOSE_${logPrefix}_START]`, {
+      captureRunId,
+      committedTileCount: committed.length,
+    });
+    const canvas = new OffscreenCanvas(run.totalWidthPx, run.totalHeightPx);
     const ctx = canvas.getContext("2d");
-
     if (!ctx) {
       return {
         ok: false,
@@ -201,125 +347,64 @@ async function handleFullpageStitch(data) {
         message: "Could not acquire 2D context.",
       };
     }
-
-    console.log("[FULLPAGE][OFFSCREEN][CANVAS]", {
-      width: canvas.width,
-      height: canvas.height,
-    });
-    const drawnTileCount = await drawTilesToCanvas({
+    const drawn = await drawBlobTilesToCanvas({
       ctx,
-      tiles: data.tiles,
-      offsetY: 0,
-      heightLimit: null,
-      debug: data && data.debug,
+      tiles: committed,
+      debug: false,
     });
-
-    if (canvas.width === 0 || canvas.height === 0) {
-      return {
-        ok: false,
-        code: "FULLPAGE_ERR_STITCH",
-        message: "Final canvas has zero dimensions.",
-      };
-    }
-    if (drawnTileCount === 0) {
+    if (drawn === 0) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
         message: "No tiles were drawn onto final canvas.",
       };
     }
-    if (data && data.debug) {
-      console.log("[FULLPAGE][OFFSCREEN][TILES_DRAWN]", {
-        count: drawnTileCount,
-      });
-    }
-
-    let pixelLog = null;
-    try {
-      const imageData = ctx.getImageData(0, 0, 1, 1);
-      const rgba = imageData && imageData.data ? imageData.data : null;
-      pixelLog = rgba
-        ? { r: rgba[0], g: rgba[1], b: rgba[2], a: rgba[3] }
-        : { error: "No image data at pixel 0,0." };
-    } catch (error) {
-      pixelLog = { error: error?.message || "getImageData failed." };
-    }
-    console.log("[FULLPAGE][OFFSCREEN][PIXEL]", pixelLog);
-
     const blob = await canvasToPngBlob(canvas);
-
-    if (!(blob instanceof Blob)) {
-      return {
-        ok: false,
-        code: "FULLPAGE_ERR_STITCH",
-        message: "Stitch did not return a valid Blob.",
-      };
-    }
-    if (blob.size === 0) {
+    if (!(blob instanceof Blob) || blob.size === 0) {
       return {
         ok: false,
         code: "FULLPAGE_ERR_STITCH",
         message: "Canvas export produced empty blob.",
       };
     }
-    console.log("[FULLPAGE][OFFSCREEN][BLOB]", {
-      size: blob.size,
+    const artifactKey = `${isFinal ? "fullpage_final" : "fullpage_partial"}_${captureRunId}_${Date.now()}`;
+    const blobKey = artifactKey;
+    await putOne("capture_blobs", {
+      key: blobKey,
+      captureRunId,
+      kind: isFinal ? "fullpage_final" : "fullpage_partial",
+      blob,
+      createdAt: Date.now(),
     });
-
-    const arrayBuffer = await blob.arrayBuffer();
-    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-      return {
-        ok: false,
-        code: "FULLPAGE_ERR_STITCH",
-        message: "Blob converted to empty byte array.",
-      };
-    }
-    if (data && data.debug) {
-      console.log("[FULLPAGE][OFFSCREEN][STITCH_RESULT]", {
-        byteLength: arrayBuffer.byteLength,
-        mimeType: "image/png",
-      });
-    }
-    const captureRunId =
-      data && typeof data.captureRunId === "string" ? data.captureRunId : null;
-    const bytes = new Uint8Array(arrayBuffer);
-    console.log("[FULLPAGE][OFFSCREEN][SEND_TYPED_ARRAY]", {
-      byteLength: bytes.byteLength,
-      mimeType: "image/png",
-      ctor: bytes.constructor ? bytes.constructor.name : null,
-      tag: Object.prototype.toString.call(bytes),
+    await putOne("capture_artifacts", {
+      key: artifactKey,
+      captureRunId,
+      kind: isFinal ? "final" : "partial",
+      blobKey,
+      coveragePercent,
+      completedThroughTile,
+      isPartial: !isFinal,
+      createdAt: Date.now(),
     });
-    try {
-      const port = getFullpagePort();
-      port.postMessage({
-        type: "FULLPAGE_STITCH_RESULT",
-        ok: true,
-        kind: "arraybuffer",
-        mimeType: "image/png",
-        buffer: bytes,
-        byteLength: bytes.byteLength,
-        captureRunId,
-      });
-    } catch (error) {
-      return {
-        ok: false,
-        code: "FULLPAGE_ERR_STITCH",
-        message: error?.message || "Failed to send stitched bytes.",
-      };
-    }
-
+    console.log(`[FULLPAGE][OFFSCREEN][COMPOSE_${logPrefix}_DONE]`, {
+      captureRunId,
+      artifactKey,
+      byteLength: blob.size,
+      coveragePercent,
+    });
     return {
       ok: true,
-      kind: "arraybuffer",
-      mimeType: "image/png",
-      byteLength: arrayBuffer.byteLength,
-      captureRunId,
+      artifactKey,
+      coveragePercent,
+      completedThroughTile,
+      isPartial: !isFinal,
+      byteLength: blob.size,
     };
-  } catch (err) {
+  } catch (error) {
     return {
       ok: false,
       code: "FULLPAGE_ERR_STITCH",
-      message: err?.message || "Unexpected stitch error.",
+      message: error?.message || "Compose failed.",
     };
   }
 }
@@ -1019,7 +1104,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     "RECORDING_EXPORT_WEBM",
     "RECORDING_RESET",
     "DOWNLOAD_BLOB",
-    "FULLPAGE_STITCH",
+    "FULLPAGE_COMPOSE_PARTIAL",
+    "FULLPAGE_COMPOSE_FINAL",
   ]);
   if (!handledTypes.has(message.type)) {
     if (
@@ -1097,8 +1183,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           break;
         }
-        case "FULLPAGE_STITCH":
-          result = await handleFullpageStitch(message.payload || {});
+        case "FULLPAGE_COMPOSE_PARTIAL":
+          result = await composeFullpageArtifact(
+            message.payload ? message.payload.captureRunId : null,
+            false
+          );
+          break;
+        case "FULLPAGE_COMPOSE_FINAL":
+          result = await composeFullpageArtifact(
+            message.payload ? message.payload.captureRunId : null,
+            true
+          );
           break;
         default:
           result = { ok: false, error: "Unknown message type." };

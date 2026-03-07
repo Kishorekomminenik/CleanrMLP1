@@ -52,6 +52,29 @@
       if (!db.objectStoreNames.contains("counters")) {
         db.createObjectStore("counters", { keyPath: "key" });
       }
+      if (!db.objectStoreNames.contains("capture_runs")) {
+        const store = db.createObjectStore("capture_runs", {
+          keyPath: "captureRunId",
+        });
+        store.createIndex("status", "status", { unique: false });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("capture_tiles")) {
+        const store = db.createObjectStore("capture_tiles", { keyPath: "tileId" });
+        store.createIndex("captureRunId", "captureRunId", { unique: false });
+        store.createIndex("tileIndex", "tileIndex", { unique: false });
+        store.createIndex("status", "status", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("capture_blobs")) {
+        const store = db.createObjectStore("capture_blobs", { keyPath: "key" });
+        store.createIndex("captureRunId", "captureRunId", { unique: false });
+        store.createIndex("kind", "kind", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("capture_artifacts")) {
+        const store = db.createObjectStore("capture_artifacts", { keyPath: "key" });
+        store.createIndex("captureRunId", "captureRunId", { unique: false });
+        store.createIndex("kind", "kind", { unique: false });
+      }
     }
 
     function openWithVersion(version) {
@@ -74,7 +97,14 @@
       } catch (error) {
         if (error && error.name === "VersionError") {
           const db = await openWithVersion();
-          const needsMeta = !db.objectStoreNames.contains("meta");
+          const missingStores = [
+            "meta",
+            "parts",
+            "capture_runs",
+            "capture_tiles",
+            "capture_blobs",
+            "capture_artifacts",
+          ].some((name) => !db.objectStoreNames.contains(name));
           let needsCompletedIndex = false;
           if (db.objectStoreNames.contains("parts")) {
             needsCompletedIndex = !db
@@ -84,7 +114,13 @@
           } else {
             needsCompletedIndex = true;
           }
-          if (needsMeta || needsCompletedIndex) {
+          const needsCaptureRunIndex = db.objectStoreNames.contains("capture_runs")
+            ? !db
+                .transaction("capture_runs", "readonly")
+                .objectStore("capture_runs")
+                .indexNames.contains("updatedAt")
+            : true;
+          if (missingStores || needsCompletedIndex || needsCaptureRunIndex) {
             const nextVersion = db.version + 1;
             db.close();
             return await openWithVersion(nextVersion);
