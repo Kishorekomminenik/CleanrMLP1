@@ -4073,6 +4073,10 @@ async function captureFullPageScreenshot(requestedTabId) {
     : activeTabId
       ? await chrome.tabs.get(activeTabId)
       : await getActiveTab();
+  let tileCountCaptured = 0;
+  let tileCountCommitted = 0;
+  let tileCountFailed = 0;
+  let lastArtifactKey = null;
   if (!tab || !tab.id) {
     const error = new Error("No active tab available.");
     error.code = "RESTRICTED_PAGE";
@@ -4246,10 +4250,6 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
     sendFullPageProgress("capture", 0, totalTiles);
-    let tileCountCaptured = 0;
-    let tileCountCommitted = 0;
-    let tileCountFailed = 0;
-    let lastArtifactKey = null;
     let prevY = null;
     let currentScroll = scrollTop;
     for (let i = 0; i < positions.length; i += 1) {
@@ -4410,6 +4410,11 @@ async function captureFullPageScreenshot(requestedTabId) {
       coveragePercent: finalArtifact.coveragePercent || 100,
       updatedAt: Date.now(),
     });
+    const finalRun = await ReproIdb.getByKey("capture_runs", captureRunId);
+    const finalFailedCount =
+      finalRun && typeof finalRun.tileCountFailed === "number"
+        ? finalRun.tileCountFailed
+        : tileCountFailed;
     console.log("[FULLPAGE][SW][FINAL_ARTIFACT_SAVED]", {
       captureRunId,
       artifactKey: finalArtifact.artifactKey,
@@ -4431,6 +4436,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       coveragePercent: finalArtifact.coveragePercent || 100,
       tileCountCaptured,
       tileCountExpected: totalTiles,
+      tileCountFailed: finalFailedCount,
     };
   } catch (error) {
     tileCountFailed += 1;
@@ -4452,6 +4458,11 @@ async function captureFullPageScreenshot(requestedTabId) {
         partialArtifactKey: artifactKey,
         tileCountFailed,
       });
+      const partialRun = await ReproIdb.getByKey("capture_runs", captureRunId);
+      const partialFailedCount =
+        partialRun && typeof partialRun.tileCountFailed === "number"
+          ? partialRun.tileCountFailed
+          : tileCountFailed;
       console.log("[FULLPAGE][SW][RUN_FINALIZED]", {
         captureRunId,
         status: "partial_complete",
@@ -4468,6 +4479,7 @@ async function captureFullPageScreenshot(requestedTabId) {
           : 0,
         tileCountCaptured,
         tileCountExpected: totalTiles,
+        tileCountFailed: partialFailedCount,
       };
     }
     await updateCaptureRun(captureRunId, {
