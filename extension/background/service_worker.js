@@ -44,6 +44,7 @@ const FULL_CAPTURE_CONFIG = {
   retryDelayMs: 800,
   maxRetriesPerShot: 1,
 };
+const DEBUG_FULLPAGE = true;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -4239,6 +4240,20 @@ async function captureFullPageScreenshot(requestedTabId) {
         overlayText,
       },
     });
+    if (DEBUG_FULLPAGE) {
+      console.log("[FULLPAGE][SW][STITCH_RESULT]", {
+        ok: stitchResponse?.ok,
+        code: stitchResponse?.code,
+        message: stitchResponse?.message,
+        kind: stitchResponse?.kind,
+        parts: stitchResponse?.parts,
+        hasBlob: stitchResponse?.blob instanceof Blob,
+        blobType: stitchResponse?.blob?.type,
+        blobSize: stitchResponse?.blob?.size,
+        mimeType: stitchResponse?.mimeType,
+        keys: stitchResponse ? Object.keys(stitchResponse) : null,
+      });
+    }
     if (!stitchResponse || stitchResponse.ok === false) {
       const err = new Error(
         stitchResponse && stitchResponse.message
@@ -5834,6 +5849,18 @@ async function handleMessage(message, sender) {
             details: error && error.details ? error.details : undefined,
           },
         };
+      }
+      if (DEBUG_FULLPAGE) {
+        console.log("[FULLPAGE][SW][RESPONSE_TO_POPUP]", {
+          ok: result?.ok,
+          code: result?.code,
+          message: result?.message,
+          hasBlob: result?.blob instanceof Blob,
+          blobType: result?.blob?.type,
+          blobSize: result?.blob?.size,
+          mimeType: result?.mimeType,
+          keys: result ? Object.keys(result) : null,
+        });
       }
       break;
     case "TAKE_SCREENSHOT":

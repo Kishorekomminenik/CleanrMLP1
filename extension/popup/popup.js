@@ -2207,6 +2207,18 @@ async function handleFullPageScreenshot() {
     blobSize:
       response && response.blob instanceof Blob ? response.blob.size : null,
   });
+  if (typeof DEBUG_FULLPAGE === "undefined" || DEBUG_FULLPAGE) {
+    console.log("[FULLPAGE][POPUP][RESPONSE]", {
+      ok: response?.ok,
+      code: response?.code,
+      message: response?.message,
+      hasBlob: response?.blob instanceof Blob,
+      blobType: response?.blob?.type,
+      blobSize: response?.blob?.size,
+      mimeType: response?.mimeType,
+      keys: response ? Object.keys(response) : null,
+    });
+  }
   if (!response.ok) {
     const errorInfo = response.error || {};
     const code = errorInfo.code || "UNKNOWN";
