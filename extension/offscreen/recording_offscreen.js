@@ -60,7 +60,13 @@ function delay() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }) {
+async function drawTilesToCanvas({
+  ctx,
+  tiles,
+  offsetY = 0,
+  heightLimit = null,
+  debug = false,
+}) {
   let drawn = 0;
   for (const tile of tiles) {
     const tileTop = tile.y + tile.clipTop;
@@ -69,17 +75,27 @@ async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }
     const canvasBottom =
       heightLimit !== null ? offsetY + heightLimit : Number.POSITIVE_INFINITY;
     if (tileBottom <= canvasTop || tileTop >= canvasBottom) {
-      drawn += 1;
       continue;
     }
     const drawTop = Math.max(tileTop, canvasTop);
     const drawBottom = Math.min(tileBottom, canvasBottom);
     const drawHeight = Math.max(0, drawBottom - drawTop);
     if (drawHeight <= 0) {
-      drawn += 1;
       continue;
     }
+    if (!tile.dataUrl) {
+      throw new Error("Tile missing image data.");
+    }
     const bmp = await dataUrlToBitmap(tile.dataUrl);
+    if (!bmp.width || !bmp.height) {
+      throw new Error("Decoded tile has zero dimensions.");
+    }
+    if (debug) {
+      console.log("[FULLPAGE][OFFSCREEN][TILE_DIMENSIONS]", {
+        width: bmp.width,
+        height: bmp.height,
+      });
+    }
     const srcY = tile.clipTop + (drawTop - tileTop);
     const frameWidth = tile.width || ctx.canvas.width;
     ctx.drawImage(
@@ -98,6 +114,7 @@ async function drawTilesToCanvas({ ctx, tiles, offsetY = 0, heightLimit = null }
       await delay();
     }
   }
+  return drawn;
 }
 
 async function normalizeToBlob(input) {
@@ -172,45 +189,19 @@ async function handleFullpageStitch(data) {
       };
     }
 
-    let drawnTileCount = 0;
     if (data && data.debug) {
       console.log("[FULLPAGE][OFFSCREEN][CANVAS]", {
         width: canvas.width,
         height: canvas.height,
       });
     }
-    for (const tile of data.tiles) {
-      if (data && data.debug) {
-        console.log("[FULLPAGE][OFFSCREEN][TILE]", {
-          type: typeof tile,
-          ctor: tile && tile.constructor ? tile.constructor.name : null,
-          keys: tile && typeof tile === "object" ? Object.keys(tile) : null,
-        });
-      }
-      const candidate =
-        tile && typeof tile === "object"
-          ? tile.bitmap ?? tile.dataUrl ?? tile.blob ?? tile
-          : tile;
-      const blob = await normalizeToBlob(candidate);
-      const img = await createImageBitmap(blob);
-      if (data && data.debug) {
-        console.log("[FULLPAGE][OFFSCREEN][TILE_DIMENSIONS]", {
-          width: img.width,
-          height: img.height,
-        });
-      }
-      if (!img.width || !img.height) {
-        return {
-          ok: false,
-          code: "FULLPAGE_ERR_STITCH",
-          message: "Decoded tile has zero dimensions.",
-        };
-      }
-      const x = tile && typeof tile.x === "number" ? tile.x : 0;
-      const y = tile && typeof tile.y === "number" ? tile.y : 0;
-      ctx.drawImage(img, x, y);
-      drawnTileCount += 1;
-    }
+    const drawnTileCount = await drawTilesToCanvas({
+      ctx,
+      tiles: data.tiles,
+      offsetY: 0,
+      heightLimit: null,
+      debug: data && data.debug,
+    });
 
     if (canvas.width === 0 || canvas.height === 0) {
       return {
