@@ -221,6 +221,18 @@ async function handleFullpageStitch(data) {
       });
     }
 
+    let pixelLog = null;
+    try {
+      const imageData = ctx.getImageData(0, 0, 1, 1);
+      const rgba = imageData && imageData.data ? imageData.data : null;
+      pixelLog = rgba
+        ? { r: rgba[0], g: rgba[1], b: rgba[2], a: rgba[3] }
+        : { error: "No image data at pixel 0,0." };
+    } catch (error) {
+      pixelLog = { error: error?.message || "getImageData failed." };
+    }
+    console.log("[FULLPAGE][OFFSCREEN][PIXEL]", pixelLog);
+
     const blob = await canvasToPngBlob(canvas);
 
     if (!(blob instanceof Blob)) {
