@@ -114,7 +114,26 @@ function getByKey(storeName, key) {
   );
 }
 
+function assertNoPromise(value, label) {
+  if (!value) {
+    return;
+  }
+  if (typeof value.then === "function") {
+    throw new Error(`Attempting to store unresolved Promise in IDB (${label}).`);
+  }
+  if (typeof value === "object") {
+    Object.entries(value).forEach(([key, field]) => {
+      if (field && typeof field.then === "function") {
+        throw new Error(
+          `Attempting to store unresolved Promise in IDB (${label}.${key}).`
+        );
+      }
+    });
+  }
+}
+
 function putOne(storeName, item) {
+  assertNoPromise(item, storeName);
   return withStore(storeName, "readwrite", (store) => store.put(item));
 }
 

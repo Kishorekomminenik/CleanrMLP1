@@ -160,18 +160,38 @@
     );
   }
 
+  function assertNoPromise(value, label) {
+    if (!value) {
+      return;
+    }
+    if (typeof value.then === "function") {
+      throw new Error(`Attempting to store unresolved Promise in IDB (${label}).`);
+    }
+    if (typeof value === "object") {
+      Object.entries(value).forEach(([key, field]) => {
+        if (field && typeof field.then === "function") {
+          throw new Error(
+            `Attempting to store unresolved Promise in IDB (${label}.${key}).`
+          );
+        }
+      });
+    }
+  }
+
   function putMany(storeName, items) {
     if (!Array.isArray(items) || items.length === 0) {
       return Promise.resolve();
     }
     return withStore(storeName, "readwrite", (store) => {
-      items.forEach((item) => {
+      items.forEach((item, index) => {
+        assertNoPromise(item, `${storeName}[${index}]`);
         store.put(item);
       });
     });
   }
 
   function putOne(storeName, item) {
+    assertNoPromise(item, storeName);
     return withStore(storeName, "readwrite", (store) => store.put(item));
   }
 
