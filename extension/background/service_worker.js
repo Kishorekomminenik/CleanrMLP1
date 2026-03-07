@@ -4241,6 +4241,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         debug: DEBUG_FULLPAGE === true,
       },
     });
+    console.log("[FULLPAGE][SW][RAW_RESPONSE]", stitchResponse);
     let normalizedStitchResponse = stitchResponse;
     let hasArrayBuffer = false;
     let byteLength = 0;
