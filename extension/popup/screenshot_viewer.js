@@ -603,7 +603,9 @@ function startEditing(el) {
       const range = document.createRange();
       range.selectNodeContents(el);
       range.collapse(false);
-      selection.removeAllRanges();
+      if (selection.rangeCount > 0) {
+        selection.removeAllRanges();
+      }
       selection.addRange(range);
       console.log("[TEXT][CARET_ATTACH]", {
         id: el.dataset.id,
