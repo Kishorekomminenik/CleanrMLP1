@@ -578,12 +578,25 @@ function startEditing(el) {
   requestAnimationFrame(() => {
     el.focus();
   });
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  selection.removeAllRanges();
-  selection.addRange(range);
+  const placeCaret = () => {
+    if (!el || !el.isConnected || !document.contains(el)) {
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection) {
+      return;
+    }
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch (error) {
+      // Ignore if element is detached mid-update.
+    }
+  };
+  requestAnimationFrame(placeCaret);
   console.log("[TEXT] start editing", el.dataset.id);
   console.log("activeElement", document.activeElement);
 }
