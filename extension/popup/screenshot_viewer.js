@@ -55,7 +55,9 @@ const buttons = {
   redo: document.getElementById("btnRedo"),
   clear: document.getElementById("btnClear"),
   copy: document.getElementById("btnCopy"),
+  copyCompressed: document.getElementById("btnCopyCompressed"),
   download: document.getElementById("btnDownload"),
+  downloadCompressed: document.getElementById("btnDownloadCompressed"),
   resetSteps: document.getElementById("btnResetSteps"),
   zoomIn: document.getElementById("btnZoomIn"),
   zoomOut: document.getElementById("btnZoomOut"),
@@ -195,7 +197,13 @@ function setEditorEnabled(enabled) {
   });
   buttons.clear.disabled = !enabled;
   buttons.copy.disabled = !enabled;
+  if (buttons.copyCompressed) {
+    buttons.copyCompressed.disabled = !enabled;
+  }
   buttons.download.disabled = !enabled;
+  if (buttons.downloadCompressed) {
+    buttons.downloadCompressed.disabled = !enabled;
+  }
   if (buttons.resetSteps) {
     buttons.resetSteps.disabled = !enabled;
   }
@@ -1360,6 +1368,11 @@ async function loadScreenshot() {
 }
 
 async function exportAnnotatedBlob() {
+  const exportCanvas = await buildExportCanvas();
+  return await canvasToBlob(exportCanvas, "image/png");
+}
+
+async function buildExportCanvas() {
   if (document.fonts && document.fonts.ready) {
     try {
       await document.fonts.ready;
@@ -1378,9 +1391,60 @@ async function exportAnnotatedBlob() {
     height: exportCanvas.height,
     annotated: true,
   });
-  return new Promise((resolve) => {
-    exportCanvas.toBlob((blob) => resolve(blob), "image/png");
+  return exportCanvas;
+}
+
+async function canvasToBlob(canvas, type, quality) {
+  return await new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), type, quality);
   });
+}
+
+async function exportCompressedAnnotatedBlob({
+  targetBytes = 4 * 1024 * 1024,
+  mimeType = "image/webp",
+} = {}) {
+  const candidates = [mimeType, "image/jpeg"];
+  for (const candidate of candidates) {
+    const result = await exportCompressedWithMime(candidate, targetBytes);
+    if (result && result.blob) {
+      return result;
+    }
+  }
+  return null;
+}
+
+async function exportCompressedWithMime(mimeType, targetBytes) {
+  const qualitySteps = [0.82, 0.7, 0.6, 0.5, 0.4];
+  let canvas = await buildExportCanvas();
+  let best = null;
+  let scale = 1;
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const quality of qualitySteps) {
+      const blob = await canvasToBlob(canvas, mimeType, quality);
+      if (!blob) {
+        return null;
+      }
+      if (!best || blob.size < best.size) {
+        best = { blob, quality, scale };
+      }
+      if (blob.size <= targetBytes) {
+        return { blob, mimeType, quality, scale };
+      }
+    }
+    const nextScale = scale * 0.85;
+    if (nextScale < 0.5) {
+      break;
+    }
+    const scaled = document.createElement("canvas");
+    scaled.width = Math.max(1, Math.round(canvas.width * 0.85));
+    scaled.height = Math.max(1, Math.round(canvas.height * 0.85));
+    const ctx = scaled.getContext("2d");
+    ctx.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+    canvas = scaled;
+    scale = nextScale;
+  }
+  return best ? { blob: best.blob, mimeType, quality: best.quality, scale } : null;
 }
 
 async function downloadExportedBlob(blob, filename, saveAs) {
@@ -1594,6 +1658,51 @@ buttons.copy.addEventListener("click", async () => {
   }
 });
 
+if (buttons.copyCompressed) {
+  buttons.copyCompressed.addEventListener("click", async () => {
+    console.log("[EDITOR][COPY_COMPRESSED_REQUEST]", {
+      focused: document.hasFocus(),
+      isImageLoaded,
+    });
+    if (!isImageLoaded) {
+      setStatus("No screenshot to copy.", "error");
+      return;
+    }
+    if (!document.hasFocus()) {
+      const message = "Click the editor tab, then try Copy again.";
+      setStatus(message, "error");
+      return;
+    }
+    if (editingTextEl) {
+      editingTextEl.blur();
+    }
+    if (!navigator.clipboard || !window.ClipboardItem) {
+      setStatus("Copy failed: Clipboard API unavailable. Use Download.", "error");
+      return;
+    }
+    try {
+      const result = await exportCompressedAnnotatedBlob();
+      if (!result || !result.blob) {
+        throw new Error("Failed to create compressed image.");
+      }
+      await navigator.clipboard.write([
+        new ClipboardItem({ [result.mimeType]: result.blob }),
+      ]);
+      setStatus("Copied (small)!", "success", 2000);
+      console.log("[EDITOR][COPY_COMPRESSED]", {
+        ok: true,
+        bytes: result.blob.size,
+        mimeType: result.mimeType,
+        scale: result.scale,
+      });
+    } catch (error) {
+      const message = error && error.message ? error.message : "Unknown error";
+      setStatus(`Copy failed: ${message}. Use Download.`, "error");
+      console.log("[EDITOR][COPY_COMPRESSED]", { ok: false });
+    }
+  });
+}
+
 buttons.download.addEventListener("click", async () => {
   console.log("[EDITOR][DOWNLOAD_REQUEST]", { isImageLoaded });
   if (!isImageLoaded) {
@@ -1619,6 +1728,40 @@ buttons.download.addEventListener("click", async () => {
     console.log("[EDITOR][DOWNLOAD_PNG]", { ok: false });
   }
 });
+
+if (buttons.downloadCompressed) {
+  buttons.downloadCompressed.addEventListener("click", async () => {
+    console.log("[EDITOR][DOWNLOAD_COMPRESSED_REQUEST]", { isImageLoaded });
+    if (!isImageLoaded) {
+      setStatus("No screenshot to download.", "error");
+      return;
+    }
+    if (editingTextEl) {
+      editingTextEl.blur();
+    }
+    setStatus("Preparing compressed download...");
+    try {
+      const result = await exportCompressedAnnotatedBlob();
+      if (!result || !result.blob) {
+        throw new Error("Failed to create compressed image.");
+      }
+      const extension = result.mimeType === "image/jpeg" ? "jpg" : "webp";
+      const filename = `screenshot_${formatTimestamp(new Date())}_small.${extension}`;
+      await downloadExportedBlob(result.blob, filename, true);
+      setStatus("Download started.", "success", 2000);
+      console.log("[EDITOR][DOWNLOAD_COMPRESSED]", {
+        ok: true,
+        bytes: result.blob.size,
+        mimeType: result.mimeType,
+        scale: result.scale,
+      });
+    } catch (error) {
+      const message = error && error.message ? error.message : "Download failed.";
+      setStatus(message, "error");
+      console.log("[EDITOR][DOWNLOAD_COMPRESSED]", { ok: false });
+    }
+  });
+}
 
 if (buttons.zoomIn) {
   buttons.zoomIn.addEventListener("click", () => {
