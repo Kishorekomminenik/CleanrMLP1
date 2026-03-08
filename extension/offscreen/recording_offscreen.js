@@ -218,36 +218,10 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
   let drawn = 0;
   const lastTile = tiles && tiles.length ? tiles[tiles.length - 1] : null;
   let prevBottom = null;
+  let accumulatedDestY = 0;
   for (const tile of tiles) {
-    const tileTop = tile.yPx + tile.clipTopPx;
-    const tileBottom = tileTop + tile.clipHeightPx;
     if (!tile.blobKey) {
       throw new Error("Tile missing blobKey.");
-    }
-    if (tileBottom <= 0 || tileTop >= ctx.canvas.height) {
-      continue;
-    }
-    const drawTop = Math.max(tileTop, 0);
-    const drawBottom = Math.min(tileBottom, ctx.canvas.height);
-    const drawHeight = Math.max(0, drawBottom - drawTop);
-    console.log("[FULLPAGE][STITCH][TILE]", {
-      tileIndex: tile.tileIndex,
-      yPx: tile.yPx,
-      clipTopPx: tile.clipTopPx,
-      clipHeightPx: tile.clipHeightPx,
-      destY: drawTop,
-      destHeight: drawHeight,
-    });
-    if (prevBottom !== null) {
-      console.log("[FULLPAGE][STITCH][SEAM_CHECK]", {
-        tileIndex: tile.tileIndex,
-        prevBottom,
-        nextTop: drawTop,
-        gapPx: drawTop - prevBottom,
-      });
-    }
-    if (drawHeight <= 0) {
-      continue;
     }
     const blobRecord = await getByKey("capture_blobs", tile.blobKey);
     const blob = blobRecord && blobRecord.blob;
@@ -264,28 +238,53 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
         height: bmp.height,
       });
     }
-    const srcY = tile.clipTopPx + (drawTop - tileTop);
     const frameWidth = tile.widthPx || ctx.canvas.width;
+    const srcY = Math.max(0, tile.clipTopPx);
+    let destY = accumulatedDestY;
+    let destHeight = Math.min(tile.clipHeightPx, ctx.canvas.height - destY);
+    let sourceHeight = Math.min(destHeight, bmp.height - srcY);
+    if (sourceHeight <= 0 || destHeight <= 0) {
+      continue;
+    }
+    destHeight = sourceHeight;
+    const drawTop = destY;
+    const drawHeight = destHeight;
+    console.log("[FULLPAGE][STITCH][TILE]", {
+      tileIndex: tile.tileIndex,
+      sourceHeight,
+      destY,
+      destHeight,
+      accumulatedDestY,
+    });
+    if (prevBottom !== null) {
+      console.log("[FULLPAGE][STITCH][SEAM_CHECK]", {
+        tileIndex: tile.tileIndex,
+        prevBottom,
+        nextTop: drawTop,
+        gapPx: drawTop - prevBottom,
+      });
+    }
     ctx.drawImage(
       bmp,
       0,
       srcY,
       frameWidth,
-      drawHeight,
+      sourceHeight,
       0,
       drawTop,
       frameWidth,
-      drawHeight
+      destHeight
     );
     if (lastTile && tile.tileIndex === lastTile.tileIndex) {
       console.log("[FULLPAGE][STITCH][LAST_TILE]", {
         tileIndex: tile.tileIndex,
-        sourceHeight: drawHeight,
+        sourceHeight,
         destY: drawTop,
         remainingHeight: Math.max(0, ctx.canvas.height - drawTop),
       });
     }
-    prevBottom = drawBottom;
+    prevBottom = drawTop + destHeight;
+    accumulatedDestY = prevBottom;
     drawn += 1;
     if (drawn % 2 === 0) {
       await delay();
