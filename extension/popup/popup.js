@@ -2121,215 +2121,32 @@ async function handleScreenshot() {
   if (currentMode !== "screenshot") {
     return;
   }
-  setStatus(statusElements.message, "Capturing screenshot...");
-  const response = await send("CAPTURE_SCREENSHOT");
-  if (
-    !response.ok ||
-    typeof response.screenshotDataUrl !== "string" ||
-    !response.screenshotDataUrl.startsWith("data:image/png")
-  ) {
-    const reason =
-      response && response.error
-        ? response.error
-        : "missing dataUrl";
-    setStatus(
-      statusElements.message,
-      `Screenshot capture failed: ${reason}`,
-      "error"
-    );
-    await refreshStatus();
-    return;
-  }
-  try {
-    await chrome.storage.session.set({
-      latestScreenshotDataUrl: response.screenshotDataUrl,
-    });
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
-    });
-    setStatus(statusElements.message, "Saved.", "success");
-    showToast("Saved");
-  } catch (error) {
-    setStatus(
-      statusElements.message,
-      error && error.message ? error.message : "Failed to open viewer.",
-      "error"
-    );
-  }
-  await refreshStatus();
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabId = activeTab && activeTab.id ? activeTab.id : null;
+  beginCaptureAfterDismissal("snap", { tabId });
 }
 
 async function handleFullPageScreenshot() {
   if (currentMode !== "screenshot") {
     return;
   }
-  console.log("[FULL] start");
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id || !tab.url) {
-      const message = "No active tab found.";
-      setStatus(statusElements.message, message, "error");
-      showToast(message, "error");
-      return;
-    }
-    if (!/^https?:\/\//i.test(tab.url) || /\.pdf(\?|#|$)/i.test(tab.url)) {
-      const isPdf = /\.pdf(\?|#|$)/i.test(tab.url);
-      const message = isPdf
-        ? "Full capture isn’t supported on PDFs. Open a regular website tab and try again."
-        : "Full capture isn’t supported on this page. Open a regular website tab and try again.";
-      setStatus(statusElements.message, message, "error");
-      showToast(message, "error");
-      return;
-    }
-  } catch (error) {
-    const message =
-      error && error.message ? error.message : "Unable to read active tab.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    return;
-  }
-  setStatus(
-    statusElements.message,
-    "Capturing full page… please don’t scroll.",
-    "default"
-  );
-  setFullPageInProgress(true);
-  updateFullPageProgress("prepare", 0, 0);
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const response = await send(MSG.CAPTURE_FULLPAGE, {
-    tabId: activeTab && activeTab.id ? activeTab.id : null,
+  const tabId = activeTab && activeTab.id ? activeTab.id : null;
+  beginCaptureAfterDismissal("full", { tabId });
+}
+
+function beginCaptureAfterDismissal(mode, payload) {
+  console.log("[CAPTURE][POPUP][REQUESTED]", { mode });
+  const port = chrome.runtime.connect({ name: "capture-request" });
+  port.postMessage({
+    type: "CAPTURE_REQUEST",
+    mode,
+    payload: payload || {},
   });
-  setFullPageInProgress(false);
-  console.log("[FULLPAGE_RESPONSE]", {
-    ok: response && response.ok,
-    code: response && response.code ? response.code : null,
-    message: response && response.message ? response.message : null,
-    hasBlob: Boolean(response && response.blob),
-    blobSize:
-      response && response.blob instanceof Blob ? response.blob.size : null,
-  });
-  if (typeof DEBUG_FULLPAGE === "undefined" || DEBUG_FULLPAGE) {
-    console.log("[FULLPAGE][POPUP][RESPONSE]", {
-      ok: response?.ok,
-      code: response?.code,
-      message: response?.message,
-      hasBlob: response?.blob instanceof Blob,
-      blobType: response?.blob?.type,
-      blobSize: response?.blob?.size,
-      mimeType: response?.mimeType,
-      keys: response ? Object.keys(response) : null,
-    });
-  }
-  if (!response.ok) {
-    const code = response.code || "UNKNOWN";
-    let message =
-      response.message || "Full capture failed. Try again, or use Snap.";
-    if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
-      message =
-        response.message ||
-        "Full capture isn’t supported on this page. Open a regular website tab and try again.";
-    } else if (code === "FULLPAGE_ERR_TOO_TALL") {
-      message = "Page too tall for full capture. Try Snap or segment capture.";
-    } else if (code === "FULLPAGE_ERR_SCROLL_LOCKED") {
-      message = "Page prevented scrolling (likely modal/overflow lock).";
-    } else if (code === "FULLPAGE_ERR_SCROLL_MISMATCH") {
-      message = "Page layout changed during capture. Try again.";
-    } else if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
-      message = response.message || "captureVisibleTab failed.";
-    } else if (code === "FULLPAGE_ERR_STITCH_CANVAS_LIMIT") {
-      message = "Stitching exceeded canvas limits. Exported in parts.";
-    } else if (code === "FULLPAGE_ERR_OFFSCREEN") {
-      message = "Full page capture failed. Try Snap instead.";
-    }
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
-  console.log("[FULLPAGE][POPUP][RESULT]", {
-    ok: true,
-    status: response.status,
-    captureRunId: response.captureRunId,
-    artifactKey: response.artifactKey,
-    isPartial: response.isPartial,
-    coveragePercent: response.coveragePercent,
-    tileCountCaptured: response.tileCountCaptured,
-    tileCountExpected: response.tileCountExpected,
-  });
-  const artifactKey = response.artifactKey;
-  if (!artifactKey) {
-    const message =
-      response.message || "Full page capture failed. Missing artifact.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
-  const { artifact, blobRecord, blob } = await loadFullpageArtifactRecords(artifactKey);
-  if (!artifact) {
-    const message =
-      response.message || "Full page capture failed. Artifact unavailable.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
-  if (!blobRecord) {
-    const message =
-      response.message || "Full page capture failed. Artifact blob missing.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
-  if (!blob || !(blob instanceof Blob) || blob.size <= 0) {
-    const message = "Full capture failed. Invalid image payload.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
-  try {
-    const viewerUrl = new URL(chrome.runtime.getURL("popup/screenshot_viewer.html"));
-    viewerUrl.searchParams.set("artifactKey", artifactKey);
-    if (response.captureRunId) {
-      viewerUrl.searchParams.set("captureRunId", response.captureRunId);
-    }
-    if (response.isPartial === true || response.status === "partial_complete") {
-      viewerUrl.searchParams.set("isPartial", "1");
-    }
-    if (typeof response.coveragePercent === "number") {
-      viewerUrl.searchParams.set("coveragePercent", String(response.coveragePercent));
-    }
-    console.log("[FULLPAGE][POPUP][VIEWER_OPEN_REQUEST]", {
-      artifactKey,
-      captureRunId: response.captureRunId || null,
-      isPartial: response.isPartial === true || response.status === "partial_complete",
-      coveragePercent:
-        typeof response.coveragePercent === "number" ? response.coveragePercent : null,
-    });
-    await chrome.tabs.create({ url: viewerUrl.toString() });
-    console.log("[FULLPAGE][POPUP][VIEWER_OPEN]", { url: viewerUrl.toString() });
-  } catch (error) {
-    const message =
-      error && error.message ? error.message : "Failed to open viewer.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    console.warn("[FULLPAGE_VIEWER_OPEN_FAILED]", message);
-    await refreshStatus();
-    return;
-  }
-  const isPartial = response.isPartial === true || response.status === "partial_complete";
-  const coverageText =
-    typeof response.coveragePercent === "number"
-      ? ` (${response.coveragePercent}% coverage)`
-      : "";
-  const successMessage = isPartial
-    ? `Partial full capture saved${coverageText}.`
-    : "Full page screenshot captured.";
-  setStatus(statusElements.message, successMessage, "success");
-  showToast(isPartial ? "Partial full capture saved" : "Full captured");
-  await refreshStatus();
+  console.log("[CAPTURE][POPUP][CLOSING]", { mode });
+  setTimeout(() => {
+    window.close();
+  }, 0);
 }
 
 async function blobToDataUrl(blob) {

@@ -138,6 +138,8 @@ const state = {
 };
 
 const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
+const POPUP_CAPTURE_PORT_NAME = "capture-request";
+const POPUP_CAPTURE_DELAY_MS = 200;
 
 const captureState = {
   sessionId: null,
@@ -4065,6 +4067,42 @@ async function scanFullpageRuns() {
 
 scanFullpageRuns();
 
+async function handlePopupCaptureRequest(request) {
+  const mode = request && request.mode ? request.mode : "snap";
+  const payload = request && request.payload ? request.payload : {};
+  if (mode === "snap") {
+    try {
+      const dataUrl = await captureScreenshot();
+      if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/png")) {
+        await chrome.storage.session.set({
+          latestScreenshotDataUrl: dataUrl,
+        });
+        await chrome.tabs.create({
+          url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
+        });
+      }
+    } catch (error) {
+      console.warn("[CAPTURE][SW][SNAP_FAILED]", error);
+    }
+    return;
+  }
+  if (mode === "full") {
+    try {
+      const captureResult = await captureFullPageScreenshot(payload.tabId);
+      const artifactKey = captureResult && captureResult.artifactKey;
+      if (artifactKey) {
+        const viewerUrl = new URL(
+          chrome.runtime.getURL("popup/screenshot_viewer.html")
+        );
+        viewerUrl.searchParams.set("artifactKey", artifactKey);
+        await chrome.tabs.create({ url: viewerUrl.toString() });
+      }
+    } catch (error) {
+      console.warn("[CAPTURE][SW][FULL_FAILED]", error);
+    }
+  }
+}
+
 async function captureFullPageScreenshot(requestedTabId) {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
@@ -6438,4 +6476,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   })();
   return true;
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port || port.name !== POPUP_CAPTURE_PORT_NAME) {
+    return;
+  }
+  let pendingRequest = null;
+  port.onMessage.addListener((message) => {
+    if (message && message.type === "CAPTURE_REQUEST") {
+      pendingRequest = message;
+    }
+  });
+  port.onDisconnect.addListener(() => {
+    if (!pendingRequest) {
+      return;
+    }
+    const mode = pendingRequest.mode || "snap";
+    console.log("[CAPTURE][SW][POPUP_DISCONNECTED]", { mode });
+    setTimeout(() => {
+      console.log("[CAPTURE][SW][START_AFTER_DISMISS]", {
+        mode,
+        delayMs: POPUP_CAPTURE_DELAY_MS,
+      });
+      handlePopupCaptureRequest(pendingRequest);
+    }, POPUP_CAPTURE_DELAY_MS);
+  });
 });
