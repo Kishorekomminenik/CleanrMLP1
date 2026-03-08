@@ -139,7 +139,7 @@ const state = {
 };
 
 const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
-const SCROLL_TOLERANCE_PX = 8;
+const SCROLL_TOLERANCE_PX = 5;
 const POPUP_CAPTURE_PORT_NAME = "capture-request";
 const POPUP_CAPTURE_DELAY_MS = 200;
 
@@ -4434,14 +4434,6 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       const preMaxScrollTop = Math.max(0, preScrollHeight - preClientHeight);
       const clampedScrollTop = Math.min(plannedScrollTop, preMaxScrollTop);
-      if (clampedScrollTop === preMaxScrollTop) {
-        console.log("[FULLPAGE][LAST_TILE_MODE]", {
-          tileIndex: i + 1,
-          maxScrollTop: Math.round(preMaxScrollTop),
-          actualScrollTop: null,
-          treatedAsBottom: null,
-        });
-      }
       const scrollRes = await callFullpageCapture(
         tabId,
         "scrollToFullpagePosition",
@@ -4498,23 +4490,26 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       const maxScrollTopNow = Math.max(0, tileScrollHeight - tileClientHeight);
       const belowPlanned =
-        typeof actualY === "number" && actualY + SCROLL_TOLERANCE_PX < clampedScrollTop;
+        typeof actualY === "number" &&
+        actualY < clampedScrollTop - SCROLL_TOLERANCE_PX;
       const treatedAsBottom =
         typeof actualY === "number" &&
-        Math.abs(actualY - maxScrollTopNow) <= SCROLL_TOLERANCE_PX;
+        actualY >= maxScrollTopNow - SCROLL_TOLERANCE_PX;
       console.log("[FULLPAGE][TILE_VALIDATION]", {
+        tileIndex: i + 1,
         plannedScrollTop: Math.round(plannedScrollTop),
         clampedScrollTop: Math.round(clampedScrollTop),
-        maxScrollTop: Math.round(maxScrollTopNow),
         actualScrollTop:
           typeof actualY === "number" ? Math.round(actualY) : null,
+        maxScrollTop: Math.round(maxScrollTopNow),
+        tolerancePx: SCROLL_TOLERANCE_PX,
       });
-      if (clampedScrollTop === maxScrollTopNow) {
+      if (clampedScrollTop === maxScrollTopNow || treatedAsBottom) {
         console.log("[FULLPAGE][LAST_TILE_MODE]", {
           tileIndex: i + 1,
-          maxScrollTop: Math.round(maxScrollTopNow),
           actualScrollTop:
             typeof actualY === "number" ? Math.round(actualY) : null,
+          maxScrollTop: Math.round(maxScrollTopNow),
           treatedAsBottom,
         });
       }
@@ -4550,10 +4545,10 @@ async function captureFullPageScreenshot(requestedTabId) {
         }
         const retryBelowPlanned =
           typeof retryScrollTop === "number" &&
-          retryScrollTop + SCROLL_TOLERANCE_PX < retryTarget;
+          retryScrollTop < retryTarget - SCROLL_TOLERANCE_PX;
         const retryTreatedAsBottom =
           typeof retryScrollTop === "number" &&
-          Math.abs(retryScrollTop - retryMaxScrollTop) <= SCROLL_TOLERANCE_PX;
+          retryScrollTop >= retryMaxScrollTop - SCROLL_TOLERANCE_PX;
         if (retryScrollTop === null || (retryBelowPlanned && !retryTreatedAsBottom)) {
           const err = new Error(
             "Page prevented scrolling (likely modal/overflow lock)."
@@ -4603,6 +4598,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       const baseCropHeight = Math.min(effectiveViewportHeight, remainingHeight);
       const clipHeight = Math.max(0, baseCropHeight - clipTop);
       console.log("[FULLPAGE][CROP_RECALC]", {
+        tileIndex: i + 1,
         scrollHeight: Math.round(tileScrollHeight),
         clientHeight: Math.round(effectiveViewportHeight),
         actualScrollTop: Math.round(effectiveScrollTop),
@@ -4623,15 +4619,14 @@ async function captureFullPageScreenshot(requestedTabId) {
         remainingHeight: Math.round(remainingHeight),
       });
       if (remainingHeight <= 0) {
-        if (
-          tileCountCaptured === tileCountExpected - 1 &&
-          Math.abs(effectiveScrollTop - maxScrollTopNow) <= SCROLL_TOLERANCE_PX
-        ) {
-          tileCountExpected = tileCountCaptured;
+        if (treatedAsBottom) {
+          if (tileCountCaptured === tileCountExpected - 1) {
+            tileCountExpected = tileCountCaptured;
+          }
           console.log("[FULLPAGE][LAST_TILE_MODE]", {
             tileIndex: i + 1,
-            maxScrollTop: Math.round(maxScrollTopNow),
             actualScrollTop: Math.round(effectiveScrollTop),
+            maxScrollTop: Math.round(maxScrollTopNow),
             treatedAsBottom: true,
           });
           break;
