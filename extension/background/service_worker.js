@@ -1,3 +1,5 @@
+// FULL-PAGE CAPTURE V1 LOCKED
+// DO NOT MODIFY WITHOUT TESTING SHORT + LONG PAGE.
 try {
   importScripts(chrome.runtime.getURL("utils/redact.js"));
 } catch (error) {
@@ -4688,6 +4690,8 @@ async function captureFullPageScreenshot(requestedTabId) {
         prevY = effectiveScrollTop;
         continue;
       }
+      // V1 LOCKED: keep rounding consistent for y/clipTop/clipHeight to avoid
+      // stitch seams across tiles (short + long pages).
       const tileMeta = {
         scrollY: Math.round(effectiveScrollTop),
         y: Math.round(effectiveScrollTop * devicePixelRatio),

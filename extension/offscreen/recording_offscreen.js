@@ -1,3 +1,5 @@
+// FULL-PAGE CAPTURE V1 LOCKED
+// DO NOT MODIFY WITHOUT TESTING SHORT + LONG PAGE.
 let mediaRecorder = null;
 let recordedChunks = [];
 let currentStream = null;
@@ -238,6 +240,8 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
         height: bmp.height,
       });
     }
+    // V1 LOCKED: stitch assumes tile placement uses accumulated destY with
+    // matching source/dest heights to prevent visible seams.
     const frameWidth = tile.widthPx || ctx.canvas.width;
     const srcY = Math.max(0, tile.clipTopPx);
     let destY = accumulatedDestY;
