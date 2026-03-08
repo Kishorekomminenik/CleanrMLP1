@@ -92,7 +92,6 @@ let panState = null;
 let currentTool = TOOL.pointer;
 let isDrawing = false;
 let startPoint = null;
-let previewImageData = null;
 let activePointerId = null;
 let dragState = null;
 let editingTextEl = null;
@@ -102,6 +101,9 @@ let pendingPoint = null;
 let pendingShift = false;
 let rafPending = false;
 let toolPerfStart = null;
+let annotations = [];
+let editingAnnotationId = null;
+let activeAnnotation = null;
 
 let undoStack = [];
 let redoStack = [];
@@ -168,7 +170,7 @@ function updateHistoryButtons() {
 }
 
 function getAnnotationCount() {
-  return Math.max(0, undoStack.length - 1);
+  return annotations.length;
 }
 
 function updateStatusMetrics() {
@@ -309,6 +311,14 @@ function applySettingsToEditingText() {
   editingTextEl.dataset.fontFamily = settings.fontFamily;
   editingTextEl.dataset.fontWeight = settings.fontWeight;
   editingTextEl.dataset.opacity = String(settings.opacity);
+  const annotation = getAnnotationById(editingTextEl.dataset.id);
+  if (annotation) {
+    annotation.color = settings.color;
+    annotation.fontSize = settings.fontSize;
+    annotation.fontFamily = settings.fontFamily;
+    annotation.fontWeight = settings.fontWeight;
+    annotation.opacity = settings.opacity;
+  }
   applyTextStyle(editingTextEl);
   positionTextElement(editingTextEl);
 }
@@ -454,56 +464,47 @@ function updateTextPositions() {
   });
 }
 
-function getTextsSnapshot() {
-  return Array.from(textLayer.querySelectorAll(".text-label")).map((el) => {
-    const normalized = normalizeAnnotationStyle({
-      fontFamily: el.dataset.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily,
-      fontSize: Number(el.dataset.fontSize) || DEFAULT_TEXT_SETTINGS.fontSize,
-      fontWeight: el.dataset.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight,
-      color: el.dataset.color || DEFAULT_TEXT_SETTINGS.color,
-      opacity:
-        typeof el.dataset.opacity !== "undefined"
-          ? Number(el.dataset.opacity)
-          : DEFAULT_TEXT_SETTINGS.opacity,
-    });
-    return {
-      id: el.dataset.id,
-      x: Number(el.dataset.x) || 0,
-      y: Number(el.dataset.y) || 0,
-      text: el.innerText || "",
-      ...normalized,
-    };
-  });
+function cloneAnnotations(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
-function rebuildTextLayer(texts) {
+function getTextAnnotations() {
+  return annotations.filter((item) => item.type === "text");
+}
+
+function rebuildTextLayer() {
+  if (editingTextEl) {
+    updateTextPositions();
+    return;
+  }
   textLayer.innerHTML = "";
-  texts.forEach((text) => {
+  getTextAnnotations().forEach((text) => {
     const el = buildTextElement(text);
     textLayer.appendChild(el);
   });
+}
+
+function syncStepCounter() {
+  const maxStep = annotations
+    .filter((item) => item.type === "step")
+    .reduce((max, item) => Math.max(max, item.stepNumber || 0), 0);
+  stepCounter = maxStep + 1;
 }
 
 function pushState() {
   if (!imageSize.width || !imageSize.height) {
     return;
   }
-  const imageData = drawCtx.getImageData(
-    0,
-    0,
-    imageSize.width,
-    imageSize.height
-  );
-  const texts = getTextsSnapshot();
-  undoStack.push({ drawImageData: imageData, texts });
+  undoStack.push(cloneAnnotations(annotations));
   redoStack = [];
   updateHistoryButtons();
   updateStatusMetrics();
 }
 
 function applyState(state) {
-  drawCtx.putImageData(state.drawImageData, 0, 0);
-  rebuildTextLayer(state.texts);
+  annotations = cloneAnnotations(state || []);
+  syncStepCounter();
+  renderAll();
   updateHistoryButtons();
   updateStatusMetrics();
 }
@@ -528,9 +529,9 @@ function redo() {
 }
 
 function clearAll() {
-  drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
-  textLayer.innerHTML = "";
+  annotations = [];
   stepCounter = 1;
+  renderAll();
   pushState();
 }
 
@@ -563,6 +564,7 @@ function startEditing(el) {
     editingTextEl.blur();
   }
   editingTextEl = el;
+  editingAnnotationId = el.dataset.id;
   if (!el.dataset.originalText) {
     el.dataset.originalText = el.innerText || "";
   }
@@ -590,12 +592,26 @@ function finalizeEditing(el) {
   el.classList.remove("editing");
   const text = el.innerText.replace(/\r/g, "");
   if (text.trim() === "") {
+    removeAnnotationById(el.dataset.id);
     el.remove();
   } else {
     el.textContent = text;
+    const annotation = getAnnotationById(el.dataset.id);
+    if (annotation) {
+      annotation.text = text;
+      annotation.x = Number(el.dataset.x) || annotation.x;
+      annotation.y = Number(el.dataset.y) || annotation.y;
+      annotation.color = el.dataset.color || annotation.color;
+      annotation.fontSize = Number(el.dataset.fontSize) || annotation.fontSize;
+      annotation.fontFamily = el.dataset.fontFamily || annotation.fontFamily;
+      annotation.fontWeight = el.dataset.fontWeight || annotation.fontWeight;
+      annotation.opacity = Number(el.dataset.opacity) || annotation.opacity;
+    }
   }
   delete el.dataset.originalText;
   editingTextEl = null;
+  editingAnnotationId = null;
+  renderAll();
   pushState();
   console.log("[EDITOR][ANNOTATION_EDIT]", { toolType: "text" });
 }
@@ -615,8 +631,10 @@ function attachTextHandlers(el) {
       event.preventDefault();
       const original = el.dataset.originalText || "";
       if (original.trim() === "") {
+        removeAnnotationById(el.dataset.id);
         el.remove();
         editingTextEl = null;
+        editingAnnotationId = null;
       } else {
         el.textContent = original;
         el.blur();
@@ -638,7 +656,9 @@ function attachTextHandlers(el) {
       el.contentEditable !== "true"
     ) {
       event.preventDefault();
+      removeAnnotationById(el.dataset.id);
       el.remove();
+      renderAll();
       pushState();
     }
   });
@@ -660,6 +680,7 @@ function attachTextHandlers(el) {
     const point = getCanvasPoint(event);
     dragState = {
       el,
+      annotationId: el.dataset.id,
       offsetX: point.x - Number(el.dataset.x || 0),
       offsetY: point.y - Number(el.dataset.y || 0),
       moved: false,
@@ -679,6 +700,11 @@ function handleTextLayerPointerMove(event) {
   const newY = point.y - dragState.offsetY;
   dragState.el.dataset.x = newX;
   dragState.el.dataset.y = newY;
+  const annotation = getAnnotationById(dragState.annotationId);
+  if (annotation) {
+    annotation.x = newX;
+    annotation.y = newY;
+  }
   positionTextElement(dragState.el);
   dragState.moved = true;
 }
@@ -706,18 +732,18 @@ function drawHighlightRect(start, end, ctx = drawCtx) {
   ctx.fillRect(start.x, start.y, width, height);
 }
 
-function drawRectangle(start, end, lineWidth, ctx = drawCtx) {
-  ctx.strokeStyle = controls.mainColor.value;
+function drawRectangle(start, end, lineWidth, color, ctx = drawCtx) {
+  ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
 }
 
-function drawArrow(start, end, lineWidth, ctx = drawCtx) {
+function drawArrow(start, end, lineWidth, color, ctx = drawCtx) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const angle = Math.atan2(dy, dx);
   const headLength = Math.max(8, lineWidth * 3);
-  ctx.strokeStyle = controls.mainColor.value;
+  ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -725,7 +751,7 @@ function drawArrow(start, end, lineWidth, ctx = drawCtx) {
   ctx.moveTo(start.x, start.y);
   ctx.lineTo(end.x, end.y);
   ctx.stroke();
-  ctx.fillStyle = controls.mainColor.value;
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(end.x, end.y);
   ctx.lineTo(
@@ -740,45 +766,32 @@ function drawArrow(start, end, lineWidth, ctx = drawCtx) {
   ctx.fill();
 }
 
-function drawEllipse(start, end, ctx = drawCtx) {
+function drawEllipse(start, end, lineWidth, color, ctx = drawCtx) {
   const cx = (start.x + end.x) / 2;
   const cy = (start.y + end.y) / 2;
   const rx = Math.abs(end.x - start.x) / 2;
   const ry = Math.abs(end.y - start.y) / 2;
-  ctx.strokeStyle = controls.mainColor.value;
-  ctx.lineWidth = Number(controls.circleWidth.value);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
   ctx.beginPath();
   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.stroke();
 }
 
-function getStepStyle() {
-  const size = controls.stepSize ? controls.stepSize.value : "md";
-  switch (size) {
-    case "sm":
-      return { radius: 10, fontSize: 11, size };
-    case "lg":
-      return { radius: 18, fontSize: 16, size };
-    case "xl":
-      return { radius: 22, fontSize: 18, size };
-    default:
-      return { radius: 14, fontSize: 14, size: "md" };
-  }
-}
-
-function drawStepMarker(point) {
-  const { radius, fontSize, size } = getStepStyle();
-  drawCtx.fillStyle = controls.mainColor.value;
-  drawCtx.beginPath();
-  drawCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-  drawCtx.fill();
-  drawCtx.fillStyle = "#ffffff";
-  drawCtx.font = `bold ${fontSize}px system-ui`;
-  drawCtx.textAlign = "center";
-  drawCtx.textBaseline = "middle";
-  drawCtx.fillText(String(stepCounter), point.x, point.y);
-  console.log("[EDITOR][STEP_ADD]", { stepNumber: stepCounter, stepSize: size });
+function addStepMarker(point) {
+  const stepSize = controls.stepSize ? controls.stepSize.value : "md";
+  const annotation = {
+    id: createId(),
+    type: "step",
+    x: point.x,
+    y: point.y,
+    stepNumber: stepCounter,
+    stepSize,
+    color: controls.mainColor.value,
+  };
+  console.log("[EDITOR][STEP_ADD]", { stepNumber: stepCounter, stepSize });
   stepCounter += 1;
+  addAnnotation(annotation);
 }
 
 function drawBlurPreview(start, end, ctx = previewCtx) {
@@ -792,22 +805,184 @@ function drawBlurPreview(start, end, ctx = previewCtx) {
   ctx.setLineDash([]);
 }
 
-function applyBlurRegion(start, end) {
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
-  const width = Math.abs(end.x - start.x);
-  const height = Math.abs(end.y - start.y);
+function resolveStepStyle(stepSize) {
+  switch (stepSize) {
+    case "sm":
+      return { radius: 10, fontSize: 11 };
+    case "lg":
+      return { radius: 18, fontSize: 16 };
+    case "xl":
+      return { radius: 22, fontSize: 18 };
+    default:
+      return { radius: 14, fontSize: 14 };
+  }
+}
+
+function drawStepAnnotation(ctx, annotation) {
+  const style = resolveStepStyle(annotation.stepSize || "md");
+  ctx.fillStyle = annotation.color;
+  ctx.beginPath();
+  ctx.arc(annotation.x, annotation.y, style.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `bold ${style.fontSize}px system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(annotation.stepNumber), annotation.x, annotation.y);
+}
+
+function drawPenAnnotation(ctx, annotation) {
+  if (!annotation.points || annotation.points.length < 2) {
+    return;
+  }
+  ctx.strokeStyle = annotation.color;
+  ctx.lineWidth = annotation.size;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(annotation.points[0].x, annotation.points[0].y);
+  annotation.points.slice(1).forEach((point) => {
+    ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+}
+
+function drawArrowAnnotation(ctx, annotation) {
+  drawArrow(
+    { x: annotation.startX, y: annotation.startY },
+    { x: annotation.endX, y: annotation.endY },
+    annotation.size,
+    annotation.color,
+    ctx
+  );
+}
+
+function drawRectAnnotation(ctx, annotation) {
+  drawRectangle(
+    { x: annotation.x, y: annotation.y },
+    { x: annotation.x + annotation.width, y: annotation.y + annotation.height },
+    annotation.size,
+    annotation.color,
+    ctx
+  );
+}
+
+function drawCircleAnnotation(ctx, annotation) {
+  drawEllipse(
+    { x: annotation.x, y: annotation.y },
+    { x: annotation.x + annotation.width, y: annotation.y + annotation.height },
+    annotation.size,
+    annotation.color,
+    ctx
+  );
+}
+
+function drawHighlightAnnotation(ctx, annotation) {
+  const fill = hexToRgba(annotation.color, annotation.opacity);
+  ctx.fillStyle = fill;
+  ctx.fillRect(annotation.x, annotation.y, annotation.width, annotation.height);
+}
+
+function drawBlurAnnotation(ctx, annotation, sourceCanvas) {
+  const width = annotation.width;
+  const height = annotation.height;
   if (width < 2 || height < 2) {
     return;
   }
-  const blurPx = Number(controls.blurStrength.value) || 8;
   const tempCanvas = document.createElement("canvas");
   tempCanvas.width = width;
   tempCanvas.height = height;
   const tempCtx = tempCanvas.getContext("2d");
-  tempCtx.filter = `blur(${blurPx}px)`;
-  tempCtx.drawImage(baseCanvas, x, y, width, height, 0, 0, width, height);
-  drawCtx.drawImage(tempCanvas, x, y);
+  tempCtx.filter = `blur(${annotation.blurStrength}px)`;
+  tempCtx.drawImage(
+    sourceCanvas,
+    annotation.x,
+    annotation.y,
+    width,
+    height,
+    0,
+    0,
+    width,
+    height
+  );
+  ctx.drawImage(tempCanvas, annotation.x, annotation.y);
+}
+
+function renderAnnotations(ctx, options = {}) {
+  const includeText = options.includeText === true;
+  const sourceCanvas = options.sourceCanvas || baseCanvas;
+  annotations
+    .filter((item) => item.type === "blur")
+    .forEach((item) => drawBlurAnnotation(ctx, item, sourceCanvas));
+  annotations.forEach((item) => {
+    switch (item.type) {
+      case "pen":
+        drawPenAnnotation(ctx, item);
+        break;
+      case "rectangle":
+        drawRectAnnotation(ctx, item);
+        break;
+      case "arrow":
+        drawArrowAnnotation(ctx, item);
+        break;
+      case "highlight":
+        drawHighlightAnnotation(ctx, item);
+        break;
+      case "circle":
+        drawCircleAnnotation(ctx, item);
+        break;
+      case "step":
+        drawStepAnnotation(ctx, item);
+        break;
+      case "text":
+        if (includeText) {
+          const opacityValue = Number(item.opacity);
+          const colorValue =
+            !Number.isNaN(opacityValue) && opacityValue < 1
+              ? hexToRgba(item.color, opacityValue)
+              : item.color;
+          ctx.font = `${item.fontWeight} ${item.fontSize}px ${item.fontFamily}`;
+          ctx.fillStyle = colorValue;
+          ctx.textBaseline = "top";
+          const lines = (item.text || "").split("\n");
+          const lineHeight = item.fontSize * 1.2;
+          lines.forEach((line, index) => {
+            ctx.fillText(line, item.x, item.y + index * lineHeight);
+          });
+        }
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+function renderAll() {
+  if (!drawCtx || !previewCtx) {
+    return;
+  }
+  drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+  clearPreview();
+  renderAnnotations(drawCtx, { includeText: false, sourceCanvas: baseCanvas });
+  rebuildTextLayer();
+}
+
+function addAnnotation(annotation) {
+  annotations.push(annotation);
+  renderAll();
+  pushState();
+  console.log("[EDITOR][ANNOTATION_ADD]", {
+    toolType: annotation.type,
+    imageSpace: true,
+  });
+}
+
+function getAnnotationById(id) {
+  return annotations.find((item) => item.id === id);
+}
+
+function removeAnnotationById(id) {
+  annotations = annotations.filter((item) => item.id !== id);
 }
 
 function startDrawing(point) {
@@ -819,12 +994,20 @@ function startDrawing(point) {
     drawCtx.lineJoin = "round";
     drawCtx.beginPath();
     drawCtx.moveTo(point.x, point.y);
+    activeAnnotation = {
+      id: createId(),
+      type: "pen",
+      points: [{ x: point.x, y: point.y }],
+      color: controls.mainColor.value,
+      size: Number(controls.penWidth.value),
+    };
   } else if (
     [TOOL.highlight, TOOL.circle, TOOL.rectangle, TOOL.arrow, TOOL.blur].includes(
       currentTool
     )
   ) {
     clearPreview();
+    activeAnnotation = null;
   }
   isDrawing = true;
   startPoint = point;
@@ -856,19 +1039,40 @@ function updateDrawing(point, shiftKey = false) {
   if (currentTool === TOOL.pen) {
     drawCtx.lineTo(point.x, point.y);
     drawCtx.stroke();
+    if (activeAnnotation) {
+      activeAnnotation.points.push({ x: point.x, y: point.y });
+    }
     return;
   }
   clearPreview();
   if (currentTool === TOOL.highlight) {
     drawHighlightRect(startPoint, point, previewCtx);
   } else if (currentTool === TOOL.circle) {
-    drawEllipse(startPoint, point, previewCtx);
+    drawEllipse(
+      startPoint,
+      point,
+      Number(controls.circleWidth.value),
+      controls.mainColor.value,
+      previewCtx
+    );
   } else if (currentTool === TOOL.rectangle) {
     const end = constrainPoint(startPoint, point, "square", shiftKey);
-    drawRectangle(startPoint, end, Number(controls.penWidth.value), previewCtx);
+    drawRectangle(
+      startPoint,
+      end,
+      Number(controls.penWidth.value),
+      controls.mainColor.value,
+      previewCtx
+    );
   } else if (currentTool === TOOL.arrow) {
     const end = constrainPoint(startPoint, point, "axis", shiftKey);
-    drawArrow(startPoint, end, Number(controls.penWidth.value), previewCtx);
+    drawArrow(
+      startPoint,
+      end,
+      Number(controls.penWidth.value),
+      controls.mainColor.value,
+      previewCtx
+    );
   } else if (currentTool === TOOL.blur) {
     drawBlurPreview(startPoint, point, previewCtx);
   }
@@ -880,31 +1084,84 @@ function finishDrawing(point, shiftKey = false) {
   }
   if (currentTool === TOOL.pen) {
     drawCtx.closePath();
-    pushState();
-    console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "pen", imageSpace: true });
-  } else if (previewImageData && startPoint) {
+    if (activeAnnotation && activeAnnotation.points.length > 1) {
+      annotations.push(activeAnnotation);
+      renderAll();
+      pushState();
+      console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "pen", imageSpace: true });
+    }
+    activeAnnotation = null;
+  } else if (startPoint) {
     clearPreview();
     const distanceX = Math.abs(point.x - startPoint.x);
     const distanceY = Math.abs(point.y - startPoint.y);
     if (distanceX > 1 || distanceY > 1) {
+      const baseAnnotation = {
+        id: createId(),
+        color: controls.mainColor.value,
+      };
       if (currentTool === TOOL.highlight) {
-        drawHighlightRect(startPoint, point);
+        const x = Math.min(startPoint.x, point.x);
+        const y = Math.min(startPoint.y, point.y);
+        addAnnotation({
+          ...baseAnnotation,
+          type: "highlight",
+          color: controls.highlightColor.value,
+          x,
+          y,
+          width: Math.abs(point.x - startPoint.x),
+          height: Math.abs(point.y - startPoint.y),
+          opacity: Number(controls.highlightOpacity.value),
+        });
       } else if (currentTool === TOOL.circle) {
-        drawEllipse(startPoint, point);
+        const x = Math.min(startPoint.x, point.x);
+        const y = Math.min(startPoint.y, point.y);
+        addAnnotation({
+          ...baseAnnotation,
+          type: "circle",
+          x,
+          y,
+          width: Math.abs(point.x - startPoint.x),
+          height: Math.abs(point.y - startPoint.y),
+          size: Number(controls.circleWidth.value),
+        });
       } else if (currentTool === TOOL.rectangle) {
         const end = constrainPoint(startPoint, point, "square", shiftKey);
-        drawRectangle(startPoint, end, Number(controls.penWidth.value));
+        const x = Math.min(startPoint.x, end.x);
+        const y = Math.min(startPoint.y, end.y);
+        addAnnotation({
+          ...baseAnnotation,
+          type: "rectangle",
+          x,
+          y,
+          width: Math.abs(end.x - startPoint.x),
+          height: Math.abs(end.y - startPoint.y),
+          size: Number(controls.penWidth.value),
+        });
       } else if (currentTool === TOOL.arrow) {
         const end = constrainPoint(startPoint, point, "axis", shiftKey);
-        drawArrow(startPoint, end, Number(controls.penWidth.value));
+        addAnnotation({
+          ...baseAnnotation,
+          type: "arrow",
+          startX: startPoint.x,
+          startY: startPoint.y,
+          endX: end.x,
+          endY: end.y,
+          size: Number(controls.penWidth.value),
+        });
       } else if (currentTool === TOOL.blur) {
-        applyBlurRegion(startPoint, point);
+        const x = Math.min(startPoint.x, point.x);
+        const y = Math.min(startPoint.y, point.y);
+        addAnnotation({
+          ...baseAnnotation,
+          type: "blur",
+          x,
+          y,
+          width: Math.abs(point.x - startPoint.x),
+          height: Math.abs(point.y - startPoint.y),
+          blurStrength: Number(controls.blurStrength.value) || 8,
+        });
       }
-      pushState();
-      console.log("[EDITOR][ANNOTATION_ADD]", {
-        toolType: currentTool,
-        imageSpace: true,
-      });
     }
   }
   isDrawing = false;
@@ -965,6 +1222,9 @@ async function loadScreenshot() {
       baseCtx.drawImage(image, 0, 0);
       drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
       previewCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+      annotations = [];
+      editingAnnotationId = null;
+      activeAnnotation = null;
       zoom = 1;
       stepCounter = 1;
       updateScale();
@@ -974,6 +1234,7 @@ async function loadScreenshot() {
       setTool(currentTool);
       undoStack = [];
       redoStack = [];
+      renderAll();
       pushState();
       setStatus("Ready.");
       console.log("[EDITOR][INIT]", {
@@ -1023,6 +1284,9 @@ async function loadScreenshot() {
     baseCtx.drawImage(image, 0, 0);
     drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
     previewCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+    annotations = [];
+    editingAnnotationId = null;
+    activeAnnotation = null;
     zoom = 1;
     stepCounter = 1;
     updateScale();
@@ -1032,6 +1296,7 @@ async function loadScreenshot() {
     setTool(currentTool);
     undoStack = [];
     redoStack = [];
+    renderAll();
     pushState();
     setStatus("Ready.");
     console.log("[EDITOR][INIT]", {
@@ -1068,28 +1333,7 @@ async function exportAnnotatedBlob() {
   exportCanvas.height = imageSize.height;
   const ctx = exportCanvas.getContext("2d");
   ctx.drawImage(baseCanvas, 0, 0);
-  ctx.drawImage(drawCanvas, 0, 0);
-  const texts = getTextsSnapshot();
-  texts.forEach((text) => {
-    const weight = resolveFontWeight(text.fontWeight || DEFAULT_TEXT_SETTINGS.fontWeight);
-    const fontFamily = resolveFontFamily(
-      text.fontFamily || DEFAULT_TEXT_SETTINGS.fontFamily
-    );
-    const opacity =
-      typeof text.opacity === "number" && !Number.isNaN(text.opacity)
-        ? text.opacity
-        : 1;
-    const colorValue =
-      opacity < 1 ? hexToRgba(text.color, opacity) : text.color;
-    ctx.font = `${weight} ${text.fontSize}px ${fontFamily}`;
-    ctx.fillStyle = colorValue;
-    ctx.textBaseline = "top";
-    const lines = text.text.split("\n");
-    const lineHeight = text.fontSize * 1.2;
-    lines.forEach((line, index) => {
-      ctx.fillText(line, text.x, text.y + index * lineHeight);
-    });
-  });
+  renderAnnotations(ctx, { includeText: true, sourceCanvas: baseCanvas });
   console.log("[EDITOR][EXPORT_READY]", {
     width: exportCanvas.width,
     height: exportCanvas.height,
@@ -1098,6 +1342,28 @@ async function exportAnnotatedBlob() {
   return new Promise((resolve) => {
     exportCanvas.toBlob((blob) => resolve(blob), "image/png");
   });
+}
+
+async function downloadExportedBlob(blob, filename, saveAs) {
+  let objectUrl = null;
+  try {
+    objectUrl = URL.createObjectURL(blob);
+    await chrome.downloads.download({
+      url: objectUrl,
+      filename,
+      saveAs,
+    });
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error && error.message ? error.message : "Download failed.",
+    };
+  } finally {
+    if (objectUrl) {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+    }
+  }
 }
 
 drawCanvas.addEventListener("pointerdown", (event) => {
@@ -1127,9 +1393,7 @@ drawCanvas.addEventListener("pointerdown", (event) => {
   const point = getCanvasPoint(event);
   logPointerMap(event, point);
   if (currentTool === TOOL.step) {
-    drawStepMarker(point);
-    pushState();
-    console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "step", imageSpace: true });
+    addStepMarker(point);
     return;
   }
   activePointerId = event.pointerId;
@@ -1176,6 +1440,7 @@ drawCanvas.addEventListener("pointercancel", () => {
   pendingPoint = null;
   rafPending = false;
   activePointerId = null;
+  activeAnnotation = null;
 });
 
 textLayer.addEventListener("pointermove", handleTextLayerPointerMove);
@@ -1202,8 +1467,10 @@ textLayer.addEventListener("pointerdown", (event) => {
     x: point.x,
     y: point.y,
     text: "",
+    type: "text",
     ...textSettings,
   };
+  annotations.push(newText);
   const el = buildTextElement(newText);
   textLayer.appendChild(el);
   startEditing(el);
@@ -1233,7 +1500,10 @@ buttons.clear.addEventListener("click", () => {
 
 if (buttons.resetSteps) {
   buttons.resetSteps.addEventListener("click", () => {
-    stepCounter = 1;
+    annotations = annotations.filter((item) => item.type !== "step");
+    syncStepCounter();
+    renderAll();
+    pushState();
     setStatus("Step numbers reset.", "success", 1500);
     console.log("[EDITOR][STEP_RESET]", { nextStep: stepCounter });
   });
@@ -1261,8 +1531,9 @@ buttons.copy.addEventListener("click", async () => {
     setStatus("Copy failed: Clipboard API unavailable. Use Download.", "error");
     return;
   }
+  let blob = null;
   try {
-    const blob = await exportAnnotatedBlob();
+    blob = await exportAnnotatedBlob();
     if (!blob) {
       throw new Error("Failed to create image.");
     }
@@ -1277,6 +1548,10 @@ buttons.copy.addEventListener("click", async () => {
     setStatus(`Copy failed: ${message}. Use Download.`, "error");
     console.log("[EDITOR][COPY_PNG]", { ok: false });
     console.log("[EDITOR][COPY_RESULT]", { ok: false, message });
+    if (blob) {
+      const filename = `screenshot_${formatTimestamp(new Date())}.png`;
+      await downloadExportedBlob(blob, filename, true);
+    }
   }
 });
 
@@ -1291,28 +1566,18 @@ buttons.download.addEventListener("click", async () => {
   }
   const filename = `screenshot_${formatTimestamp(new Date())}.png`;
   setStatus("Downloading...");
-  let objectUrl = null;
   try {
     const blob = await exportAnnotatedBlob();
     if (!blob) {
       throw new Error("Failed to create image.");
     }
-    objectUrl = URL.createObjectURL(blob);
-    await chrome.downloads.download({
-      url: objectUrl,
-      filename,
-      saveAs: true,
-    });
+    await downloadExportedBlob(blob, filename, true);
     setStatus("Download started.", "success", 2000);
     console.log("[EDITOR][DOWNLOAD_PNG]", { ok: true });
   } catch (error) {
     const message = error && error.message ? error.message : "Download failed.";
     setStatus(message, "error");
     console.log("[EDITOR][DOWNLOAD_PNG]", { ok: false });
-  } finally {
-    if (objectUrl) {
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
-    }
   }
 });
 
