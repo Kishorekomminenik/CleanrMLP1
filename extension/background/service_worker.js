@@ -5942,7 +5942,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     "error"
   );
   markSessionStopped();
-  await flushQueues();
+  void flushQueues();
 });
 
 async function resetSession() {
