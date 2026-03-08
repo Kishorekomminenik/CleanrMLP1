@@ -18,6 +18,16 @@ let recordingSegmentMode = false;
 let recordingObjectUrl = null;
 let recordingObjectUrlBytes = 0;
 let recordingFinalChunkLogged = false;
+let recordingSessionId = null;
+let recordingTabId = null;
+let recordingChunkIndex = 0;
+let recordingChunkCount = 0;
+let recordingBytesWritten = 0;
+let recordingChunkBufferDropped = false;
+let recordingStopFallbackUsed = false;
+let recordingSessionMeta = null;
+let recordingChunkFlushPromise = Promise.resolve();
+const RECORDING_CHUNK_BUFFER_LIMIT = 8;
 const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
 const FULLPAGE_PART_HEIGHT = 12000;
@@ -157,6 +167,52 @@ function getAllByIndex(storeName, indexName, keyRange) {
       };
     });
   });
+}
+
+function buildRecordingChunkKey(sessionId, index) {
+  return `${sessionId}:${String(index).padStart(6, "0")}`;
+}
+
+async function updateRecordingSessionRecord(fields) {
+  if (!recordingSessionId) {
+    return;
+  }
+  const next = {
+    ...(recordingSessionMeta || { sessionId: recordingSessionId }),
+    ...fields,
+  };
+  recordingSessionMeta = next;
+  await putOne("recording_sessions", next);
+}
+
+function queueRecordingChunkFlush(record) {
+  recordingChunkFlushPromise = recordingChunkFlushPromise.then(async () => {
+    await putOne("recording_chunks", record);
+    console.log("[RECORDING][CHUNK_FLUSH]", {
+      sessionId: record.sessionId,
+      chunkIndex: record.index,
+      size: record.size,
+      bytesWritten: recordingBytesWritten,
+    });
+    await updateRecordingSessionRecord({
+      chunkCount: recordingChunkCount,
+      bytesWritten: recordingBytesWritten,
+    });
+  });
+  return recordingChunkFlushPromise;
+}
+
+async function loadRecordingChunksFromDb(sessionId) {
+  if (!sessionId) {
+    return [];
+  }
+  const chunks = await getAllByIndex(
+    "recording_chunks",
+    "sessionId",
+    IDBKeyRange.only(sessionId)
+  );
+  chunks.sort((a, b) => a.index - b.index);
+  return chunks.map((entry) => entry.blob);
 }
 
 async function drawTilesToCanvas({
@@ -701,6 +757,14 @@ function resetRecordingState() {
   recordingStopReason = null;
   recordingSegmentMode = false;
   recordingHasData = false;
+  recordingSessionId = null;
+  recordingTabId = null;
+  recordingChunkIndex = 0;
+  recordingChunkCount = 0;
+  recordingBytesWritten = 0;
+  recordingChunkBufferDropped = false;
+  recordingStopFallbackUsed = false;
+  recordingSessionMeta = null;
   revokeRecordingUrl();
 }
 
@@ -728,6 +792,7 @@ function formatElapsed(ms) {
 function getRecordingStateSnapshot() {
   const elapsedMs = computeElapsedMs();
   return {
+    sessionId: recordingSessionId,
     state: recordingState,
     startedAt: recordingStartedAt,
     pausedAt: recordingPausedAt,
@@ -738,6 +803,8 @@ function getRecordingStateSnapshot() {
     elapsedMs,
     elapsedText: formatElapsed(elapsedMs),
     recorderState: mediaRecorder ? mediaRecorder.state : "inactive",
+    chunkCount: recordingChunkCount,
+    bytesWritten: recordingBytesWritten,
   };
 }
 
@@ -824,7 +891,29 @@ function attachRecorderHandlers(recorder) {
   };
   recorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
-      recordedChunks.push(event.data);
+      const chunk = event.data;
+      recordedChunks.push(chunk);
+      if (recordedChunks.length > RECORDING_CHUNK_BUFFER_LIMIT) {
+        recordedChunks.splice(0, recordedChunks.length - RECORDING_CHUNK_BUFFER_LIMIT);
+        recordingChunkBufferDropped = true;
+      }
+      const index = recordingChunkIndex;
+      recordingChunkIndex += 1;
+      recordingChunkCount = recordingChunkIndex;
+      recordingBytesWritten += chunk.size;
+      const record = {
+        key: buildRecordingChunkKey(recordingSessionId, index),
+        sessionId: recordingSessionId,
+        index,
+        blob: chunk,
+        size: chunk.size,
+        timecode:
+          typeof event.timecode === "number" && Number.isFinite(event.timecode)
+            ? event.timecode
+            : null,
+        createdAt: Date.now(),
+      };
+      queueRecordingChunkFlush(record);
       if (!recordingHasData) {
         recordingHasData = true;
         chrome.runtime.sendMessage({ type: "RECORDING_DATA_AVAILABLE" });
@@ -851,7 +940,7 @@ function attachRecorderHandlers(recorder) {
     }
     const durationMs = computeElapsedMs();
     recordingDurationMsSnapshot = durationMs;
-    const totalBytes = sumChunkBytes(recordedChunks);
+    const totalBytes = recordingBytesWritten || sumChunkBytes(recordedChunks);
     console.log(
       "[REC][offscreen] STOP confirmed",
       `chunks=${recordedChunks.length}`,
@@ -863,11 +952,20 @@ function attachRecorderHandlers(recorder) {
     mediaRecorder = null;
     stopStreamTracks();
     notifyStateChanged("stop");
+    await updateRecordingSessionRecord({
+      status: recordingStopFallbackUsed ? "partial_complete" : "stopped",
+      stoppedAt: Date.now(),
+      durationMs,
+      isPartial: recordingStopFallbackUsed,
+      failureReason: recordingStopFallbackUsed ? "stop_timeout" : null,
+      chunkCount: recordingChunkCount,
+      bytesWritten: recordingBytesWritten,
+    });
     resolveStopPromise({ ok: true });
   };
 }
 
-async function startRecording(streamId, tabId, requestedMime) {
+async function startRecording(streamId, tabId, requestedMime, sessionId) {
   if (recordingState === "recording" || recordingState === "paused") {
     return { ok: true, alreadyRecording: true, ...getRecordingStateSnapshot() };
   }
@@ -875,6 +973,32 @@ async function startRecording(streamId, tabId, requestedMime) {
   stopStreamTracks();
   resetRecordingState();
   revokeRecordingUrl();
+  recordingSessionId = sessionId || `rec_${Date.now()}`;
+  recordingTabId = tabId || null;
+  recordingChunkIndex = 0;
+  recordingChunkCount = 0;
+  recordingBytesWritten = 0;
+  recordingChunkBufferDropped = false;
+  recordingStopFallbackUsed = false;
+  recordingSessionMeta = {
+    sessionId: recordingSessionId,
+    tabId: recordingTabId,
+    status: "starting",
+    startedAt: Date.now(),
+    stoppedAt: null,
+    mimeType: requestedMime || null,
+    durationMs: null,
+    chunkCount: 0,
+    bytesWritten: 0,
+    finalBlobKey: null,
+    isPartial: false,
+    failureReason: null,
+  };
+  try {
+    await putOne("recording_sessions", recordingSessionMeta);
+  } catch (error) {
+    // Ignore IDB session creation failures.
+  }
   console.log("[REC][offscreen] start ->", { tabId });
   try {
     currentStream = await captureTabStream(streamId);
@@ -895,6 +1019,20 @@ async function startRecording(streamId, tabId, requestedMime) {
       mediaRecorder = null;
       stopStreamTracks();
       notifyStateChanged("ended");
+      recordingStopFallbackUsed = true;
+      console.log("[RECORDING][TRACK_ENDED]", {
+        sessionId: recordingSessionId,
+        reason: "track_ended",
+      });
+      updateRecordingSessionRecord({
+        status: "partial_complete",
+        stoppedAt: Date.now(),
+        durationMs: computeElapsedMs(),
+        isPartial: true,
+        failureReason: "track_ended",
+        chunkCount: recordingChunkCount,
+        bytesWritten: recordingBytesWritten,
+      });
       resolveStopPromise({ ok: false, reason: "ended" });
     };
   });
@@ -918,6 +1056,10 @@ async function startRecording(streamId, tabId, requestedMime) {
   }
   recordingMimeType = mimeType || mediaRecorder.mimeType || "video/webm";
   console.log("[REC][offscreen] mimeType chosen=", recordingMimeType);
+  await updateRecordingSessionRecord({
+    status: "recording",
+    mimeType: recordingMimeType,
+  });
   attachRecorderHandlers(mediaRecorder);
   recordingStartedAt = nowMs();
   recordingPausedAt = null;
@@ -1039,12 +1181,13 @@ async function stopRecording() {
   notifyStateChanged("stopping");
   const result = await Promise.race([stopPromise, timeoutPromise]);
   if (result && result.ok === false && result.reason === "timeout") {
-    if (recordedChunks.length > 0) {
+    if (recordingChunkCount > 0 || recordedChunks.length > 0) {
       recordingLastError = null;
       recordingState = "idle";
       mediaRecorder = null;
       stopStreamTracks();
       notifyStateChanged("stop");
+      recordingStopFallbackUsed = true;
       const fallback = {
         ok: true,
         fallback: true,
@@ -1052,8 +1195,22 @@ async function stopRecording() {
         code: "RECORDING_STOP_TIMEOUT_FALLBACK",
         ...getRecordingStateSnapshot(),
       };
+      console.log("[RECORDING][STOP_TIMEOUT_FALLBACK]", {
+        sessionId: recordingSessionId,
+        chunkCount: recordingChunkCount,
+        bytesWritten: recordingBytesWritten,
+      });
       console.log("[REC][offscreen] STOP_TIMEOUT_FALLBACK", {
         chunks: recordedChunks.length,
+      });
+      updateRecordingSessionRecord({
+        status: "partial_complete",
+        stoppedAt: Date.now(),
+        durationMs: computeElapsedMs(),
+        isPartial: true,
+        failureReason: "stop_timeout",
+        chunkCount: recordingChunkCount,
+        bytesWritten: recordingBytesWritten,
       });
       resolveStopPromise(fallback);
       return fallback;
@@ -1092,17 +1249,31 @@ async function exportRecordingWebm() {
   if (recordingState === "stopping") {
     return { ok: false, error: "Recording is still stopping. Try again." };
   }
-  if (!recordingHasData || recordedChunks.length === 0) {
+  await recordingChunkFlushPromise;
+  if (!recordingHasData || (recordedChunks.length === 0 && recordingChunkCount === 0)) {
     return { ok: false, error: "No recording available to download." };
   }
-  const totalBytes = sumChunkBytes(recordedChunks);
+  let chunks = recordedChunks;
+  if (
+    recordingSessionId &&
+    (recordingChunkBufferDropped || recordedChunks.length < recordingChunkCount)
+  ) {
+    const stored = await loadRecordingChunksFromDb(recordingSessionId);
+    if (stored.length > 0) {
+      chunks = stored;
+    }
+  }
+  if (!chunks.length) {
+    return { ok: false, error: "No recording available to download." };
+  }
+  const totalBytes = sumChunkBytes(chunks);
   console.log(
     "[REC] EXPORT requested",
-    `chunks=${recordedChunks.length}`,
+    `chunks=${chunks.length}`,
     `totalBytes=${totalBytes}`,
     `mimeType=${recordingMimeType || "video/webm"}`
   );
-  let blob = new Blob(recordedChunks, {
+  let blob = new Blob(chunks, {
     type: recordingMimeType || "video/webm",
   });
   console.log("[REC][offscreen] BLOB_ASSEMBLED", {
@@ -1132,6 +1303,38 @@ async function exportRecordingWebm() {
     recordingObjectUrlBytes = blob.size;
   }
   const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
+  if (recordingSessionId) {
+    const artifactKey = `recording_final_${recordingSessionId}_${Date.now()}`;
+    try {
+      await putOne("recording_artifacts", {
+        key: artifactKey,
+        sessionId: recordingSessionId,
+        blob,
+        size: blob.size,
+        mimeType: recordingMimeType || "video/webm",
+        kind: recordingStopFallbackUsed ? "partial" : "final",
+        createdAt: Date.now(),
+      });
+      await updateRecordingSessionRecord({
+        status: recordingStopFallbackUsed ? "partial_complete" : "complete",
+        stoppedAt: Date.now(),
+        durationMs,
+        finalBlobKey: artifactKey,
+        isPartial: recordingStopFallbackUsed,
+        failureReason: recordingStopFallbackUsed ? "stop_timeout" : null,
+        chunkCount: recordingChunkCount || chunks.length,
+        bytesWritten: recordingBytesWritten || totalBytes,
+      });
+      console.log("[RECORDING][FINALIZE]", {
+        sessionId: recordingSessionId,
+        status: recordingStopFallbackUsed ? "partial_complete" : "complete",
+        artifactSize: blob.size,
+        isPartial: recordingStopFallbackUsed,
+      });
+    } catch (error) {
+      // Ignore artifact persistence failures.
+    }
+  }
   return {
     ok: true,
     blobUrl: recordingObjectUrl,
@@ -1139,6 +1342,7 @@ async function exportRecordingWebm() {
     mimeType: recordingMimeType || "video/webm",
     size: blob.size,
     durationMs,
+    sessionId: recordingSessionId,
   };
 }
 
@@ -1206,7 +1410,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           result = await startRecording(
             message.streamId,
             message.tabId,
-            message.mimeType
+            message.mimeType,
+            message.sessionId
           );
           break;
         case "RECORDING_PAUSE":

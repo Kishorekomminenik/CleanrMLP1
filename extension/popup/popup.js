@@ -2799,6 +2799,11 @@ async function handleRecordingDownload() {
         }
       );
     });
+    console.log("[RECORDING][DOWNLOAD]", {
+      sessionId: res.sessionId || null,
+      ok: true,
+      size: res.size || null,
+    });
     setStatus(statusElements.download, "Saved.", "success");
     showToast("Saved");
   } catch (error) {

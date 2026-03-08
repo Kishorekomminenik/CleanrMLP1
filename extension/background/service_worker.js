@@ -120,6 +120,7 @@ const state = {
     videoByteLength: null,
     videoStartEpochMs: null,
     videoEndEpochMs: null,
+    sessionId: null,
   },
   network: {
     active: false,
@@ -2114,6 +2115,53 @@ function createSessionId() {
   return `session_${Date.now()}_${random}`;
 }
 
+async function createRecordingSessionRecord(tabId, mimeType) {
+  const sessionId = createSessionId();
+  const record = {
+    sessionId,
+    tabId: tabId || null,
+    status: "starting",
+    startedAt: Date.now(),
+    stoppedAt: null,
+    mimeType: mimeType || null,
+    durationMs: null,
+    chunkCount: 0,
+    bytesWritten: 0,
+    finalBlobKey: null,
+    isPartial: false,
+    failureReason: null,
+  };
+  try {
+    await ReproIdb.putOne("recording_sessions", record);
+  } catch (error) {
+    console.warn("[RECORDING][SESSION_CREATE_FAILED]", error);
+  }
+  console.log("[RECORDING][SESSION_CREATED]", {
+    sessionId,
+    tabId: tabId || null,
+    mimeType: mimeType || null,
+  });
+  return sessionId;
+}
+
+async function updateRecordingSessionRecord(sessionId, updates) {
+  if (!sessionId) {
+    return null;
+  }
+  try {
+    const existing = await ReproIdb.getByKey("recording_sessions", sessionId);
+    const next = {
+      ...(existing || { sessionId }),
+      ...updates,
+    };
+    await ReproIdb.putOne("recording_sessions", next);
+    return next;
+  } catch (error) {
+    console.warn("[RECORDING][SESSION_UPDATE_FAILED]", error);
+    return null;
+  }
+}
+
 function updateSessionCounts() {
   if (!session) {
     return;
@@ -2355,6 +2403,9 @@ function syncRecordingState(snapshot) {
   const nextState = snapshot.state || "idle";
   state.recording.status = nextState;
   state.recording.hasData = Boolean(snapshot.hasData);
+  if (snapshot.sessionId) {
+    state.recording.sessionId = snapshot.sessionId;
+  }
   if (snapshot.mimeType) {
     state.recording.mimeType = snapshot.mimeType;
   }
@@ -4996,6 +5047,8 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!streamId) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
+    const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
+    state.recording.sessionId = recordingSessionId;
     console.log("[REC][sw] routing RECORDING_START to offscreen", {
       tabId: tab.id,
     });
@@ -5004,6 +5057,7 @@ async function startRecording(streamId, tabId, mimeType) {
       tabId: tab.id,
       streamId,
       mimeType,
+      sessionId: recordingSessionId,
     });
 
     if (!response.ok) {
@@ -5015,6 +5069,12 @@ async function startRecording(streamId, tabId, mimeType) {
     ensureSessionForMode("recording", tab);
     setSessionState("capturing");
     syncRecordingState(response);
+    await updateRecordingSessionRecord(recordingSessionId, { status: "recording" });
+    console.log("[RECORDING][STATE]", {
+      from: "starting",
+      to: "recording",
+      sessionId: recordingSessionId,
+    });
     state.recording.dataUrl = null;
     state.recording.capturedAt = null;
     state.recording.mimeType = null;
@@ -5065,6 +5125,16 @@ async function pauseRecording() {
   if (state.recording.status === "paused") {
     setSessionState("paused");
   }
+  if (state.recording.sessionId) {
+    await updateRecordingSessionRecord(state.recording.sessionId, {
+      status: "paused",
+    });
+    console.log("[RECORDING][STATE]", {
+      from: "recording",
+      to: "paused",
+      sessionId: state.recording.sessionId,
+    });
+  }
   if (!recordingOverlayState.paused) {
     recordingOverlayState.paused = true;
     recordingOverlayState.pauseStartedAt = Date.now();
@@ -5089,6 +5159,16 @@ async function resumeRecording() {
   if (state.recording.status === "recording") {
     setSessionState("capturing");
   }
+  if (state.recording.sessionId) {
+    await updateRecordingSessionRecord(state.recording.sessionId, {
+      status: "recording",
+    });
+    console.log("[RECORDING][STATE]", {
+      from: "paused",
+      to: "recording",
+      sessionId: state.recording.sessionId,
+    });
+  }
   if (recordingOverlayState.paused && recordingOverlayState.pauseStartedAt) {
     recordingOverlayState.totalPausedMs +=
       Date.now() - recordingOverlayState.pauseStartedAt;
@@ -5104,6 +5184,13 @@ async function resumeRecording() {
 
 async function stopRecording() {
   console.log("[REC][sw] STOP_REQUESTED");
+  if (state.recording.sessionId) {
+    console.log("[RECORDING][STATE]", {
+      from: state.recording.status || "unknown",
+      to: "stopping",
+      sessionId: state.recording.sessionId,
+    });
+  }
   const timeoutPromise = new Promise((resolve) => {
     setTimeout(
       () =>
@@ -5146,6 +5233,19 @@ async function stopRecording() {
     throw new Error(response.error || "Failed to stop recording.");
   }
   syncRecordingState(response);
+  if (state.recording.sessionId) {
+    await updateRecordingSessionRecord(state.recording.sessionId, {
+      status: "finalizing",
+      stoppedAt: Date.now(),
+      durationMs:
+        typeof response.elapsedMs === "number" ? response.elapsedMs : null,
+    });
+    console.log("[RECORDING][STATE]", {
+      from: "stopping",
+      to: "finalizing",
+      sessionId: state.recording.sessionId,
+    });
+  }
   if (response.fallback) {
     setStatusMessage(response.message || "Recording saved from available data.", "success");
   }
@@ -5171,6 +5271,20 @@ async function stopRecording() {
         state.recording.videoMime = exportResponse.mimeType || null;
         state.recording.videoByteLength =
           typeof exportResponse.size === "number" ? exportResponse.size : null;
+        if (state.recording.sessionId) {
+          const isPartial = Boolean(response.fallback);
+          await updateRecordingSessionRecord(state.recording.sessionId, {
+            status: isPartial ? "partial_complete" : "complete",
+            isPartial,
+            failureReason: isPartial ? "stop_timeout" : null,
+          });
+          console.log("[RECORDING][FINALIZE]", {
+            sessionId: state.recording.sessionId,
+            status: isPartial ? "partial_complete" : "complete",
+            artifactSize: exportResponse.size || null,
+            isPartial,
+          });
+        }
       }
     } catch (error) {
       console.warn("Failed to cache recording export reference:", error);

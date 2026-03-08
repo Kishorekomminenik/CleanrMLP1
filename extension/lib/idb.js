@@ -1,6 +1,6 @@
 (function () {
   const DB_NAME = "repro_evidence_db";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function requestToPromise(request) {
@@ -75,6 +75,25 @@
         store.createIndex("captureRunId", "captureRunId", { unique: false });
         store.createIndex("kind", "kind", { unique: false });
       }
+      if (!db.objectStoreNames.contains("recording_sessions")) {
+        const store = db.createObjectStore("recording_sessions", {
+          keyPath: "sessionId",
+        });
+        store.createIndex("status", "status", { unique: false });
+        store.createIndex("startedAt", "startedAt", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("recording_chunks")) {
+        const store = db.createObjectStore("recording_chunks", { keyPath: "key" });
+        store.createIndex("sessionId", "sessionId", { unique: false });
+        store.createIndex("index", "index", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("recording_artifacts")) {
+        const store = db.createObjectStore("recording_artifacts", {
+          keyPath: "key",
+        });
+        store.createIndex("sessionId", "sessionId", { unique: false });
+        store.createIndex("kind", "kind", { unique: false });
+      }
     }
 
     function openWithVersion(version) {
@@ -104,6 +123,9 @@
             "capture_tiles",
             "capture_blobs",
             "capture_artifacts",
+            "recording_sessions",
+            "recording_chunks",
+            "recording_artifacts",
           ].some((name) => !db.objectStoreNames.contains(name));
           let needsCompletedIndex = false;
           if (db.objectStoreNames.contains("parts")) {
