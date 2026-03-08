@@ -40,6 +40,36 @@ function formatElapsedWithPauses(session) {
   return `${minutes}:${seconds}`;
 }
 
+function resolvePanelStateLabel({ liveState, sessionState, statusMessage }) {
+  const message = statusMessage || "";
+  const lower = message.toLowerCase();
+  if (lower.includes("saved from available data")) {
+    return "Saved (partial)";
+  }
+  if (lower.includes("partial")) {
+    return "Saved (partial)";
+  }
+  if (lower.includes("saved")) {
+    return "Saved";
+  }
+  if (lower.includes("failed")) {
+    return "Recording failed";
+  }
+  if (liveState === "recording") {
+    return "Recording";
+  }
+  if (liveState === "paused") {
+    return "Paused";
+  }
+  if (liveState === "stopping" || sessionState === "finalizing") {
+    return "Finalizing…";
+  }
+  if (liveState) {
+    return liveState;
+  }
+  return sessionState || "idle";
+}
+
 async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
@@ -51,10 +81,11 @@ async function refreshStatus() {
   }
   const state = res.state;
   const sessionState = state.session ? state.session.state : "idle";
-  messageEl.textContent =
+  const statusMessage =
     state.statusMessage && state.statusMessage.message
       ? state.statusMessage.message
       : "-";
+  messageEl.textContent = statusMessage;
 
   const live = await send("RECORDING_GET_STATE");
   if (live && live.ok) {
@@ -68,7 +99,11 @@ async function refreshStatus() {
     } else {
       timerEl.textContent = "00:00";
     }
-    stateEl.textContent = live.state || sessionState || "idle";
+    stateEl.textContent = resolvePanelStateLabel({
+      liveState: live.state,
+      sessionState,
+      statusMessage,
+    });
     const isCapturing = live.state === "recording";
     const isPaused = live.state === "paused";
     pauseBtn.disabled = !isCapturing;
@@ -78,7 +113,11 @@ async function refreshStatus() {
   }
 
   timerEl.textContent = formatElapsedWithPauses(state.session);
-  stateEl.textContent = sessionState || "idle";
+  stateEl.textContent = resolvePanelStateLabel({
+    liveState: null,
+    sessionState,
+    statusMessage,
+  });
   const isCapturing = sessionState === "capturing";
   const isPaused = sessionState === "paused";
   pauseBtn.disabled = !isCapturing;
