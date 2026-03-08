@@ -2290,20 +2290,26 @@ async function handleFullPageScreenshot() {
     return;
   }
   try {
-    const dataUrl = await blobToDataUrl(blob);
-    if (typeof dataUrl !== "string") {
-      throw new Error("Invalid image data.");
+    const viewerUrl = new URL(chrome.runtime.getURL("popup/screenshot_viewer.html"));
+    viewerUrl.searchParams.set("artifactKey", artifactKey);
+    if (response.captureRunId) {
+      viewerUrl.searchParams.set("captureRunId", response.captureRunId);
     }
-    console.log("[FULLPAGE][POPUP][VIEWER_PAYLOAD]", {
-      kind: "dataUrl",
-      length: dataUrl.length,
+    if (response.isPartial === true || response.status === "partial_complete") {
+      viewerUrl.searchParams.set("isPartial", "1");
+    }
+    if (typeof response.coveragePercent === "number") {
+      viewerUrl.searchParams.set("coveragePercent", String(response.coveragePercent));
+    }
+    console.log("[FULLPAGE][POPUP][VIEWER_OPEN_REQUEST]", {
+      artifactKey,
+      captureRunId: response.captureRunId || null,
+      isPartial: response.isPartial === true || response.status === "partial_complete",
+      coveragePercent:
+        typeof response.coveragePercent === "number" ? response.coveragePercent : null,
     });
-    await chrome.storage.session.set({
-      latestScreenshotDataUrl: dataUrl,
-    });
-    const viewerUrl = chrome.runtime.getURL("popup/screenshot_viewer.html");
-    await chrome.tabs.create({ url: viewerUrl });
-    console.log("[FULLPAGE][POPUP][VIEWER_OPEN]", { url: viewerUrl });
+    await chrome.tabs.create({ url: viewerUrl.toString() });
+    console.log("[FULLPAGE][POPUP][VIEWER_OPEN]", { url: viewerUrl.toString() });
   } catch (error) {
     const message =
       error && error.message ? error.message : "Failed to open viewer.";

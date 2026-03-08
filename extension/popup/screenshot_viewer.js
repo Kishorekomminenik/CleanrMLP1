@@ -678,6 +678,61 @@ function finishDrawing(point) {
 async function loadScreenshot() {
   setStatus("Loading...");
   setEditorEnabled(false);
+  const params = new URLSearchParams(window.location.search);
+  const artifactKey = params.get("artifactKey");
+  if (artifactKey) {
+    console.log("[FULLPAGE][VIEWER][LOAD_REQUEST]", { artifactKey });
+    if (!window.ReproIdb) {
+      setStatus("IDB unavailable for full-page viewer.", "error");
+      return;
+    }
+    const artifact = await ReproIdb.getByKey("capture_artifacts", artifactKey);
+    console.log("[FULLPAGE][VIEWER][ARTIFACT_RECORD]", {
+      artifactKey,
+      hasBlobKey: Boolean(artifact && artifact.blobKey),
+    });
+    if (!artifact || !artifact.blobKey) {
+      setStatus("Full-page artifact not found. Capture again.", "error");
+      return;
+    }
+    const blobRecord = await ReproIdb.getByKey("capture_blobs", artifact.blobKey);
+    console.log("[FULLPAGE][VIEWER][BLOB_RECORD]", {
+      blobType: blobRecord && blobRecord.blob ? blobRecord.blob.type : null,
+      blobSize: blobRecord && blobRecord.blob ? blobRecord.blob.size : null,
+    });
+    if (!blobRecord || !(blobRecord.blob instanceof Blob)) {
+      setStatus("Full-page image missing. Capture again.", "error");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blobRecord.blob);
+    const image = new Image();
+    image.onload = () => {
+      imageSize = { width: image.naturalWidth, height: image.naturalHeight };
+      baseCanvas.width = imageSize.width;
+      baseCanvas.height = imageSize.height;
+      drawCanvas.width = imageSize.width;
+      drawCanvas.height = imageSize.height;
+      baseCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+      baseCtx.drawImage(image, 0, 0);
+      drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+      updateScale();
+      setEditorEnabled(true);
+      setTool(currentTool);
+      undoStack = [];
+      redoStack = [];
+      pushState();
+      setStatus("Ready.");
+      console.log("[FULLPAGE][VIEWER][IMAGE_READY]", { artifactKey });
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onerror = () => {
+      setCopyLabel("Copy");
+      setStatus("Failed to load screenshot. Capture again.", "error");
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.src = objectUrl;
+    return;
+  }
   const result = await chrome.storage.session.get("latestScreenshotDataUrl");
   latestScreenshotDataUrl = result.latestScreenshotDataUrl;
   if (
