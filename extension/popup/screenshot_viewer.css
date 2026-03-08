@@ -128,12 +128,18 @@ body {
   flex-wrap: nowrap;
   flex-direction: column;
   align-items: flex-start;
+  min-width: 160px;
+  max-width: 280px;
+  flex: 1 1 auto;
 }
 
 #statusMetrics {
   font-size: 12px;
   color: #64748b;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 #statusText {
@@ -142,6 +148,10 @@ body {
   background: rgba(248, 250, 252, 0.8);
   border: 1px solid rgba(148, 163, 184, 0.25);
   font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 button,
@@ -242,6 +252,49 @@ button:disabled {
   margin: 0 2px;
 }
 
+@media (max-width: 900px) {
+  .toolbar-row {
+    gap: 8px;
+  }
+  .toolbar-group {
+    gap: 6px;
+    padding: 5px;
+  }
+  button,
+  .tool-button {
+    height: 34px;
+    padding: 0 10px;
+  }
+  .toolbar-group.context {
+    flex: 1 1 260px;
+  }
+  .toolbar-divider {
+    display: none;
+  }
+}
+
+.toolbar-group.export {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.toolbar-group.tools {
+  flex: 1 1 auto;
+}
+
+.toolbar-group.context {
+  flex: 2 1 380px;
+  min-width: 260px;
+}
+
+.toolbar-group.actions {
+  flex: 0 0 auto;
+}
+
+.toolbar-group.view {
+  flex: 0 0 auto;
+}
+
 .is-hidden {
   display: none;
 }
@@ -326,6 +379,17 @@ button:disabled {
     display: none;
   }
   .toolbar-group.status {
+    order: 4;
+    min-width: 120px;
+  }
+  .toolbar-group.export {
     order: 3;
+  }
+  .toolbar-group.actions {
+    order: 2;
+  }
+  .toolbar-group.context {
+    flex-basis: 220px;
+  }
   }
 }
