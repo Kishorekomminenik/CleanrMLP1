@@ -181,6 +181,11 @@ const networkQueue = [];
 const consoleQueue = [];
 let flushTimer = null;
 let flushInProgress = false;
+let flushBackoffMs = 0;
+const FLUSH_BACKOFF_BASE_MS = 750;
+const FLUSH_BACKOFF_MAX_MS = 8000;
+const NETWORK_QUEUE_MAX = 4000;
+const CONSOLE_QUEUE_MAX = 4000;
 const exportedPartIds = new Set();
 let rotationSuppressed = false;
 let rotationInProgress = false;
@@ -1218,10 +1223,11 @@ function scheduleFlush() {
   if (flushTimer) {
     return;
   }
+  const delayMs = flushBackoffMs > 0 ? flushBackoffMs : FLUSH_DELAY_MS;
   flushTimer = setTimeout(() => {
     flushTimer = null;
     void flushQueues();
-  }, FLUSH_DELAY_MS);
+  }, delayMs);
 }
 
 async function flushQueues() {
@@ -1237,12 +1243,16 @@ async function flushQueues() {
         await ReproIdb.putMany("network_entries", networkBatch);
         networkQueue.splice(0, networkBatch.length);
         wroteAny = true;
+        flushBackoffMs = 0;
       } catch (error) {
         console.warn("[NETWORK][FLUSH_FAILED]", error);
         setStatusMessage(
           "Logging storage issue. Retrying network flush.",
           "error"
         );
+        flushBackoffMs = flushBackoffMs
+          ? Math.min(FLUSH_BACKOFF_MAX_MS, flushBackoffMs * 2)
+          : FLUSH_BACKOFF_BASE_MS;
       }
     }
     const consoleBatch = consoleQueue.slice(0, FLUSH_BATCH.console);
@@ -1251,12 +1261,16 @@ async function flushQueues() {
         await ReproIdb.putMany("console_entries", consoleBatch);
         consoleQueue.splice(0, consoleBatch.length);
         wroteAny = true;
+        flushBackoffMs = 0;
       } catch (error) {
         console.warn("[CONSOLE][FLUSH_FAILED]", error);
         setStatusMessage(
           "Logging storage issue. Retrying console flush.",
           "error"
         );
+        flushBackoffMs = flushBackoffMs
+          ? Math.min(FLUSH_BACKOFF_MAX_MS, flushBackoffMs * 2)
+          : FLUSH_BACKOFF_BASE_MS;
       }
     }
     if (wroteAny) {
@@ -6172,6 +6186,20 @@ function queueNetworkRecord(record) {
     return;
   }
   networkQueue.push(record);
+  if (networkQueue.length > NETWORK_QUEUE_MAX) {
+    const dropped = networkQueue.splice(
+      0,
+      networkQueue.length - NETWORK_QUEUE_MAX
+    );
+    captureState.totalErrors += dropped.length;
+    addDiagnostic("warning", "Network log queue overflow.", {
+      dropped: dropped.length,
+    });
+    setStatusMessage(
+      "Network logs truncated due to high volume.",
+      "error"
+    );
+  }
   captureState.lastEventMs =
     record.entry && typeof record.entry.timestamp_epoch_ms === "number"
       ? record.entry.timestamp_epoch_ms
@@ -6194,6 +6222,20 @@ function queueConsoleRecord(record) {
     return;
   }
   consoleQueue.push(record);
+  if (consoleQueue.length > CONSOLE_QUEUE_MAX) {
+    const dropped = consoleQueue.splice(
+      0,
+      consoleQueue.length - CONSOLE_QUEUE_MAX
+    );
+    captureState.totalErrors += dropped.length;
+    addDiagnostic("warning", "Console log queue overflow.", {
+      dropped: dropped.length,
+    });
+    setStatusMessage(
+      "Console logs truncated due to high volume.",
+      "error"
+    );
+  }
   captureState.lastEventMs =
     record.entry && typeof record.entry.timestamp_epoch_ms === "number"
       ? record.entry.timestamp_epoch_ms
