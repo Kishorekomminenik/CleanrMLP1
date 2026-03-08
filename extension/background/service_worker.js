@@ -6990,6 +6990,57 @@ async function handleMessage(message, sender) {
       }
       result = { ok: true };
       break;
+    case "RECORDING_TRACK_ENDED": {
+      const sessionId =
+        message && message.sessionId ? message.sessionId : state.recording.sessionId;
+      console.log("[RECORDING][TRACK_ENDED]", {
+        sessionId: sessionId || null,
+        reason: "track_ended",
+      });
+      if (recordingOverlayState.tabId) {
+        await removeTimestampOverlay(recordingOverlayState.tabId);
+      }
+      recordingOverlayState.startMs = null;
+      recordingOverlayState.paused = false;
+      recordingOverlayState.pauseStartedAt = null;
+      recordingOverlayState.totalPausedMs = 0;
+      recordingOverlayState.tabId = null;
+      try {
+        await ensureOffscreenReady();
+        const exportResponse = await sendMessageToOffscreen({
+          type: "RECORDING_EXPORT_WEBM",
+        });
+        if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+          state.recording.videoBlobUrl = exportResponse.blobUrl;
+          state.recording.videoMime = exportResponse.mimeType || null;
+          state.recording.videoByteLength =
+            typeof exportResponse.size === "number" ? exportResponse.size : null;
+          setStatusMessage(
+            "Recording ended early. Partial recording saved.",
+            "success"
+          );
+          if (sessionId) {
+            await updateRecordingSessionRecord(sessionId, {
+              status: "partial_complete",
+              isPartial: true,
+              failureReason: "track_ended",
+            });
+          }
+          console.log("[RECORDING][FINALIZE]", {
+            sessionId: sessionId || null,
+            status: "partial_complete",
+            artifactSize: exportResponse.size || null,
+            isPartial: true,
+          });
+          result = { ok: true, partial: true };
+          break;
+        }
+      } catch (error) {
+        console.warn("[RECORDING][TRACK_ENDED_EXPORT_FAILED]", error);
+      }
+      result = { ok: true, partial: false };
+      break;
+    }
     case "RECORDING_ERROR":
       state.recording.status = "idle";
       state.recording.error = message.error || "Recording failed.";

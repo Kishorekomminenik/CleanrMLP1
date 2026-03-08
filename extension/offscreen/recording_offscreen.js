@@ -1033,6 +1033,10 @@ async function startRecording(streamId, tabId, requestedMime, sessionId) {
         chunkCount: recordingChunkCount,
         bytesWritten: recordingBytesWritten,
       });
+      chrome.runtime.sendMessage({
+        type: "RECORDING_TRACK_ENDED",
+        sessionId: recordingSessionId,
+      });
       resolveStopPromise({ ok: false, reason: "ended" });
     };
   });
