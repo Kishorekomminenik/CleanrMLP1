@@ -6,6 +6,8 @@ try {
   // Redaction helper is optional; export will fall back to raw values.
 }
 
+console.log("[SW][BOOT] service worker started");
+
 try {
   importScripts(
     chrome.runtime.getURL("pipeline/pipelineConfig.js"),
