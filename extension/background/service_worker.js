@@ -4067,6 +4067,33 @@ async function scanFullpageRuns() {
 
 scanFullpageRuns();
 
+function getFullpageUserMessage(error) {
+  const code = error && error.code ? error.code : null;
+  const rawMessage = error && error.message ? error.message : null;
+  if (code === "RESTRICTED_PAGE" || code === "CAPTURE_DENIED") {
+    return "Full capture isn’t supported on this page. Open a regular website tab and try again.";
+  }
+  if (code === "FULLPAGE_ERR_TOO_TALL") {
+    return "Page too tall for full capture. Try Snap or segment capture.";
+  }
+  if (code === "FULLPAGE_ERR_SCROLL_LOCKED") {
+    return "Page prevented scrolling (likely modal/overflow lock).";
+  }
+  if (code === "FULLPAGE_ERR_SCROLL_MISMATCH") {
+    return "Page layout changed during capture. Try again.";
+  }
+  if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
+    return rawMessage || "captureVisibleTab failed.";
+  }
+  if (code === "FULLPAGE_ERR_STITCH") {
+    return rawMessage || "Full page capture failed during stitching.";
+  }
+  if (code === "FULLPAGE_ERR_OFFSCREEN") {
+    return "Full page capture failed. Try Snap instead.";
+  }
+  return rawMessage || "Full capture failed. Try again, or use Snap.";
+}
+
 async function handlePopupCaptureRequest(request) {
   const mode = request && request.mode ? request.mode : "snap";
   const payload = request && request.payload ? request.payload : {};
@@ -4096,8 +4123,15 @@ async function handlePopupCaptureRequest(request) {
         );
         viewerUrl.searchParams.set("artifactKey", artifactKey);
         await chrome.tabs.create({ url: viewerUrl.toString() });
+      } else {
+        setStatusMessage(
+          "Full page capture failed. Try again, or use Snap.",
+          "error"
+        );
       }
     } catch (error) {
+      const message = getFullpageUserMessage(error);
+      setStatusMessage(message, "error");
       console.warn("[CAPTURE][SW][FULL_FAILED]", error);
     }
   }
@@ -4119,6 +4153,7 @@ async function captureFullPageScreenshot(requestedTabId) {
   let tileCountCommitted = 0;
   let tileCountFailed = 0;
   let lastArtifactKey = null;
+  let failureStage = "init";
   if (!tab || !tab.id) {
     const error = new Error("No active tab available.");
     error.code = "RESTRICTED_PAGE";
@@ -4141,6 +4176,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     error.code = "RESTRICTED_PAGE";
     throw error;
   }
+  setStatusMessage("Capturing full page… please don’t scroll.", "info");
   if (!chrome.scripting || !chrome.scripting.executeScript) {
     const error = new Error("Scripting API unavailable for full page capture.");
     error.code = "INJECT_FAILED";
@@ -4153,6 +4189,7 @@ async function captureFullPageScreenshot(requestedTabId) {
   const captureRunId = `full_${Date.now()}`;
   try {
     console.log("[FULLPAGE_PROBE]", { tabId, url: tab.url });
+    failureStage = "inject";
     scriptLoaded = await isFullpageCaptureLoaded(tabId);
     if (!scriptLoaded) {
       console.log("[FULLPAGE_INJECT]", { tabId });
@@ -4167,6 +4204,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = "FULLPAGE_ERR_INJECT";
       throw err;
     }
+    failureStage = "prepare";
     const applyRes = await callFullpageCapture(tabId, "prepareFullpageCapture", [
       captureRunId,
     ]);
@@ -4192,6 +4230,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         })),
       });
     }
+    failureStage = "metrics";
     const metricsRes = await callFullpageCapture(tabId, "getFullpageMetrics");
     if (metricsRes && metricsRes.ok === false) {
       const err = new Error(metricsRes.error || "Unable to read page metrics.");
@@ -4247,6 +4286,14 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     const totalWidthPx = Math.round(viewportWidth * devicePixelRatio);
     const totalHeightPx = Math.round(scrollHeight * devicePixelRatio);
+    if (
+      totalWidthPx > FULLPAGE_LIMITS.maxCanvasEdge ||
+      totalHeightPx > FULLPAGE_LIMITS.maxCanvasEdge
+    ) {
+      const err = new Error("Page too tall for full capture.");
+      err.code = "FULLPAGE_ERR_TOO_TALL";
+      throw err;
+    }
     const runRecord = {
       captureRunId,
       tabId,
@@ -4276,6 +4323,11 @@ async function captureFullPageScreenshot(requestedTabId) {
       url: tab.url || null,
       tileCountExpected: totalTiles,
     });
+    console.log("[FULLPAGE][CAPTURE][START]", {
+      captureRunId,
+      tileCountExpected: totalTiles,
+    });
+    failureStage = "offscreen";
     try {
       await ensureOffscreenReady();
     } catch (error) {
@@ -4294,6 +4346,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     sendFullPageProgress("capture", 0, totalTiles);
     let prevY = null;
     let currentScroll = scrollTop;
+    failureStage = "capture_tiles";
     for (let i = 0; i < positions.length; i += 1) {
       const targetY = positions[i];
       sendFullPageProgress("capture", i + 1, totalTiles);
@@ -4388,6 +4441,10 @@ async function captureFullPageScreenshot(requestedTabId) {
       });
       tileCountCaptured += 1;
       tileCountCommitted += 1;
+      console.log("[FULLPAGE][CAPTURE][TILE_SUCCESS]", {
+        captureRunId,
+        tileIndex,
+      });
       const coveragePercent = totalTiles
         ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
         : 0;
@@ -4444,7 +4501,19 @@ async function captureFullPageScreenshot(requestedTabId) {
     if (overlayText) {
       await updateCaptureRun(captureRunId, { overlayText });
     }
+    if (tileCountCommitted === 0) {
+      const err = new Error("Full page capture failed. No tiles captured.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      throw err;
+    }
+    failureStage = "compose_final";
+    console.log("[FULLPAGE][CAPTURE][FINALIZE_START]", { captureRunId });
     const finalArtifact = await composeFullpageArtifact(captureRunId, true);
+    if (!finalArtifact || !finalArtifact.artifactKey) {
+      const err = new Error("Full page capture failed. Missing artifact.");
+      err.code = "FULLPAGE_ERR_STITCH";
+      throw err;
+    }
     await updateCaptureRun(captureRunId, {
       status: "complete",
       finalArtifactKey: finalArtifact.artifactKey || null,
@@ -4463,13 +4532,17 @@ async function captureFullPageScreenshot(requestedTabId) {
       size: finalArtifact.byteLength || null,
       coveragePercent: finalArtifact.coveragePercent,
     });
+    console.log("[FULLPAGE][CAPTURE][FINALIZE_SUCCESS]", {
+      captureRunId,
+      artifactKey: finalArtifact.artifactKey,
+    });
     console.log("[FULLPAGE][SW][RUN_FINALIZED]", {
       captureRunId,
       status: "complete",
       isPartial: false,
       failureReason: null,
     });
-    clearStatusMessage();
+    setStatusMessage("Full page screenshot captured.", "success");
     return {
       status: "complete",
       captureRunId,
@@ -4486,12 +4559,18 @@ async function captureFullPageScreenshot(requestedTabId) {
     let artifactKey = lastArtifactKey;
     if (hasPartial && !artifactKey) {
       try {
+        failureStage = "compose_partial";
         const partial = await composeFullpageArtifact(captureRunId, false);
         artifactKey = partial.artifactKey || null;
       } catch (composeError) {
         artifactKey = null;
       }
     }
+    console.log("[FULLPAGE][CAPTURE][FINALIZE_FAILURE]", {
+      captureRunId,
+      stage: failureStage || "unknown",
+      message: error && error.message ? error.message : "Capture failed.",
+    });
     if (hasPartial) {
       await updateCaptureRun(captureRunId, {
         status: "partial_complete",
@@ -4511,6 +4590,17 @@ async function captureFullPageScreenshot(requestedTabId) {
         isPartial: true,
         failureReason: error && error.message ? error.message : "Capture failed.",
       });
+      if (artifactKey) {
+        const coveragePercent = totalTiles
+          ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
+          : 0;
+        setStatusMessage(
+          `Partial full capture saved (${coveragePercent}% coverage).`,
+          "success"
+        );
+      } else {
+        setStatusMessage(getFullpageUserMessage(error), "error");
+      }
       return {
         status: "partial_complete",
         captureRunId,
@@ -4530,6 +4620,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       failureReason: error && error.message ? error.message : "Capture failed.",
       tileCountFailed,
     });
+    setStatusMessage(getFullpageUserMessage(error), "error");
     throw error;
   } finally {
     if (restoreNeeded) {

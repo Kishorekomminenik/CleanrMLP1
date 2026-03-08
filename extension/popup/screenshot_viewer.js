@@ -362,9 +362,11 @@ function updateInteractivity() {
 }
 
 function getCanvasPoint(event) {
-  const rect = canvasWrap.getBoundingClientRect();
-  const x = (event.clientX - rect.left) / scale;
-  const y = (event.clientY - rect.top) / scale;
+  const rect = drawCanvas.getBoundingClientRect();
+  const scaleX = rect.width ? imageSize.width / rect.width : 1;
+  const scaleY = rect.height ? imageSize.height / rect.height : 1;
+  const x = (event.clientX - rect.left) * scaleX;
+  const y = (event.clientY - rect.top) * scaleY;
   return {
     x: clamp(x, 0, imageSize.width),
     y: clamp(y, 0, imageSize.height),
@@ -378,6 +380,8 @@ function logPointerMap(event, point) {
     imageX: Math.round(point.x),
     imageY: Math.round(point.y),
     zoom: Number(scale.toFixed(3)),
+    scrollLeft: stage.scrollLeft,
+    scrollTop: stage.scrollTop,
   });
 }
 
