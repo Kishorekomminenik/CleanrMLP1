@@ -4117,6 +4117,19 @@ async function handlePopupCaptureRequest(request) {
     try {
       const captureResult = await captureFullPageScreenshot(payload.tabId);
       const artifactKey = captureResult && captureResult.artifactKey;
+      console.log("[FULLPAGE][SW][RESPONSE_TO_POPUP]", {
+        ok: Boolean(artifactKey),
+        status: captureResult ? captureResult.status : null,
+        artifactKey: artifactKey || null,
+        tileCountCaptured:
+          captureResult && typeof captureResult.tileCountCaptured === "number"
+            ? captureResult.tileCountCaptured
+            : 0,
+        tileCountExpected:
+          captureResult && typeof captureResult.tileCountExpected === "number"
+            ? captureResult.tileCountExpected
+            : 0,
+      });
       if (artifactKey) {
         const viewerUrl = new URL(
           chrome.runtime.getURL("popup/screenshot_viewer.html")
@@ -4132,7 +4145,10 @@ async function handlePopupCaptureRequest(request) {
     } catch (error) {
       const message = getFullpageUserMessage(error);
       setStatusMessage(message, "error");
-      console.warn("[CAPTURE][SW][FULL_FAILED]", error);
+      console.warn("[CAPTURE][SW][FULL_FAILED]", {
+        message,
+        stage: error && error.stage ? error.stage : "unknown",
+      });
     }
   }
 }
@@ -4153,6 +4169,7 @@ async function captureFullPageScreenshot(requestedTabId) {
   let tileCountCommitted = 0;
   let tileCountFailed = 0;
   let lastArtifactKey = null;
+  let tileCountExpected = 0;
   let failureStage = "init";
   if (!tab || !tab.id) {
     const error = new Error("No active tab available.");
@@ -4279,6 +4296,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       positions.push(maxScrollY);
     }
     const totalTiles = positions.length;
+    tileCountExpected = totalTiles;
     if (totalTiles > FULLPAGE_LIMITS.maxTiles) {
       const err = new Error("Page too tall for full capture.");
       err.code = "FULLPAGE_ERR_TOO_TALL";
@@ -4541,6 +4559,8 @@ async function captureFullPageScreenshot(requestedTabId) {
       status: "complete",
       isPartial: false,
       failureReason: null,
+      tileCountCaptured,
+      tileCountExpected,
     });
     setStatusMessage("Full page screenshot captured.", "success");
     return {
@@ -4550,11 +4570,14 @@ async function captureFullPageScreenshot(requestedTabId) {
       isPartial: false,
       coveragePercent: finalArtifact.coveragePercent || 100,
       tileCountCaptured,
-      tileCountExpected: totalTiles,
+      tileCountExpected,
       tileCountFailed: finalFailedCount,
     };
   } catch (error) {
     tileCountFailed += 1;
+    if (error && typeof error === "object") {
+      error.stage = failureStage;
+    }
     const hasPartial = tileCountCommitted > 0;
     let artifactKey = lastArtifactKey;
     if (hasPartial && !artifactKey) {
@@ -4589,10 +4612,13 @@ async function captureFullPageScreenshot(requestedTabId) {
         status: "partial_complete",
         isPartial: true,
         failureReason: error && error.message ? error.message : "Capture failed.",
+        tileCountCaptured,
+        tileCountExpected,
       });
       if (artifactKey) {
-        const coveragePercent = totalTiles
-          ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
+        const expected = tileCountExpected || tileCountCommitted || tileCountCaptured || 0;
+        const coveragePercent = expected
+          ? Math.min(100, Math.round((tileCountCommitted / expected) * 100))
           : 0;
         setStatusMessage(
           `Partial full capture saved (${coveragePercent}% coverage).`,
@@ -4606,11 +4632,18 @@ async function captureFullPageScreenshot(requestedTabId) {
         captureRunId,
         artifactKey,
         isPartial: true,
-        coveragePercent: totalTiles
-          ? Math.min(100, Math.round((tileCountCommitted / totalTiles) * 100))
+        coveragePercent: (tileCountExpected || tileCountCommitted || tileCountCaptured)
+          ? Math.min(
+              100,
+              Math.round(
+                (tileCountCommitted /
+                  (tileCountExpected || tileCountCommitted || tileCountCaptured)) *
+                  100
+              )
+            )
           : 0,
         tileCountCaptured,
-        tileCountExpected: totalTiles,
+        tileCountExpected: tileCountExpected || tileCountCommitted || tileCountCaptured,
         tileCountFailed: partialFailedCount,
       };
     }
