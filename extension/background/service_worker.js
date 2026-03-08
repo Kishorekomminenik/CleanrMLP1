@@ -1229,16 +1229,37 @@ async function flushQueues() {
     return;
   }
   flushInProgress = true;
+  let wroteAny = false;
   try {
-    const networkBatch = networkQueue.splice(0, FLUSH_BATCH.network);
+    const networkBatch = networkQueue.slice(0, FLUSH_BATCH.network);
     if (networkBatch.length > 0) {
-      await ReproIdb.putMany("network_entries", networkBatch);
+      try {
+        await ReproIdb.putMany("network_entries", networkBatch);
+        networkQueue.splice(0, networkBatch.length);
+        wroteAny = true;
+      } catch (error) {
+        console.warn("[NETWORK][FLUSH_FAILED]", error);
+        setStatusMessage(
+          "Logging storage issue. Retrying network flush.",
+          "error"
+        );
+      }
     }
-    const consoleBatch = consoleQueue.splice(0, FLUSH_BATCH.console);
+    const consoleBatch = consoleQueue.slice(0, FLUSH_BATCH.console);
     if (consoleBatch.length > 0) {
-      await ReproIdb.putMany("console_entries", consoleBatch);
+      try {
+        await ReproIdb.putMany("console_entries", consoleBatch);
+        consoleQueue.splice(0, consoleBatch.length);
+        wroteAny = true;
+      } catch (error) {
+        console.warn("[CONSOLE][FLUSH_FAILED]", error);
+        setStatusMessage(
+          "Logging storage issue. Retrying console flush.",
+          "error"
+        );
+      }
     }
-    if (networkBatch.length > 0 || consoleBatch.length > 0) {
+    if (wroteAny) {
       await persistActivePart();
     }
   } finally {
