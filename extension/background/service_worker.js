@@ -4297,13 +4297,20 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     const totalTiles = positions.length;
     tileCountExpected = totalTiles;
+    const totalWidthPx = Math.ceil(viewportWidth * devicePixelRatio);
+    const totalHeightPx = Math.ceil(scrollHeight * devicePixelRatio);
+    console.log("[FULLPAGE][PLAN]", {
+      pageHeight: scrollHeight,
+      viewportHeight,
+      totalWidthPx,
+      totalHeightPx,
+      tileCountExpected: totalTiles,
+    });
     if (totalTiles > FULLPAGE_LIMITS.maxTiles) {
       const err = new Error("Page too tall for full capture.");
       err.code = "FULLPAGE_ERR_TOO_TALL";
       throw err;
     }
-    const totalWidthPx = Math.round(viewportWidth * devicePixelRatio);
-    const totalHeightPx = Math.round(scrollHeight * devicePixelRatio);
     if (
       totalWidthPx > FULLPAGE_LIMITS.maxCanvasEdge ||
       totalHeightPx > FULLPAGE_LIMITS.maxCanvasEdge
@@ -4320,8 +4327,8 @@ async function captureFullPageScreenshot(requestedTabId) {
       devicePixelRatio,
       totalWidthPx,
       totalHeightPx,
-      viewportWidthPx: Math.round(viewportWidth * devicePixelRatio),
-      viewportHeightPx: Math.round(viewportHeight * devicePixelRatio),
+      viewportWidthPx: Math.ceil(viewportWidth * devicePixelRatio),
+      viewportHeightPx: Math.ceil(viewportHeight * devicePixelRatio),
       tileCountExpected: totalTiles,
       tileCountCaptured: 0,
       tileCountCommitted: 0,
@@ -4427,7 +4434,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       let clipTop = 0;
       if (prevY !== null) {
-      const overlap = prevY + viewportHeight - targetY;
+        const overlap = prevY + viewportHeight - targetY;
         if (overlap > 0) {
           clipTop = overlap;
         }
@@ -4437,17 +4444,23 @@ async function captureFullPageScreenshot(requestedTabId) {
         0,
         Math.min(viewportHeight - clipTop, remaining)
       );
+      console.log("[FULLPAGE][TILE]", {
+        tileIndex: i + 1,
+        scrollTop: Math.round(targetY),
+        cropHeight: Math.round(clipHeight),
+        remainingHeight: Math.round(remaining),
+      });
       if (clipHeight <= 0) {
         prevY = targetY;
         continue;
       }
       const tileMeta = {
         scrollY: Math.round(targetY),
-        y: Math.round(targetY * devicePixelRatio),
-        width: Math.round(viewportWidth * devicePixelRatio),
-        height: Math.round(viewportHeight * devicePixelRatio),
-        clipTop: Math.round(clipTop * devicePixelRatio),
-        clipHeight: Math.round(clipHeight * devicePixelRatio),
+        y: Math.floor(targetY * devicePixelRatio),
+        width: Math.ceil(viewportWidth * devicePixelRatio),
+        height: Math.ceil(viewportHeight * devicePixelRatio),
+        clipTop: Math.floor(clipTop * devicePixelRatio),
+        clipHeight: Math.ceil(clipHeight * devicePixelRatio),
       };
       const tileIndex = i + 1;
       const blob = dataUrlToBlob(dataUrl);

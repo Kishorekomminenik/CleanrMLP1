@@ -216,6 +216,7 @@ async function drawTilesToCanvas({
 
 async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
   let drawn = 0;
+  const lastTile = tiles && tiles.length ? tiles[tiles.length - 1] : null;
   for (const tile of tiles) {
     const tileTop = tile.yPx + tile.clipTopPx;
     const tileBottom = tileTop + tile.clipHeightPx;
@@ -259,6 +260,14 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       frameWidth,
       drawHeight
     );
+    if (lastTile && tile.tileIndex === lastTile.tileIndex) {
+      console.log("[FULLPAGE][STITCH][LAST_TILE]", {
+        tileIndex: tile.tileIndex,
+        sourceHeight: drawHeight,
+        destY: drawTop,
+        remainingHeight: Math.max(0, ctx.canvas.height - drawTop),
+      });
+    }
     drawn += 1;
     if (drawn % 2 === 0) {
       await delay();
