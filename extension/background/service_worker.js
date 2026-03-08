@@ -177,6 +177,8 @@ const captureState = {
   pendingFinalizePart: null,
   pendingFinalizeStartNewPart: false,
 };
+// LOGGING V1 STABLE
+// DO NOT MODIFY WITHOUT RETESTING NORMAL STOP + DEBUGGER DETACH.
 const networkQueue = [];
 const consoleQueue = [];
 let flushTimer = null;
@@ -1219,6 +1221,7 @@ function sendPartStatusUpdate(extra) {
   });
 }
 
+// V1 STABLE: flush/backoff/caps coordinated here.
 function scheduleFlush() {
   if (flushTimer) {
     return;
@@ -1230,6 +1233,8 @@ function scheduleFlush() {
   }, delayMs);
 }
 
+// V1 STABLE: safe flush to avoid data loss on IDB errors.
+// Changes require retesting normal stop and unexpected detach.
 async function flushQueues() {
   if (flushInProgress) {
     return;
@@ -5543,6 +5548,7 @@ async function startNetworkCapture(filters) {
   return { consoleEnabled: runtimeEnabled };
 }
 
+// V1 STABLE: stop finalization must flush + finalize pending entries.
 async function stopNetworkCapture() {
   if (!state.network.active) {
     throw new Error("Network capture is not active.");
@@ -5877,6 +5883,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   }
 });
 
+// V1 STABLE: detach finalization must preserve queued logs.
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId !== state.network.tabId) {
     return;
