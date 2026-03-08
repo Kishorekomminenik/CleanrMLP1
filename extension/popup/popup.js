@@ -129,6 +129,7 @@ const CLICK_DEBUG = false;
 
 const APP_VERSION = "v0.1";
 const APP_TAGLINE = "QA evidence recorder";
+const RECORDING_DATAURL_MAX_BYTES = 10 * 1024 * 1024;
 const JSZIP_LOAD_ERROR =
   "Export unavailable: JSZip failed to load. Check popup.html script path.";
 let jszipAvailable = typeof window !== "undefined" && Boolean(window.JSZip);
@@ -1196,6 +1197,39 @@ async function exportRecordingWebm() {
 
 function finalizeRecordingBlob(blob) {
   return new Promise((resolve) => {
+    if (blob.size > RECORDING_DATAURL_MAX_BYTES) {
+      const durationMs =
+        typeof recordingDurationMsSnapshot === "number"
+          ? recordingDurationMsSnapshot
+          : computeRecordingElapsedMs();
+      const statusMessage =
+        "Recording saved. Large file available for download only.";
+      send("RECORDING_COMPLETE", {
+        dataUrl: null,
+        mimeType: blob.type,
+        size: blob.size,
+        skippedDataUrl: true,
+      });
+      chrome.storage.session
+        .set({
+          recordingWebmDataUrl: null,
+          recordingMimeType: blob.type || "video/webm",
+          recordingEndedAt: new Date().toISOString(),
+          recordingDurationMs: durationMs,
+          recordingStatusMessage: statusMessage,
+        })
+        .catch(() => {
+          recordingLastError = "Failed to store recording.";
+        });
+      recordingStatusMessage = statusMessage;
+      console.log("[REC][popup] SKIP_DATAURL_STORE", {
+        size: blob.size,
+        maxBytes: RECORDING_DATAURL_MAX_BYTES,
+      });
+      stopActiveRecordingStream();
+      resolve({ ok: true, skippedDataUrl: true });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = reader.result;
@@ -1214,6 +1248,7 @@ function finalizeRecordingBlob(blob) {
           recordingMimeType: blob.type || "video/webm",
           recordingEndedAt: new Date().toISOString(),
           recordingDurationMs: durationMs,
+          recordingStatusMessage: null,
         });
       } catch (error) {
         recordingLastError = "Failed to store recording.";
@@ -2378,6 +2413,11 @@ async function handleRecordingStop() {
         "error"
       );
       showToast(res.error || "Failed to stop recording.", "error");
+    } else if (res.fallback) {
+      const message =
+        res.message || "Recording stopped and saved from available data.";
+      setStatus(statusElements.message, message, "success");
+      setStatus(statusElements.download, message, "success");
     }
     const st = await send(MSG.RECORDING_GET_STATE);
     if (st && st.ok) {

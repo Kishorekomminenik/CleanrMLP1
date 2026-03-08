@@ -1039,6 +1039,25 @@ async function stopRecording() {
   notifyStateChanged("stopping");
   const result = await Promise.race([stopPromise, timeoutPromise]);
   if (result && result.ok === false && result.reason === "timeout") {
+    if (recordedChunks.length > 0) {
+      recordingLastError = null;
+      recordingState = "idle";
+      mediaRecorder = null;
+      stopStreamTracks();
+      notifyStateChanged("stop");
+      const fallback = {
+        ok: true,
+        fallback: true,
+        message: "Recording stopped and saved from available data.",
+        code: "RECORDING_STOP_TIMEOUT_FALLBACK",
+        ...getRecordingStateSnapshot(),
+      };
+      console.log("[REC][offscreen] STOP_TIMEOUT_FALLBACK", {
+        chunks: recordedChunks.length,
+      });
+      resolveStopPromise(fallback);
+      return fallback;
+    }
     recordingLastError = "Recording stop timed out.";
     recordingState = "idle";
     mediaRecorder = null;

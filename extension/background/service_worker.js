@@ -5120,12 +5120,35 @@ async function stopRecording() {
     timeoutPromise,
   ]);
   if (!response.ok) {
+    if (response.code === "RECORDING_STOP_TIMEOUT") {
+      try {
+        const fallbackState = await sendMessageToOffscreen({
+          type: "RECORDING_GET_STATE",
+        });
+        if (fallbackState && fallbackState.ok && fallbackState.hasData) {
+          response = {
+            ok: true,
+            fallback: true,
+            message: "Recording stopped and saved from available data.",
+            code: "RECORDING_STOP_TIMEOUT_FALLBACK",
+            ...fallbackState,
+          };
+        }
+      } catch (error) {
+        // continue to error path
+      }
+    }
+  }
+  if (!response.ok) {
     addDiagnostic("error", "Recording stop failed.", {
       error: response.error || "Failed to stop recording.",
     });
     throw new Error(response.error || "Failed to stop recording.");
   }
   syncRecordingState(response);
+  if (response.fallback) {
+    setStatusMessage(response.message || "Recording saved from available data.", "success");
+  }
   if (state.recording.status === "idle") {
     markSessionStopped();
   }
