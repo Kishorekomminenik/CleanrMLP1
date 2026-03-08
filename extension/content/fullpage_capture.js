@@ -328,6 +328,55 @@
     return { ok: true, metrics };
   }
 
+  function getFullpagePageState() {
+    const state = getState();
+    const selectedKey = state.scrollEngine.selectedKey;
+    const selectedType = state.scrollEngine.selectedType;
+    const candidate =
+      selectedKey && state.scrollEngine.candidates.length
+        ? state.scrollEngine.candidates.find((item) => item.key === selectedKey)
+        : null;
+    const fallbackElement =
+      document.scrollingElement || document.documentElement || document.body;
+    const element = candidate && candidate.element ? candidate.element : fallbackElement;
+    const type = candidate ? candidate.type : selectedType || "document";
+    const key = candidate ? candidate.key : selectedKey || "scrollingElement";
+    const scrollHeight =
+      type === "document"
+        ? document.documentElement.scrollHeight || 0
+        : element
+          ? element.scrollHeight || 0
+          : 0;
+    const clientHeight =
+      type === "document"
+        ? window.innerHeight || 0
+        : element
+          ? element.clientHeight || 0
+          : 0;
+    const scrollTop =
+      type === "document" ? window.scrollY || 0 : element ? element.scrollTop || 0 : 0;
+    const overflowY =
+      element && element.nodeType === 1
+        ? window.getComputedStyle(element).overflowY
+        : "";
+    const bodyOverflowY =
+      document.body && document.body.nodeType === 1
+        ? window.getComputedStyle(document.body).overflowY
+        : "";
+    return {
+      ok: true,
+      state: {
+        scrollHeight,
+        clientHeight,
+        scrollTop,
+        overflowY,
+        bodyOverflowY,
+        key,
+        type,
+      },
+    };
+  }
+
   async function scrollToFullpagePosition(targetY) {
     const state = getState();
     if (!state.scrollEngine.selectedKey) {
@@ -437,6 +486,7 @@
     stateKey: STATE_KEY,
     prepareFullpageCapture,
     getFullpageMetrics,
+    getFullpagePageState,
     getScrollableCandidates,
     scrollToFullpagePosition,
     restoreFullpagePageState,

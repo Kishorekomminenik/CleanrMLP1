@@ -4172,6 +4172,8 @@ async function captureFullPageScreenshot(requestedTabId) {
   let lastArtifactKey = null;
   let tileCountExpected = 0;
   let failureStage = "init";
+  let lastPageHeight = null;
+  let lastScrollContainerKey = null;
   if (!tab || !tab.id) {
     const error = new Error("No active tab available.");
     error.code = "RESTRICTED_PAGE";
@@ -4288,6 +4290,23 @@ async function captureFullPageScreenshot(requestedTabId) {
       key: selectedKey || "unknown",
       type: selectedType || "unknown",
     });
+    const initialState = await callFullpageCapture(tabId, "getFullpagePageState");
+    if (initialState && initialState.ok && initialState.state) {
+      const state = initialState.state;
+      console.log("[FULLPAGE][PAGE_STATE]", {
+        scrollHeight: state.scrollHeight,
+        clientHeight: state.clientHeight,
+        scrollTop: state.scrollTop,
+        overflowY: state.overflowY,
+        bodyOverflowY: state.bodyOverflowY,
+      });
+      console.log("[FULLPAGE][SCROLL_CONTAINER]", {
+        key: state.key || "unknown",
+        type: state.type || "unknown",
+      });
+      lastPageHeight = state.scrollHeight;
+      lastScrollContainerKey = state.key || null;
+    }
     const maxScrollY = Math.max(0, scrollHeight - viewportHeight);
     const positions = [];
     for (let y = 0; y <= maxScrollY; y += viewportHeight) {
@@ -4436,6 +4455,43 @@ async function captureFullPageScreenshot(requestedTabId) {
         actualY = retryY;
       }
       currentScroll = actualY;
+      const pageState = await callFullpageCapture(tabId, "getFullpagePageState");
+      let tileScrollHeight = scrollHeight;
+      let reportedScrollTop = actualY;
+      if (pageState && pageState.ok && pageState.state) {
+        const state = pageState.state;
+        tileScrollHeight = state.scrollHeight;
+        reportedScrollTop =
+          typeof actualY === "number" ? actualY : state.scrollTop;
+        console.log("[FULLPAGE][PAGE_STATE]", {
+          scrollHeight: state.scrollHeight,
+          clientHeight: state.clientHeight,
+          scrollTop: state.scrollTop,
+          overflowY: state.overflowY,
+          bodyOverflowY: state.bodyOverflowY,
+        });
+        if (
+          typeof lastPageHeight === "number" &&
+          state.scrollHeight !== lastPageHeight
+        ) {
+          console.log("[FULLPAGE][LAYOUT_CHANGE]", {
+            beforeHeight: lastPageHeight,
+            afterHeight: state.scrollHeight,
+          });
+          lastPageHeight = state.scrollHeight;
+        }
+        if (
+          state.key &&
+          lastScrollContainerKey &&
+          state.key !== lastScrollContainerKey
+        ) {
+          console.log("[FULLPAGE][SCROLL_CONTAINER]", {
+            key: state.key,
+            type: state.type || "unknown",
+          });
+          lastScrollContainerKey = state.key;
+        }
+      }
       await delay(FULL_CAPTURE_CONFIG.postScrollDelayMs);
       let dataUrl = null;
       try {
@@ -4469,7 +4525,12 @@ async function captureFullPageScreenshot(requestedTabId) {
       );
       console.log("[FULLPAGE][TILE]", {
         tileIndex: i + 1,
-        scrollTop: Math.round(targetY),
+        plannedScrollTop: Math.round(targetY),
+        actualScrollTop:
+          typeof reportedScrollTop === "number"
+            ? Math.round(reportedScrollTop)
+            : null,
+        scrollHeight: Math.round(tileScrollHeight),
         cropHeight: Math.round(clipHeight),
         remainingHeight: Math.round(remaining),
       });
@@ -4630,6 +4691,26 @@ async function captureFullPageScreenshot(requestedTabId) {
       stage: failureStage || "unknown",
       message: error && error.message ? error.message : "Capture failed.",
     });
+    console.log("[FULLPAGE][FINALIZE_FAILURE]", {
+      stage: failureStage || "unknown",
+      message: error && error.message ? error.message : "Capture failed.",
+    });
+    if (tabId) {
+      const failureState = await callFullpageCapture(
+        tabId,
+        "getFullpagePageState"
+      );
+      if (failureState && failureState.ok && failureState.state) {
+        const state = failureState.state;
+        console.log("[FULLPAGE][PAGE_STATE]", {
+          scrollHeight: state.scrollHeight,
+          clientHeight: state.clientHeight,
+          scrollTop: state.scrollTop,
+          overflowY: state.overflowY,
+          bodyOverflowY: state.bodyOverflowY,
+        });
+      }
+    }
     if (hasPartial) {
       await updateCaptureRun(captureRunId, {
         status: "partial_complete",
@@ -4704,6 +4785,20 @@ async function captureFullPageScreenshot(requestedTabId) {
       try {
         await callFullpageCapture(tabId, "restoreFullpagePageState");
         console.log("[FULLPAGE_RESTORE]", { tabId, captureRunId });
+        const restoredState = await callFullpageCapture(
+          tabId,
+          "getFullpagePageState"
+        );
+        if (restoredState && restoredState.ok && restoredState.state) {
+          const state = restoredState.state;
+          console.log("[FULLPAGE][PAGE_STATE]", {
+            scrollHeight: state.scrollHeight,
+            clientHeight: state.clientHeight,
+            scrollTop: state.scrollTop,
+            overflowY: state.overflowY,
+            bodyOverflowY: state.bodyOverflowY,
+          });
+        }
       } catch (error) {
         console.warn("[FULLPAGE] Failed to restore page state", error);
       }
