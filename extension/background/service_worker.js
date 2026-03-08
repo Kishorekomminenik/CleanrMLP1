@@ -34,7 +34,8 @@ const MAX_CONSOLE_ENTRIES = 5000;
 const MAX_CONSOLE_ENTRY_BYTES = 50000;
 const FULLPAGE_LIMITS = {
   maxTiles: 80,
-  maxCanvasEdge: 16384,
+  maxCanvasEdge: 32767,
+  maxCanvasPixels: 268435456,
   maxPartHeight: 12000,
   scrollTolerance: 2,
 };
@@ -4074,7 +4075,7 @@ function getFullpageUserMessage(error) {
     return "Full capture isn’t supported on this page. Open a regular website tab and try again.";
   }
   if (code === "FULLPAGE_ERR_TOO_TALL") {
-    return "Page too tall for full capture. Try Snap or segment capture.";
+    return "Page too tall for full capture (exceeds safe size). Try Snap or segment capture.";
   }
   if (code === "FULLPAGE_ERR_SCROLL_LOCKED") {
     return "Page prevented scrolling (likely modal/overflow lock).";
@@ -4302,6 +4303,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     console.log("[FULLPAGE][PLAN]", {
       pageHeight: scrollHeight,
       viewportHeight,
+      devicePixelRatio,
       totalWidthPx,
       totalHeightPx,
       tileCountExpected: totalTiles,
@@ -4311,10 +4313,31 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = "FULLPAGE_ERR_TOO_TALL";
       throw err;
     }
-    if (
-      totalWidthPx > FULLPAGE_LIMITS.maxCanvasEdge ||
-      totalHeightPx > FULLPAGE_LIMITS.maxCanvasEdge
-    ) {
+    const maxAllowedHeightByPixels = Math.floor(
+      FULLPAGE_LIMITS.maxCanvasPixels / Math.max(1, totalWidthPx)
+    );
+    const maxAllowedHeightPx = Math.min(
+      FULLPAGE_LIMITS.maxCanvasEdge,
+      maxAllowedHeightByPixels
+    );
+    let policyReason = "allowed";
+    let policyAllowed = true;
+    if (totalWidthPx > FULLPAGE_LIMITS.maxCanvasEdge) {
+      policyAllowed = false;
+      policyReason = "max_canvas_edge_width";
+    } else if (totalHeightPx > FULLPAGE_LIMITS.maxCanvasEdge) {
+      policyAllowed = false;
+      policyReason = "max_canvas_edge_height";
+    } else if (totalHeightPx > maxAllowedHeightByPixels) {
+      policyAllowed = false;
+      policyReason = "max_canvas_pixels";
+    }
+    console.log("[FULLPAGE][POLICY]", {
+      maxAllowedHeightPx,
+      reason: policyReason,
+      allowed: policyAllowed,
+    });
+    if (!policyAllowed) {
       const err = new Error("Page too tall for full capture.");
       err.code = "FULLPAGE_ERR_TOO_TALL";
       throw err;
@@ -4629,12 +4652,20 @@ async function captureFullPageScreenshot(requestedTabId) {
         tileCountExpected,
       });
       if (artifactKey) {
-        const expected = tileCountExpected || tileCountCommitted || tileCountCaptured || 0;
+        const expected =
+          tileCountExpected || tileCountCommitted || tileCountCaptured || 0;
         const coveragePercent = expected
           ? Math.min(100, Math.round((tileCountCommitted / expected) * 100))
           : 0;
+        const code = error && error.code ? error.code : null;
+        const scrollBlocked =
+          code === "FULLPAGE_ERR_SCROLL_LOCKED" ||
+          code === "FULLPAGE_ERR_SCROLL_MISMATCH";
+        const reasonText = scrollBlocked
+          ? " — page prevented scrolling."
+          : ".";
         setStatusMessage(
-          `Partial full capture saved (${coveragePercent}% coverage).`,
+          `Partial full capture saved${reasonText} (${coveragePercent}% coverage)`,
           "success"
         );
       } else {
