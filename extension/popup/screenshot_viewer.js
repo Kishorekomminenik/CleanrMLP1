@@ -64,6 +64,7 @@ const buttons = {
 };
 
 const statusEl = document.getElementById("statusText");
+const statusMetricsEl = document.getElementById("statusMetrics");
 
 const baseCtx = baseCanvas.getContext("2d", { willReadFrequently: true });
 const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
@@ -164,6 +165,23 @@ function hexToRgba(hex, opacity) {
 function updateHistoryButtons() {
   buttons.undo.disabled = undoStack.length <= 1;
   buttons.redo.disabled = redoStack.length === 0;
+}
+
+function getAnnotationCount() {
+  return Math.max(0, undoStack.length - 1);
+}
+
+function updateStatusMetrics() {
+  if (!statusMetricsEl) {
+    return;
+  }
+  if (!imageSize.width || !imageSize.height) {
+    statusMetricsEl.textContent = "—";
+    return;
+  }
+  const zoomPercent = Math.round(scale * 100);
+  const annotationCount = getAnnotationCount();
+  statusMetricsEl.textContent = `${imageSize.width}×${imageSize.height} • ${zoomPercent}% • ${annotationCount} annotations`;
 }
 
 function setEditorEnabled(enabled) {
@@ -318,6 +336,9 @@ function updateControlVisibility() {
     const controlsList = controlsAttr.split(" ").filter(Boolean);
     group.classList.toggle("is-hidden", !controlsList.includes(currentTool));
   });
+  if (buttons.resetSteps) {
+    buttons.resetSteps.classList.toggle("is-hidden", currentTool !== TOOL.step);
+  }
 }
 
 function updateInteractivity() {
@@ -364,6 +385,7 @@ function updateScale() {
   canvasWrap.style.width = `${imageSize.width * scale}px`;
   canvasWrap.style.height = `${imageSize.height * scale}px`;
   updateTextPositions();
+  updateStatusMetrics();
   console.log("[EDITOR][ZOOM_CHANGED]", {
     zoom: Number(scale.toFixed(3)),
     panX: stage.scrollLeft,
@@ -476,12 +498,14 @@ function pushState() {
   undoStack.push({ drawImageData: imageData, texts });
   redoStack = [];
   updateHistoryButtons();
+  updateStatusMetrics();
 }
 
 function applyState(state) {
   drawCtx.putImageData(state.drawImageData, 0, 0);
   rebuildTextLayer(state.texts);
   updateHistoryButtons();
+  updateStatusMetrics();
 }
 
 function undo() {
