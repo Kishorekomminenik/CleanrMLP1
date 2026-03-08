@@ -5558,12 +5558,7 @@ async function stopNetworkCapture() {
   state.console.stoppedAt = nowIso();
   markSessionStopped();
   rotationSuppressed = true;
-  const pendingIds = Object.keys(state.network.requests);
-  if (pendingIds.length > 0) {
-    pendingIds.forEach((requestId) => {
-      finalizeNetworkEntry(requestId);
-    });
-  }
+  finalizePendingNetworkEntries("manual_stop");
   if (captureState.partId) {
     const completedCount = await refreshCompletedPartsCount();
     if (completedCount >= MAX_COMPLETED_PARTS_RETAINED) {
@@ -5633,6 +5628,7 @@ async function stopNetworkCapture() {
   if (!captureState.pausedForStorageLimit) {
     clearStatusMessage();
   }
+  await flushQueues();
 }
 
 function updateRequestEntry(requestId, updates, options = {}) {
@@ -5656,13 +5652,20 @@ function updateRequestEntry(requestId, updates, options = {}) {
   Object.assign(state.network.requests[requestId], updates);
 }
 
-function finalizeNetworkEntry(requestId) {
+function finalizeNetworkEntry(requestId, options = {}) {
   if (!requestId) {
     return;
   }
   const entry = state.network.requests[requestId];
   if (!entry) {
     return;
+  }
+  if (options.reason) {
+    if (!entry.errorText) {
+      entry.errorText = options.reason;
+    }
+    entry.incomplete = true;
+    entry.finalizeReason = options.reason;
   }
   if (
     activeFilters &&
@@ -5675,6 +5678,16 @@ function finalizeNetworkEntry(requestId) {
   const record = buildNetworkStorageRecord(entry);
   queueNetworkRecord(record);
   delete state.network.requests[requestId];
+}
+
+function finalizePendingNetworkEntries(reason) {
+  const pendingIds = Object.keys(state.network.requests);
+  if (pendingIds.length === 0) {
+    return;
+  }
+  pendingIds.forEach((requestId) => {
+    finalizeNetworkEntry(requestId, { reason });
+  });
 }
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
@@ -5917,6 +5930,12 @@ chrome.debugger.onDetach.addListener((source, reason) => {
       });
     })();
   }
+  setStatusMessage(
+    "Capture stopped: debugger detached unexpectedly.",
+    "error"
+  );
+  markSessionStopped();
+  await flushQueues();
 });
 
 async function resetSession() {
@@ -6134,6 +6153,8 @@ function buildNetworkStorageRecord(entry) {
     response_body_truncated: responseBodyMeta.truncated ? true : undefined,
     request_body_original_bytes: requestBodyMeta.originalBytes,
     response_body_original_bytes: responseBodyMeta.originalBytes,
+    incomplete: entry.incomplete ? true : undefined,
+    finalize_reason: entry.finalizeReason || null,
   };
   const entryBytes = getByteLength(JSON.stringify(exportEntry));
   return {
