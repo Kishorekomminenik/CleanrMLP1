@@ -139,6 +139,7 @@ const state = {
 };
 
 const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
+const SCROLL_TOLERANCE_PX = 8;
 const POPUP_CAPTURE_PORT_NAME = "capture-request";
 const POPUP_CAPTURE_DELAY_MS = 200;
 
@@ -4415,12 +4416,28 @@ async function captureFullPageScreenshot(requestedTabId) {
     let currentScroll = scrollTop;
     failureStage = "capture_tiles";
     for (let i = 0; i < positions.length; i += 1) {
-      const targetY = positions[i];
+      const isLastTile = i === positions.length - 1;
+      const plannedScrollTop = positions[i];
       sendFullPageProgress("capture", i + 1, totalTiles);
+      const preState = await callFullpageCapture(tabId, "getFullpagePageState");
+      let preScrollHeight = scrollHeight;
+      let preClientHeight = viewportHeight;
+      if (preState && preState.ok && preState.state) {
+        const state = preState.state;
+        preScrollHeight = state.scrollHeight;
+        preClientHeight = state.clientHeight;
+        console.log("[FULLPAGE][PAGE_STATE]", {
+          scrollHeight: state.scrollHeight,
+          clientHeight: state.clientHeight,
+          scrollTop: state.scrollTop,
+        });
+      }
+      const preMaxScrollTop = Math.max(0, preScrollHeight - preClientHeight);
+      const clampedScrollTop = Math.min(plannedScrollTop, preMaxScrollTop);
       const scrollRes = await callFullpageCapture(
         tabId,
         "scrollToFullpagePosition",
-        [targetY]
+        [clampedScrollTop]
       );
       if (scrollRes && scrollRes.ok === false) {
         const err = new Error(scrollRes.error || "Scroll mismatch.");
@@ -4431,44 +4448,23 @@ async function captureFullPageScreenshot(requestedTabId) {
         scrollRes && typeof scrollRes.scrollY === "number"
           ? scrollRes.scrollY
           : null;
-      if (actualY === null || Math.abs(actualY - targetY) > FULLPAGE_LIMITS.scrollTolerance) {
-        const retry = await callFullpageCapture(
-          tabId,
-          "scrollToFullpagePosition",
-          [targetY]
-        );
-        const retryY =
-          retry && typeof retry.scrollY === "number" ? retry.scrollY : null;
-        if (
-          retryY === null ||
-          Math.abs(retryY - targetY) > FULLPAGE_LIMITS.scrollTolerance
-        ) {
-          const err = new Error(
-            "Page prevented scrolling (likely modal/overflow lock)."
-          );
-          err.code =
-            currentScroll === retryY
-              ? "FULLPAGE_ERR_SCROLL_LOCKED"
-              : "FULLPAGE_ERR_SCROLL_MISMATCH";
-          throw err;
-        }
-        actualY = retryY;
-      }
-      currentScroll = actualY;
       const pageState = await callFullpageCapture(tabId, "getFullpagePageState");
-      let tileScrollHeight = scrollHeight;
+      let tileScrollHeight = preScrollHeight;
+      let tileClientHeight = preClientHeight;
       let reportedScrollTop = actualY;
       if (pageState && pageState.ok && pageState.state) {
         const state = pageState.state;
         tileScrollHeight = state.scrollHeight;
+        tileClientHeight = state.clientHeight;
         reportedScrollTop =
           typeof actualY === "number" ? actualY : state.scrollTop;
+        if (typeof actualY !== "number") {
+          actualY = state.scrollTop;
+        }
         console.log("[FULLPAGE][PAGE_STATE]", {
           scrollHeight: state.scrollHeight,
           clientHeight: state.clientHeight,
           scrollTop: state.scrollTop,
-          overflowY: state.overflowY,
-          bodyOverflowY: state.bodyOverflowY,
         });
         if (
           typeof lastPageHeight === "number" &&
@@ -4492,6 +4488,75 @@ async function captureFullPageScreenshot(requestedTabId) {
           lastScrollContainerKey = state.key;
         }
       }
+      const maxScrollTopNow = Math.max(0, tileScrollHeight - tileClientHeight);
+      const diffFromPlanned =
+        typeof actualY === "number"
+          ? Math.abs(actualY - clampedScrollTop)
+          : Infinity;
+      const withinTolerance = diffFromPlanned <= SCROLL_TOLERANCE_PX;
+      const treatedAsBottom =
+        typeof actualY === "number" &&
+        Math.abs(actualY - maxScrollTopNow) <= SCROLL_TOLERANCE_PX;
+      if (isLastTile) {
+        console.log("[FULLPAGE][LAST_TILE_MODE]", {
+          tileIndex: i + 1,
+          maxScrollTop: Math.round(maxScrollTopNow),
+          actualScrollTop:
+            typeof actualY === "number" ? Math.round(actualY) : null,
+          treatedAsBottom,
+        });
+      }
+      if (actualY === null || (!withinTolerance && !treatedAsBottom)) {
+        const retryTarget = Math.min(clampedScrollTop, maxScrollTopNow);
+        const retry = await callFullpageCapture(
+          tabId,
+          "scrollToFullpagePosition",
+          [retryTarget]
+        );
+        const retryY =
+          retry && typeof retry.scrollY === "number" ? retry.scrollY : null;
+        const retryState = await callFullpageCapture(
+          tabId,
+          "getFullpagePageState"
+        );
+        let retryScrollTop = retryY;
+        let retryMaxScrollTop = maxScrollTopNow;
+        if (retryState && retryState.ok && retryState.state) {
+          const state = retryState.state;
+          retryMaxScrollTop = Math.max(
+            0,
+            state.scrollHeight - state.clientHeight
+          );
+          if (typeof retryScrollTop !== "number") {
+            retryScrollTop = state.scrollTop;
+          }
+          console.log("[FULLPAGE][PAGE_STATE]", {
+            scrollHeight: state.scrollHeight,
+            clientHeight: state.clientHeight,
+            scrollTop: state.scrollTop,
+          });
+        }
+        const retryDiff =
+          typeof retryScrollTop === "number"
+            ? Math.abs(retryScrollTop - retryTarget)
+            : Infinity;
+        const retryWithin = retryDiff <= SCROLL_TOLERANCE_PX;
+        const retryTreatedAsBottom =
+          typeof retryScrollTop === "number" &&
+          Math.abs(retryScrollTop - retryMaxScrollTop) <= SCROLL_TOLERANCE_PX;
+        if (retryScrollTop === null || (!retryWithin && !retryTreatedAsBottom)) {
+          const err = new Error(
+            "Page prevented scrolling (likely modal/overflow lock)."
+          );
+          err.code =
+            currentScroll === retryScrollTop
+              ? "FULLPAGE_ERR_SCROLL_LOCKED"
+              : "FULLPAGE_ERR_SCROLL_MISMATCH";
+          throw err;
+        }
+        actualY = retryScrollTop;
+      }
+      currentScroll = actualY;
       await delay(FULL_CAPTURE_CONFIG.postScrollDelayMs);
       let dataUrl = null;
       try {
@@ -4511,38 +4576,44 @@ async function captureFullPageScreenshot(requestedTabId) {
         err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
         throw err;
       }
+      const effectiveViewportHeight = tileClientHeight || viewportHeight;
+      const effectiveScrollTop =
+        typeof reportedScrollTop === "number" ? reportedScrollTop : clampedScrollTop;
       let clipTop = 0;
       if (prevY !== null) {
-        const overlap = prevY + viewportHeight - targetY;
+        const overlap =
+          prevY + effectiveViewportHeight - effectiveScrollTop;
         if (overlap > 0) {
           clipTop = overlap;
         }
       }
-      const remaining = scrollHeight - targetY - clipTop;
+      const remaining = tileScrollHeight - effectiveScrollTop - clipTop;
       const clipHeight = Math.max(
         0,
-        Math.min(viewportHeight - clipTop, remaining)
+        Math.min(effectiveViewportHeight - clipTop, remaining)
       );
       console.log("[FULLPAGE][TILE]", {
         tileIndex: i + 1,
-        plannedScrollTop: Math.round(targetY),
+        plannedScrollTop: Math.round(plannedScrollTop),
+        clampedScrollTop: Math.round(clampedScrollTop),
         actualScrollTop:
           typeof reportedScrollTop === "number"
             ? Math.round(reportedScrollTop)
             : null,
+        maxScrollTop: Math.round(maxScrollTopNow),
         scrollHeight: Math.round(tileScrollHeight),
         cropHeight: Math.round(clipHeight),
         remainingHeight: Math.round(remaining),
       });
       if (clipHeight <= 0) {
-        prevY = targetY;
+        prevY = effectiveScrollTop;
         continue;
       }
       const tileMeta = {
-        scrollY: Math.round(targetY),
-        y: Math.floor(targetY * devicePixelRatio),
+        scrollY: Math.round(effectiveScrollTop),
+        y: Math.floor(effectiveScrollTop * devicePixelRatio),
         width: Math.ceil(viewportWidth * devicePixelRatio),
-        height: Math.ceil(viewportHeight * devicePixelRatio),
+        height: Math.ceil(effectiveViewportHeight * devicePixelRatio),
         clipTop: Math.floor(clipTop * devicePixelRatio),
         clipHeight: Math.ceil(clipHeight * devicePixelRatio),
       };
@@ -4595,7 +4666,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       } catch (error) {
         // Partial compose failure should not abort capture.
       }
-      prevY = targetY;
+      prevY = effectiveScrollTop;
     }
     await loadTimestampOverlaySetting();
     const overlayText = (() => {
