@@ -93,6 +93,7 @@ let activePointerId = null;
 let dragState = null;
 let editingTextEl = null;
 let stepCounter = 1;
+let isImageLoaded = false;
 
 let undoStack = [];
 let redoStack = [];
@@ -181,6 +182,9 @@ function setEditorEnabled(enabled) {
     setCopyLabel("Copy (loading...)");
   } else {
     setCopyLabel("Copy");
+  }
+  if (!enabled) {
+    isImageLoaded = false;
   }
   updateHistoryButtons();
 }
@@ -862,6 +866,8 @@ function finishDrawing(point, shiftKey = false) {
 async function loadScreenshot() {
   setStatus("Loading...");
   setEditorEnabled(false);
+  isImageLoaded = false;
+  console.log("[EDITOR][INIT]", { isImageLoaded: false });
   const params = new URLSearchParams(window.location.search);
   const artifactKey = params.get("artifactKey");
   if (artifactKey) {
@@ -915,6 +921,13 @@ async function loadScreenshot() {
         imageWidth: imageSize.width,
         imageHeight: imageSize.height,
       });
+      isImageLoaded = true;
+      console.log("[EDITOR][IMAGE_LOADED]", {
+        sourceType: "fullpage",
+        isImageLoaded: true,
+        width: imageSize.width,
+        height: imageSize.height,
+      });
       console.log("[FULLPAGE][VIEWER][IMAGE_READY]", { artifactKey });
       URL.revokeObjectURL(objectUrl);
     };
@@ -962,6 +975,13 @@ async function loadScreenshot() {
       sourceType: "snap",
       imageWidth: imageSize.width,
       imageHeight: imageSize.height,
+    });
+    isImageLoaded = true;
+    console.log("[EDITOR][IMAGE_LOADED]", {
+      sourceType: "snap",
+      isImageLoaded: true,
+      width: imageSize.width,
+      height: imageSize.height,
     });
   };
   image.onerror = () => {
@@ -1018,7 +1038,8 @@ async function exportAnnotatedBlob() {
 }
 
 drawCanvas.addEventListener("pointerdown", (event) => {
-  if (!latestScreenshotDataUrl) {
+  console.log("[EDITOR][POINTER_GATE]", { isImageLoaded });
+  if (!isImageLoaded) {
     return;
   }
   if (
@@ -1141,7 +1162,8 @@ if (buttons.resetSteps) {
 }
 
 buttons.copy.addEventListener("click", async () => {
-  if (!latestScreenshotDataUrl) {
+  console.log("[EDITOR][COPY_REQUEST]", { isImageLoaded });
+  if (!isImageLoaded) {
     setStatus("No screenshot to copy.", "error");
     return;
   }
@@ -1170,7 +1192,8 @@ buttons.copy.addEventListener("click", async () => {
 });
 
 buttons.download.addEventListener("click", async () => {
-  if (!latestScreenshotDataUrl) {
+  console.log("[EDITOR][DOWNLOAD_REQUEST]", { isImageLoaded });
+  if (!isImageLoaded) {
     setStatus("No screenshot to download.", "error");
     return;
   }
