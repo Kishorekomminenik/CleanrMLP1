@@ -4690,11 +4690,11 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       const tileMeta = {
         scrollY: Math.round(effectiveScrollTop),
-        y: Math.floor(effectiveScrollTop * devicePixelRatio),
+        y: Math.round(effectiveScrollTop * devicePixelRatio),
         width: Math.ceil(viewportWidth * devicePixelRatio),
         height: Math.ceil(effectiveViewportHeight * devicePixelRatio),
-        clipTop: Math.floor(clipTop * devicePixelRatio),
-        clipHeight: Math.ceil(clipHeight * devicePixelRatio),
+        clipTop: Math.round(clipTop * devicePixelRatio),
+        clipHeight: Math.round(clipHeight * devicePixelRatio),
       };
       const tileIndex = i + 1;
       const blob = dataUrlToBlob(dataUrl);
