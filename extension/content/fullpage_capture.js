@@ -377,6 +377,15 @@
     };
   }
 
+  async function sampleFullpageMetrics(settleMs = 0) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (settleMs > 0) {
+      await sleep(settleMs);
+    }
+    return getFullpagePageState();
+  }
+
   async function scrollToFullpagePosition(targetY) {
     const state = getState();
     if (!state.scrollEngine.selectedKey) {
@@ -487,6 +496,7 @@
     prepareFullpageCapture,
     getFullpageMetrics,
     getFullpagePageState,
+    sampleFullpageMetrics,
     getScrollableCandidates,
     scrollToFullpagePosition,
     restoreFullpagePageState,

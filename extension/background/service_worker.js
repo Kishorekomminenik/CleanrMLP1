@@ -142,6 +142,8 @@ const FULLPAGE_STITCH_TIMEOUT_MS = 30000;
 const SCROLL_TOLERANCE_PX = 5;
 const POPUP_CAPTURE_PORT_NAME = "capture-request";
 const POPUP_CAPTURE_DELAY_MS = 200;
+const FULLPAGE_STABILIZE_SETTLE_MS = 150;
+const FULLPAGE_STABILIZE_MAX_RETRIES = 2;
 
 const captureState = {
   sessionId: null,
@@ -4155,6 +4157,52 @@ async function handlePopupCaptureRequest(request) {
   }
 }
 
+async function stabilizeFullpageCapture(tabId) {
+  console.log("[FULLPAGE][STABILIZE][START]");
+  try {
+    await callFullpageCapture(tabId, "scrollToFullpagePosition", [0]);
+  } catch (error) {
+    // Ignore if scroll-to-top fails.
+  }
+  let previous = null;
+  let stable = false;
+  for (let attempt = 0; attempt <= FULLPAGE_STABILIZE_MAX_RETRIES; attempt += 1) {
+    const sample = await callFullpageCapture(
+      tabId,
+      "sampleFullpageMetrics",
+      [FULLPAGE_STABILIZE_SETTLE_MS]
+    );
+    if (sample && sample.ok && sample.state) {
+      const state = sample.state;
+      console.log("[FULLPAGE][STABILIZE][METRICS_SAMPLE]", {
+        scrollHeight: state.scrollHeight,
+        clientHeight: state.clientHeight,
+        scrollTop: state.scrollTop,
+      });
+      if (
+        previous &&
+        (previous.scrollHeight !== state.scrollHeight ||
+          previous.clientHeight !== state.clientHeight)
+      ) {
+        console.log("[FULLPAGE][STABILIZE][CHANGED]", {
+          beforeHeight: previous.scrollHeight,
+          afterHeight: state.scrollHeight,
+          beforeClientHeight: previous.clientHeight,
+          afterClientHeight: state.clientHeight,
+        });
+      } else if (previous) {
+        stable = true;
+        break;
+      }
+      previous = state;
+    } else {
+      break;
+    }
+  }
+  console.log("[FULLPAGE][STABILIZE][READY]", { stable });
+  return previous;
+}
+
 async function captureFullPageScreenshot(requestedTabId) {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
@@ -4251,6 +4299,8 @@ async function captureFullPageScreenshot(requestedTabId) {
         })),
       });
     }
+    failureStage = "stabilize";
+    await stabilizeFullpageCapture(tabId);
     failureStage = "metrics";
     const metricsRes = await callFullpageCapture(tabId, "getFullpageMetrics");
     if (metricsRes && metricsRes.ok === false) {
