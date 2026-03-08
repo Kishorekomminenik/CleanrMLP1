@@ -578,22 +578,42 @@ function startEditing(el) {
   requestAnimationFrame(() => {
     el.focus();
   });
+  console.log("[TEXT][EDIT_START]", {
+    id: el.dataset.id,
+    isConnected: Boolean(el && el.isConnected),
+  });
   const placeCaret = () => {
     if (!el || !el.isConnected || !document.contains(el)) {
+      console.log("[TEXT][CARET_SKIP]", {
+        id: el ? el.dataset.id : null,
+        reason: "detached",
+      });
       return;
     }
     const selection = window.getSelection();
     if (!selection) {
+      console.log("[TEXT][CARET_SKIP]", {
+        id: el.dataset.id,
+        reason: "no_selection",
+      });
       return;
     }
     try {
+      el.focus();
       const range = document.createRange();
       range.selectNodeContents(el);
       range.collapse(false);
       selection.removeAllRanges();
       selection.addRange(range);
+      console.log("[TEXT][CARET_ATTACH]", {
+        id: el.dataset.id,
+        success: true,
+      });
     } catch (error) {
-      // Ignore if element is detached mid-update.
+      console.log("[TEXT][CARET_SKIP]", {
+        id: el.dataset.id,
+        reason: "range_error",
+      });
     }
   };
   requestAnimationFrame(placeCaret);
