@@ -2246,18 +2246,16 @@ async function handleFullPageScreenshot() {
     await refreshStatus();
     return;
   }
-  const hasValidBlob =
-    response.kind === "blob" &&
-    response.blob instanceof Blob &&
-    typeof response.blobSize === "number" &&
-    response.blobSize > 0;
-  if (!hasValidBlob) {
-    const message = "Full capture failed. Invalid image payload.";
-    setStatus(statusElements.message, message, "error");
-    showToast(message, "error");
-    await refreshStatus();
-    return;
-  }
+  console.log("[FULLPAGE][POPUP][RESULT]", {
+    ok: true,
+    status: response.status,
+    captureRunId: response.captureRunId,
+    artifactKey: response.artifactKey,
+    isPartial: response.isPartial,
+    coveragePercent: response.coveragePercent,
+    tileCountCaptured: response.tileCountCaptured,
+    tileCountExpected: response.tileCountExpected,
+  });
   const artifactKey = response.artifactKey;
   if (!artifactKey) {
     const message =
@@ -2267,10 +2265,25 @@ async function handleFullPageScreenshot() {
     await refreshStatus();
     return;
   }
-  const blob = await loadFullpageArtifactBlob(artifactKey);
-  if (!blob) {
+  const { artifact, blobRecord, blob } = await loadFullpageArtifactRecords(artifactKey);
+  if (!artifact) {
     const message =
       response.message || "Full page capture failed. Artifact unavailable.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    await refreshStatus();
+    return;
+  }
+  if (!blobRecord) {
+    const message =
+      response.message || "Full page capture failed. Artifact blob missing.";
+    setStatus(statusElements.message, message, "error");
+    showToast(message, "error");
+    await refreshStatus();
+    return;
+  }
+  if (!blob || !(blob instanceof Blob) || blob.size <= 0) {
+    const message = "Full capture failed. Invalid image payload.";
     setStatus(statusElements.message, message, "error");
     showToast(message, "error");
     await refreshStatus();
@@ -2281,12 +2294,16 @@ async function handleFullPageScreenshot() {
     if (typeof dataUrl !== "string") {
       throw new Error("Invalid image data.");
     }
+    console.log("[FULLPAGE][POPUP][VIEWER_PAYLOAD]", {
+      kind: "dataUrl",
+      length: dataUrl.length,
+    });
     await chrome.storage.session.set({
       latestScreenshotDataUrl: dataUrl,
     });
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("popup/screenshot_viewer.html"),
-    });
+    const viewerUrl = chrome.runtime.getURL("popup/screenshot_viewer.html");
+    await chrome.tabs.create({ url: viewerUrl });
+    console.log("[FULLPAGE][POPUP][VIEWER_OPEN]", { url: viewerUrl });
   } catch (error) {
     const message =
       error && error.message ? error.message : "Failed to open viewer.";
@@ -2306,16 +2323,6 @@ async function handleFullPageScreenshot() {
     : "Full page screenshot captured.";
   setStatus(statusElements.message, successMessage, "success");
   showToast(isPartial ? "Partial full capture saved" : "Full captured");
-  console.log("[FULLPAGE][POPUP][RESULT]", {
-    ok: true,
-    status: response.status,
-    captureRunId: response.captureRunId,
-    artifactKey: response.artifactKey,
-    isPartial,
-    coveragePercent: response.coveragePercent,
-    tileCountCaptured: response.tileCountCaptured,
-    tileCountExpected: response.tileCountExpected,
-  });
   await refreshStatus();
 }
 
@@ -2328,19 +2335,40 @@ async function blobToDataUrl(blob) {
   });
 }
 
-async function loadFullpageArtifactBlob(artifactKey) {
+async function loadFullpageArtifactRecords(artifactKey) {
   if (!artifactKey || !window.ReproIdb) {
-    return null;
+    console.log("[FULLPAGE][POPUP][ARTIFACT_RECORD]", null);
+    return { artifact: null, blobRecord: null, blob: null };
   }
   const artifact = await ReproIdb.getByKey("capture_artifacts", artifactKey);
   if (!artifact || !artifact.blobKey) {
-    return null;
+    console.log("[FULLPAGE][POPUP][ARTIFACT_RECORD]", artifact || null);
+    return { artifact: artifact || null, blobRecord: null, blob: null };
   }
+  console.log("[FULLPAGE][POPUP][ARTIFACT_RECORD]", {
+    key: artifact.key,
+    blobKey: artifact.blobKey,
+    coveragePercent: artifact.coveragePercent,
+    isPartial: artifact.isPartial,
+    kind: artifact.kind,
+  });
   const blobRecord = await ReproIdb.getByKey("capture_blobs", artifact.blobKey);
-  if (!blobRecord || !(blobRecord.blob instanceof Blob)) {
-    return null;
+  if (!blobRecord) {
+    console.log("[FULLPAGE][POPUP][BLOB_RECORD]", null);
+    return { artifact, blobRecord: null, blob: null };
   }
-  return blobRecord.blob;
+  console.log("[FULLPAGE][POPUP][BLOB_RECORD]", {
+    key: blobRecord.key,
+    kind: blobRecord.kind,
+    size: blobRecord.blob ? blobRecord.blob.size : null,
+    type: blobRecord.blob ? blobRecord.blob.type : null,
+  });
+  const blob = blobRecord.blob instanceof Blob ? blobRecord.blob : null;
+  console.log("[FULLPAGE][POPUP][BLOB_VALIDATION]", {
+    isBlob: blob instanceof Blob,
+    size: blob ? blob.size : null,
+  });
+  return { artifact, blobRecord, blob };
 }
 
 async function handleRecordingStart() {
