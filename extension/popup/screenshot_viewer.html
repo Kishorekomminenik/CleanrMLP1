@@ -19,6 +19,14 @@
             <span class="btn-icon" aria-hidden="true">&#9998;</span>
             <span class="btn-label">Pen</span>
           </button>
+          <button id="toolRectangle" class="tool-button" type="button">
+            <span class="btn-icon" aria-hidden="true">&#9633;</span>
+            <span class="btn-label">Rect</span>
+          </button>
+          <button id="toolArrow" class="tool-button" type="button">
+            <span class="btn-icon" aria-hidden="true">&#10132;</span>
+            <span class="btn-label">Arrow</span>
+          </button>
           <button id="toolHighlight" class="tool-button" type="button">
             <span class="btn-icon" aria-hidden="true">&#11036;</span>
             <span class="btn-label">Highlight</span>
@@ -31,18 +39,26 @@
             <span class="btn-icon" aria-hidden="true">&#84;</span>
             <span class="btn-label">Text</span>
           </button>
+          <button id="toolStep" class="tool-button" type="button">
+            <span class="btn-icon" aria-hidden="true">&#9312;</span>
+            <span class="btn-label">Step</span>
+          </button>
+          <button id="toolBlur" class="tool-button" type="button">
+            <span class="btn-icon" aria-hidden="true">&#9681;</span>
+            <span class="btn-label">Blur</span>
+          </button>
         </div>
 
         <div class="toolbar-group styles">
-          <div class="control-group" data-controls="pen circle text">
+          <div class="control-group" data-controls="pen circle text rectangle arrow step">
             <label>
               Color
               <input id="mainColor" type="color" value="#ef4444" />
             </label>
           </div>
-          <div class="control-group" data-controls="pen">
+          <div class="control-group" data-controls="pen rectangle arrow">
             <label>
-              Pen
+              Stroke
               <select id="penWidth">
                 <option value="2">2</option>
                 <option value="4" selected>4</option>
@@ -77,6 +93,16 @@
                 step="0.1"
                 value="0.3"
               />
+            </label>
+          </div>
+          <div class="control-group" data-controls="blur">
+            <label>
+              Blur
+              <select id="blurStrength">
+                <option value="4">Low</option>
+                <option value="8" selected>Med</option>
+                <option value="12">High</option>
+              </select>
             </label>
           </div>
           <div class="control-group" data-controls="text">
@@ -126,6 +152,29 @@
           <button id="btnClear" type="button" disabled>
             <span class="btn-icon" aria-hidden="true">&#10006;</span>
             <span class="btn-label">Reset</span>
+          </button>
+          <button id="btnResetSteps" type="button">
+            <span class="btn-icon" aria-hidden="true">&#8634;</span>
+            <span class="btn-label">Reset Steps</span>
+          </button>
+        </div>
+
+        <div class="toolbar-group zoom">
+          <button id="btnZoomOut" type="button">
+            <span class="btn-icon" aria-hidden="true">&#8722;</span>
+            <span class="btn-label">Zoom Out</span>
+          </button>
+          <button id="btnZoomIn" type="button">
+            <span class="btn-icon" aria-hidden="true">&#43;</span>
+            <span class="btn-label">Zoom In</span>
+          </button>
+          <button id="btnZoomFit" type="button">
+            <span class="btn-icon" aria-hidden="true">&#9635;</span>
+            <span class="btn-label">Fit</span>
+          </button>
+          <button id="btnZoomActual" type="button">
+            <span class="btn-icon" aria-hidden="true">100%</span>
+            <span class="btn-label">100%</span>
           </button>
         </div>
 

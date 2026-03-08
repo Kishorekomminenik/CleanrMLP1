@@ -25,9 +25,13 @@ const stage = document.getElementById("stage");
 const toolButtons = {
   pointer: document.getElementById("toolPointer"),
   pen: document.getElementById("toolPen"),
+  rectangle: document.getElementById("toolRectangle"),
+  arrow: document.getElementById("toolArrow"),
   highlight: document.getElementById("toolHighlight"),
   circle: document.getElementById("toolCircle"),
   text: document.getElementById("toolText"),
+  step: document.getElementById("toolStep"),
+  blur: document.getElementById("toolBlur"),
 };
 
 const controls = {
@@ -36,6 +40,7 @@ const controls = {
   circleWidth: document.getElementById("circleWidth"),
   highlightColor: document.getElementById("highlightColor"),
   highlightOpacity: document.getElementById("highlightOpacity"),
+  blurStrength: document.getElementById("blurStrength"),
   textSize: document.getElementById("textSize"),
   textFontFamily: document.getElementById("textFontFamily"),
   textWeight: document.getElementById("textWeight"),
@@ -49,6 +54,11 @@ const buttons = {
   clear: document.getElementById("btnClear"),
   copy: document.getElementById("btnCopy"),
   download: document.getElementById("btnDownload"),
+  resetSteps: document.getElementById("btnResetSteps"),
+  zoomIn: document.getElementById("btnZoomIn"),
+  zoomOut: document.getElementById("btnZoomOut"),
+  zoomFit: document.getElementById("btnZoomFit"),
+  zoomActual: document.getElementById("btnZoomActual"),
 };
 
 const statusEl = document.getElementById("statusText");
@@ -59,15 +69,22 @@ const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
 const TOOL = {
   pointer: "pointer",
   pen: "pen",
+  rectangle: "rectangle",
+  arrow: "arrow",
   highlight: "highlight",
   circle: "circle",
   text: "text",
+  step: "step",
+  blur: "blur",
 };
 
 let latestScreenshotDataUrl = null;
 let statusTimer = null;
 let imageSize = { width: 0, height: 0 };
 let scale = 1;
+let fitScale = 1;
+let zoom = 1;
+let panState = null;
 let currentTool = TOOL.pointer;
 let isDrawing = false;
 let startPoint = null;
@@ -75,6 +92,7 @@ let previewImageData = null;
 let activePointerId = null;
 let dragState = null;
 let editingTextEl = null;
+let stepCounter = 1;
 
 let undoStack = [];
 let redoStack = [];
@@ -150,6 +168,15 @@ function setEditorEnabled(enabled) {
   buttons.clear.disabled = !enabled;
   buttons.copy.disabled = !enabled;
   buttons.download.disabled = !enabled;
+  if (buttons.resetSteps) {
+    buttons.resetSteps.disabled = !enabled;
+  }
+  if (buttons.zoomIn) {
+    buttons.zoomIn.disabled = !enabled;
+    buttons.zoomOut.disabled = !enabled;
+    buttons.zoomFit.disabled = !enabled;
+    buttons.zoomActual.disabled = !enabled;
+  }
   if (!enabled) {
     setCopyLabel("Copy (loading...)");
   } else {
@@ -257,9 +284,7 @@ function setTool(tool) {
   });
   updateControlVisibility();
   updateInteractivity();
-  if (tool === TOOL.pen) {
-    drawCanvas.style.cursor = "crosshair";
-  } else if (tool === TOOL.highlight || tool === TOOL.circle) {
+  if ([TOOL.pen, TOOL.rectangle, TOOL.arrow, TOOL.highlight, TOOL.circle, TOOL.blur].includes(tool)) {
     drawCanvas.style.cursor = "crosshair";
   } else if (tool === TOOL.text) {
     drawCanvas.style.cursor = "text";
@@ -297,6 +322,16 @@ function getCanvasPoint(event) {
   };
 }
 
+function logPointerMap(event, point) {
+  console.log("[EDITOR][POINTER_MAP]", {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    imageX: Math.round(point.x),
+    imageY: Math.round(point.y),
+    zoom: Number(scale.toFixed(3)),
+  });
+}
+
 function updateScale() {
   if (!imageSize.width || !imageSize.height) {
     return;
@@ -306,10 +341,38 @@ function updateScale() {
   const maxHeight = Math.max(stageRect.height - 32, 100);
   const scaleX = maxWidth / imageSize.width;
   const scaleY = maxHeight / imageSize.height;
-  scale = Math.min(1, scaleX, scaleY);
+  fitScale = Math.min(1, scaleX, scaleY);
+  scale = clamp(fitScale * zoom, 0.1, 6);
   canvasWrap.style.width = `${imageSize.width * scale}px`;
   canvasWrap.style.height = `${imageSize.height * scale}px`;
   updateTextPositions();
+  console.log("[EDITOR][ZOOM_CHANGED]", {
+    zoom: Number(scale.toFixed(3)),
+    panX: stage.scrollLeft,
+    panY: stage.scrollTop,
+  });
+}
+
+function setZoom(nextZoom) {
+  const stageRect = stage.getBoundingClientRect();
+  const centerX = (stage.scrollLeft + stageRect.width / 2) / scale;
+  const centerY = (stage.scrollTop + stageRect.height / 2) / scale;
+  zoom = clamp(nextZoom, 0.2, 6);
+  updateScale();
+  stage.scrollLeft = Math.max(0, centerX * scale - stageRect.width / 2);
+  stage.scrollTop = Math.max(0, centerY * scale - stageRect.height / 2);
+}
+
+function zoomToFit() {
+  zoom = 1;
+  updateScale();
+  stage.scrollTop = 0;
+  stage.scrollLeft = 0;
+}
+
+function zoomToActual() {
+  zoom = fitScale > 0 ? 1 / fitScale : 1;
+  updateScale();
 }
 
 function createId() {
@@ -425,6 +488,7 @@ function redo() {
 function clearAll() {
   drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
   textLayer.innerHTML = "";
+  stepCounter = 1;
   pushState();
 }
 
@@ -491,6 +555,7 @@ function finalizeEditing(el) {
   delete el.dataset.originalText;
   editingTextEl = null;
   pushState();
+  console.log("[EDITOR][ANNOTATION_EDIT]", { toolType: "text" });
 }
 
 function attachTextHandlers(el) {
@@ -583,6 +648,7 @@ function handleTextLayerPointerUp(event) {
   dragState.el.classList.remove("is-dragging");
   if (dragState.moved) {
     pushState();
+    console.log("[EDITOR][ANNOTATION_EDIT]", { toolType: "text" });
   }
   dragState = null;
   activePointerId = null;
@@ -598,6 +664,40 @@ function drawHighlightRect(start, end) {
   drawCtx.fillRect(start.x, start.y, width, height);
 }
 
+function drawRectangle(start, end, lineWidth) {
+  drawCtx.strokeStyle = controls.mainColor.value;
+  drawCtx.lineWidth = lineWidth;
+  drawCtx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
+}
+
+function drawArrow(start, end, lineWidth) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const angle = Math.atan2(dy, dx);
+  const headLength = Math.max(8, lineWidth * 3);
+  drawCtx.strokeStyle = controls.mainColor.value;
+  drawCtx.lineWidth = lineWidth;
+  drawCtx.lineCap = "round";
+  drawCtx.lineJoin = "round";
+  drawCtx.beginPath();
+  drawCtx.moveTo(start.x, start.y);
+  drawCtx.lineTo(end.x, end.y);
+  drawCtx.stroke();
+  drawCtx.fillStyle = controls.mainColor.value;
+  drawCtx.beginPath();
+  drawCtx.moveTo(end.x, end.y);
+  drawCtx.lineTo(
+    end.x - headLength * Math.cos(angle - Math.PI / 6),
+    end.y - headLength * Math.sin(angle - Math.PI / 6)
+  );
+  drawCtx.lineTo(
+    end.x - headLength * Math.cos(angle + Math.PI / 6),
+    end.y - headLength * Math.sin(angle + Math.PI / 6)
+  );
+  drawCtx.closePath();
+  drawCtx.fill();
+}
+
 function drawEllipse(start, end) {
   const cx = (start.x + end.x) / 2;
   const cy = (start.y + end.y) / 2;
@@ -610,6 +710,46 @@ function drawEllipse(start, end) {
   drawCtx.stroke();
 }
 
+function drawStepMarker(point) {
+  const radius = 14;
+  drawCtx.fillStyle = controls.mainColor.value;
+  drawCtx.beginPath();
+  drawCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  drawCtx.fill();
+  drawCtx.fillStyle = "#ffffff";
+  drawCtx.font = `bold 14px system-ui`;
+  drawCtx.textAlign = "center";
+  drawCtx.textBaseline = "middle";
+  drawCtx.fillText(String(stepCounter), point.x, point.y);
+  stepCounter += 1;
+}
+
+function drawBlurPreview(start, end) {
+  drawCtx.strokeStyle = "#64748b";
+  drawCtx.lineWidth = 1;
+  drawCtx.setLineDash([4, 4]);
+  drawCtx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
+  drawCtx.setLineDash([]);
+}
+
+function applyBlurRegion(start, end) {
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  if (width < 2 || height < 2) {
+    return;
+  }
+  const blurPx = Number(controls.blurStrength.value) || 8;
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  const tempCtx = tempCanvas.getContext("2d");
+  tempCtx.filter = `blur(${blurPx}px)`;
+  tempCtx.drawImage(baseCanvas, x, y, width, height, 0, 0, width, height);
+  drawCtx.drawImage(tempCanvas, x, y);
+}
+
 function startDrawing(point) {
   if (currentTool === TOOL.pen) {
     drawCtx.strokeStyle = controls.mainColor.value;
@@ -618,7 +758,11 @@ function startDrawing(point) {
     drawCtx.lineJoin = "round";
     drawCtx.beginPath();
     drawCtx.moveTo(point.x, point.y);
-  } else {
+  } else if (
+    [TOOL.highlight, TOOL.circle, TOOL.rectangle, TOOL.arrow, TOOL.blur].includes(
+      currentTool
+    )
+  ) {
     previewImageData = drawCtx.getImageData(
       0,
       0,
@@ -630,7 +774,26 @@ function startDrawing(point) {
   startPoint = point;
 }
 
-function updateDrawing(point) {
+function constrainPoint(start, end, mode, shiftKey) {
+  if (!shiftKey) {
+    return end;
+  }
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (mode === "square") {
+    const size = Math.max(Math.abs(dx), Math.abs(dy));
+    return { x: start.x + Math.sign(dx || 1) * size, y: start.y + Math.sign(dy || 1) * size };
+  }
+  if (mode === "axis") {
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return { x: end.x, y: start.y };
+    }
+    return { x: start.x, y: end.y };
+  }
+  return end;
+}
+
+function updateDrawing(point, shiftKey = false) {
   if (!isDrawing || !startPoint) {
     return;
   }
@@ -647,16 +810,25 @@ function updateDrawing(point) {
     drawHighlightRect(startPoint, point);
   } else if (currentTool === TOOL.circle) {
     drawEllipse(startPoint, point);
+  } else if (currentTool === TOOL.rectangle) {
+    const end = constrainPoint(startPoint, point, "square", shiftKey);
+    drawRectangle(startPoint, end, Number(controls.penWidth.value));
+  } else if (currentTool === TOOL.arrow) {
+    const end = constrainPoint(startPoint, point, "axis", shiftKey);
+    drawArrow(startPoint, end, Number(controls.penWidth.value));
+  } else if (currentTool === TOOL.blur) {
+    drawBlurPreview(startPoint, point);
   }
 }
 
-function finishDrawing(point) {
+function finishDrawing(point, shiftKey = false) {
   if (!isDrawing) {
     return;
   }
   if (currentTool === TOOL.pen) {
     drawCtx.closePath();
     pushState();
+    console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "pen", imageSpace: true });
   } else if (previewImageData && startPoint) {
     drawCtx.putImageData(previewImageData, 0, 0);
     const distanceX = Math.abs(point.x - startPoint.x);
@@ -666,8 +838,20 @@ function finishDrawing(point) {
         drawHighlightRect(startPoint, point);
       } else if (currentTool === TOOL.circle) {
         drawEllipse(startPoint, point);
+      } else if (currentTool === TOOL.rectangle) {
+        const end = constrainPoint(startPoint, point, "square", shiftKey);
+        drawRectangle(startPoint, end, Number(controls.penWidth.value));
+      } else if (currentTool === TOOL.arrow) {
+        const end = constrainPoint(startPoint, point, "axis", shiftKey);
+        drawArrow(startPoint, end, Number(controls.penWidth.value));
+      } else if (currentTool === TOOL.blur) {
+        applyBlurRegion(startPoint, point);
       }
       pushState();
+      console.log("[EDITOR][ANNOTATION_ADD]", {
+        toolType: currentTool,
+        imageSpace: true,
+      });
     }
   }
   previewImageData = null;
@@ -715,13 +899,22 @@ async function loadScreenshot() {
       baseCtx.clearRect(0, 0, imageSize.width, imageSize.height);
       baseCtx.drawImage(image, 0, 0);
       drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+      zoom = 1;
+      stepCounter = 1;
       updateScale();
+      stage.scrollLeft = 0;
+      stage.scrollTop = 0;
       setEditorEnabled(true);
       setTool(currentTool);
       undoStack = [];
       redoStack = [];
       pushState();
       setStatus("Ready.");
+      console.log("[EDITOR][INIT]", {
+        sourceType: "fullpage",
+        imageWidth: imageSize.width,
+        imageHeight: imageSize.height,
+      });
       console.log("[FULLPAGE][VIEWER][IMAGE_READY]", { artifactKey });
       URL.revokeObjectURL(objectUrl);
     };
@@ -754,13 +947,22 @@ async function loadScreenshot() {
     baseCtx.clearRect(0, 0, imageSize.width, imageSize.height);
     baseCtx.drawImage(image, 0, 0);
     drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+    zoom = 1;
+    stepCounter = 1;
     updateScale();
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
     setEditorEnabled(true);
     setTool(currentTool);
     undoStack = [];
     redoStack = [];
     pushState();
     setStatus("Ready.");
+    console.log("[EDITOR][INIT]", {
+      sourceType: "snap",
+      imageWidth: imageSize.width,
+      imageHeight: imageSize.height,
+    });
   };
   image.onerror = () => {
     latestScreenshotDataUrl = null;
@@ -805,6 +1007,11 @@ async function exportAnnotatedBlob() {
       ctx.fillText(line, text.x, text.y + index * lineHeight);
     });
   });
+  console.log("[EDITOR][EXPORT_READY]", {
+    width: exportCanvas.width,
+    height: exportCanvas.height,
+    annotated: true,
+  });
   return new Promise((resolve) => {
     exportCanvas.toBlob((blob) => resolve(blob), "image/png");
   });
@@ -814,7 +1021,17 @@ drawCanvas.addEventListener("pointerdown", (event) => {
   if (!latestScreenshotDataUrl) {
     return;
   }
-  if (![TOOL.pen, TOOL.highlight, TOOL.circle].includes(currentTool)) {
+  if (
+    ![
+      TOOL.pen,
+      TOOL.highlight,
+      TOOL.circle,
+      TOOL.rectangle,
+      TOOL.arrow,
+      TOOL.blur,
+      TOOL.step,
+    ].includes(currentTool)
+  ) {
     return;
   }
   if (event.button !== 0) {
@@ -824,6 +1041,13 @@ drawCanvas.addEventListener("pointerdown", (event) => {
     editingTextEl.blur();
   }
   const point = getCanvasPoint(event);
+  logPointerMap(event, point);
+  if (currentTool === TOOL.step) {
+    drawStepMarker(point);
+    pushState();
+    console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "step", imageSpace: true });
+    return;
+  }
   activePointerId = event.pointerId;
   drawCanvas.setPointerCapture(event.pointerId);
   startDrawing(point);
@@ -834,7 +1058,7 @@ drawCanvas.addEventListener("pointermove", (event) => {
     return;
   }
   const point = getCanvasPoint(event);
-  updateDrawing(point);
+  updateDrawing(point, event.shiftKey);
 });
 
 drawCanvas.addEventListener("pointerup", (event) => {
@@ -842,7 +1066,7 @@ drawCanvas.addEventListener("pointerup", (event) => {
     return;
   }
   const point = getCanvasPoint(event);
-  finishDrawing(point);
+  finishDrawing(point, event.shiftKey);
   activePointerId = null;
 });
 
@@ -872,6 +1096,7 @@ textLayer.addEventListener("pointerdown", (event) => {
   }
   event.preventDefault();
   const point = getCanvasPoint(event);
+  logPointerMap(event, point);
   console.log("[TEXT] create textbox at", point.x, point.y);
   const textSettings = getAnnotationSettings();
   const newText = {
@@ -884,6 +1109,7 @@ textLayer.addEventListener("pointerdown", (event) => {
   const el = buildTextElement(newText);
   textLayer.appendChild(el);
   startEditing(el);
+  console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "text", imageSpace: true });
 });
 
 buttons.undo.addEventListener("click", () => {
@@ -907,6 +1133,13 @@ buttons.clear.addEventListener("click", () => {
   clearAll();
 });
 
+if (buttons.resetSteps) {
+  buttons.resetSteps.addEventListener("click", () => {
+    stepCounter = 1;
+    setStatus("Step numbers reset.", "success", 1500);
+  });
+}
+
 buttons.copy.addEventListener("click", async () => {
   if (!latestScreenshotDataUrl) {
     setStatus("No screenshot to copy.", "error");
@@ -928,9 +1161,11 @@ buttons.copy.addEventListener("click", async () => {
       new ClipboardItem({ "image/png": blob }),
     ]);
     setStatus("Copied!", "success", 2000);
+    console.log("[EDITOR][COPY_PNG]", { ok: true });
   } catch (error) {
     const message = error && error.message ? error.message : "Unknown error";
     setStatus(`Copy failed: ${message}. Use Download.`, "error");
+    console.log("[EDITOR][COPY_PNG]", { ok: false });
   }
 });
 
@@ -957,15 +1192,38 @@ buttons.download.addEventListener("click", async () => {
       saveAs: true,
     });
     setStatus("Download started.", "success", 2000);
+    console.log("[EDITOR][DOWNLOAD_PNG]", { ok: true });
   } catch (error) {
     const message = error && error.message ? error.message : "Download failed.";
     setStatus(message, "error");
+    console.log("[EDITOR][DOWNLOAD_PNG]", { ok: false });
   } finally {
     if (objectUrl) {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
     }
   }
 });
+
+if (buttons.zoomIn) {
+  buttons.zoomIn.addEventListener("click", () => {
+    setZoom(zoom * 1.2);
+  });
+}
+if (buttons.zoomOut) {
+  buttons.zoomOut.addEventListener("click", () => {
+    setZoom(zoom * 0.8);
+  });
+}
+if (buttons.zoomFit) {
+  buttons.zoomFit.addEventListener("click", () => {
+    zoomToFit();
+  });
+}
+if (buttons.zoomActual) {
+  buttons.zoomActual.addEventListener("click", () => {
+    zoomToActual();
+  });
+}
 
 Object.entries(toolButtons).forEach(([tool, button]) => {
   button.addEventListener("click", () => setTool(tool));
@@ -989,6 +1247,59 @@ bindTextControl(controls.textOpacity);
 
 window.addEventListener("resize", () => {
   updateScale();
+});
+
+stage.addEventListener("wheel", (event) => {
+  if (!(event.ctrlKey || event.metaKey)) {
+    return;
+  }
+  event.preventDefault();
+  const direction = event.deltaY > 0 ? -1 : 1;
+  const nextZoom = direction > 0 ? zoom * 1.15 : zoom * 0.87;
+  setZoom(nextZoom);
+});
+
+stage.addEventListener("pointerdown", (event) => {
+  if (currentTool !== TOOL.pointer) {
+    return;
+  }
+  if (event.button !== 0) {
+    return;
+  }
+  if (event.target && event.target.classList.contains("text-label")) {
+    return;
+  }
+  panState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    scrollLeft: stage.scrollLeft,
+    scrollTop: stage.scrollTop,
+  };
+  stage.setPointerCapture(event.pointerId);
+  stage.style.cursor = "grabbing";
+});
+
+stage.addEventListener("pointermove", (event) => {
+  if (!panState) {
+    return;
+  }
+  const dx = event.clientX - panState.startX;
+  const dy = event.clientY - panState.startY;
+  stage.scrollLeft = panState.scrollLeft - dx;
+  stage.scrollTop = panState.scrollTop - dy;
+});
+
+stage.addEventListener("pointerup", () => {
+  if (!panState) {
+    return;
+  }
+  panState = null;
+  stage.style.cursor = "";
+});
+
+stage.addEventListener("pointercancel", () => {
+  panState = null;
+  stage.style.cursor = "";
 });
 
 function showBootError(message, error) {
