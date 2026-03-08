@@ -2804,6 +2804,9 @@ async function handleRecordingDownload() {
       ok: true,
       size: res.size || null,
     });
+    if (res.sessionId) {
+      send("RECORDING_CLEANUP_SESSION", { sessionId: res.sessionId });
+    }
     setStatus(statusElements.download, "Saved.", "success");
     showToast("Saved");
   } catch (error) {

@@ -147,6 +147,7 @@ const POPUP_CAPTURE_PORT_NAME = "capture-request";
 const POPUP_CAPTURE_DELAY_MS = 200;
 const FULLPAGE_STABILIZE_SETTLE_MS = 150;
 const FULLPAGE_STABILIZE_MAX_RETRIES = 2;
+const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
   sessionId: null,
@@ -2162,6 +2163,87 @@ async function updateRecordingSessionRecord(sessionId, updates) {
   }
 }
 
+async function cleanupRecordingSessionData(
+  sessionId,
+  { removeArtifacts = true, reason = "manual" } = {}
+) {
+  if (!sessionId) {
+    return { removedChunks: 0, removedArtifacts: 0 };
+  }
+  let removedChunks = 0;
+  let removedArtifacts = 0;
+  try {
+    const chunks = await ReproIdb.getAllByIndex(
+      "recording_chunks",
+      "sessionId",
+      IDBKeyRange.only(sessionId)
+    );
+    for (const chunk of chunks) {
+      await ReproIdb.deleteByKey("recording_chunks", chunk.key);
+      removedChunks += 1;
+    }
+  } catch (error) {
+    console.warn("[RECORDING][CLEANUP_CHUNKS_FAILED]", error);
+  }
+  if (removeArtifacts) {
+    try {
+      const artifacts = await ReproIdb.getAllByIndex(
+        "recording_artifacts",
+        "sessionId",
+        IDBKeyRange.only(sessionId)
+      );
+      for (const artifact of artifacts) {
+        await ReproIdb.deleteByKey("recording_artifacts", artifact.key);
+        removedArtifacts += 1;
+      }
+    } catch (error) {
+      console.warn("[RECORDING][CLEANUP_ARTIFACTS_FAILED]", error);
+    }
+  }
+  await updateRecordingSessionRecord(sessionId, {
+    cleanedAtMs: Date.now(),
+    chunksCleanedAtMs: Date.now(),
+    artifactsCleanedAtMs: removeArtifacts ? Date.now() : null,
+    cleanupReason: reason,
+  });
+  console.log("[RECORDING][CLEANUP]", {
+    sessionId,
+    removedChunks,
+    removedArtifacts,
+  });
+  return { removedChunks, removedArtifacts };
+}
+
+async function runRecordingRetentionCleanup() {
+  try {
+    const cutoff = Date.now() - RECORDING_RETENTION_MS;
+    const sessions = await ReproIdb.getAllByIndex(
+      "recording_sessions",
+      "startedAt",
+      IDBKeyRange.upperBound(cutoff)
+    );
+    for (const sessionRecord of sessions) {
+      if (!sessionRecord || !sessionRecord.sessionId) {
+        continue;
+      }
+      const status = sessionRecord.status || "idle";
+      if (
+        ["recording", "paused", "starting", "stopping", "finalizing"].includes(
+          status
+        )
+      ) {
+        continue;
+      }
+      await cleanupRecordingSessionData(sessionRecord.sessionId, {
+        removeArtifacts: true,
+        reason: "retention",
+      });
+    }
+  } catch (error) {
+    console.warn("[RECORDING][RETENTION_CLEANUP_FAILED]", error);
+  }
+}
+
 function updateSessionCounts() {
   if (!session) {
     return;
@@ -4123,6 +4205,7 @@ async function scanFullpageRuns() {
 }
 
 scanFullpageRuns();
+runRecordingRetentionCleanup();
 
 function getFullpageUserMessage(error) {
   const code = error && error.code ? error.code : null;
@@ -6984,6 +7067,16 @@ async function handleMessage(message, sender) {
       updateSessionCounts();
       result = { ok: true };
       break;
+    case "RECORDING_CLEANUP_SESSION": {
+      const sessionId =
+        message && message.sessionId ? message.sessionId : state.recording.sessionId;
+      const cleanupResult = await cleanupRecordingSessionData(sessionId, {
+        removeArtifacts: true,
+        reason: "download",
+      });
+      result = { ok: true, ...cleanupResult };
+      break;
+    }
     case "RECORDING_STATE_CHANGED":
       if (message && message.state) {
         syncRecordingState(message.state);
