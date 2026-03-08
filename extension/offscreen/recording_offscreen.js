@@ -388,6 +388,13 @@ async function composeFullpageArtifact(captureRunId, isFinal) {
     }
     const artifactKey = `${isFinal ? "fullpage_final" : "fullpage_partial"}_${captureRunId}_${Date.now()}`;
     const blobKey = artifactKey;
+    if (typeof Blob !== "undefined" && !(blob instanceof Blob)) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_STITCH",
+        message: "capture_blobs.blob must be a resolved Blob",
+      };
+    }
     await putOne("capture_blobs", {
       key: blobKey,
       captureRunId,

@@ -1991,8 +1991,9 @@ function formatZipTimestamp(date) {
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
 }
 
-function dataUrlToBlob(dataUrl) {
-  return fetch(dataUrl).then((res) => res.blob());
+async function dataUrlToBlobAsync(dataUrl) {
+  const response = await fetch(dataUrl);
+  return await response.blob();
 }
 
 function getArrayBufferFromUint8Array(bytes) {
@@ -3986,6 +3987,9 @@ async function updateCaptureRun(captureRunId, updates) {
 }
 
 async function persistCaptureTile({ captureRunId, tileIndex, tile, blob }) {
+  if (!blob || (typeof Blob !== "undefined" && !(blob instanceof Blob))) {
+    throw new Error("capture_blobs.blob must be a resolved Blob");
+  }
   const blobKey = `tile_${captureRunId}_${String(tileIndex).padStart(4, "0")}`;
   await ReproIdb.putOne("capture_blobs", {
     key: blobKey,
