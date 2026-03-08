@@ -105,6 +105,17 @@
               </select>
             </label>
           </div>
+          <div class="control-group" data-controls="step">
+            <label>
+              Step Size
+              <select id="stepSize">
+                <option value="sm">Small</option>
+                <option value="md" selected>Medium</option>
+                <option value="lg">Large</option>
+                <option value="xl">XL</option>
+              </select>
+            </label>
+          </div>
           <div class="control-group" data-controls="text">
             <label>
               Size
@@ -199,6 +210,7 @@
         <div id="canvasWrap">
           <canvas id="baseCanvas"></canvas>
           <canvas id="drawCanvas"></canvas>
+          <canvas id="previewCanvas"></canvas>
           <div id="textLayer"></div>
         </div>
       </div>

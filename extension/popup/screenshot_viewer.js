@@ -18,6 +18,7 @@ document.title = `${appName} — ${APP_TAGLINE}`;
 const baseCanvas = document.getElementById("baseCanvas");
 const bootErrorEl = document.getElementById("editor_boot_error");
 const drawCanvas = document.getElementById("drawCanvas");
+const previewCanvas = document.getElementById("previewCanvas");
 const textLayer = document.getElementById("textLayer");
 const canvasWrap = document.getElementById("canvasWrap");
 const stage = document.getElementById("stage");
@@ -41,6 +42,7 @@ const controls = {
   highlightColor: document.getElementById("highlightColor"),
   highlightOpacity: document.getElementById("highlightOpacity"),
   blurStrength: document.getElementById("blurStrength"),
+  stepSize: document.getElementById("stepSize"),
   textSize: document.getElementById("textSize"),
   textFontFamily: document.getElementById("textFontFamily"),
   textWeight: document.getElementById("textWeight"),
@@ -65,6 +67,7 @@ const statusEl = document.getElementById("statusText");
 
 const baseCtx = baseCanvas.getContext("2d", { willReadFrequently: true });
 const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
+const previewCtx = previewCanvas.getContext("2d", { willReadFrequently: true });
 
 const TOOL = {
   pointer: "pointer",
@@ -94,6 +97,10 @@ let dragState = null;
 let editingTextEl = null;
 let stepCounter = 1;
 let isImageLoaded = false;
+let pendingPoint = null;
+let pendingShift = false;
+let rafPending = false;
+let toolPerfStart = null;
 
 let undoStack = [];
 let redoStack = [];
@@ -187,6 +194,13 @@ function setEditorEnabled(enabled) {
     isImageLoaded = false;
   }
   updateHistoryButtons();
+}
+
+function clearPreview() {
+  if (!previewCtx || !previewCanvas) {
+    return;
+  }
+  previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 }
 
 function formatOpacityLabel(value) {
@@ -658,82 +672,100 @@ function handleTextLayerPointerUp(event) {
   activePointerId = null;
 }
 
-function drawHighlightRect(start, end) {
+function drawHighlightRect(start, end, ctx = drawCtx) {
   const width = end.x - start.x;
   const height = end.y - start.y;
-  drawCtx.fillStyle = hexToRgba(
+  ctx.fillStyle = hexToRgba(
     controls.highlightColor.value,
     Number(controls.highlightOpacity.value)
   );
-  drawCtx.fillRect(start.x, start.y, width, height);
+  ctx.fillRect(start.x, start.y, width, height);
 }
 
-function drawRectangle(start, end, lineWidth) {
-  drawCtx.strokeStyle = controls.mainColor.value;
-  drawCtx.lineWidth = lineWidth;
-  drawCtx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
+function drawRectangle(start, end, lineWidth, ctx = drawCtx) {
+  ctx.strokeStyle = controls.mainColor.value;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
 }
 
-function drawArrow(start, end, lineWidth) {
+function drawArrow(start, end, lineWidth, ctx = drawCtx) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const angle = Math.atan2(dy, dx);
   const headLength = Math.max(8, lineWidth * 3);
-  drawCtx.strokeStyle = controls.mainColor.value;
-  drawCtx.lineWidth = lineWidth;
-  drawCtx.lineCap = "round";
-  drawCtx.lineJoin = "round";
-  drawCtx.beginPath();
-  drawCtx.moveTo(start.x, start.y);
-  drawCtx.lineTo(end.x, end.y);
-  drawCtx.stroke();
-  drawCtx.fillStyle = controls.mainColor.value;
-  drawCtx.beginPath();
-  drawCtx.moveTo(end.x, end.y);
-  drawCtx.lineTo(
+  ctx.strokeStyle = controls.mainColor.value;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.fillStyle = controls.mainColor.value;
+  ctx.beginPath();
+  ctx.moveTo(end.x, end.y);
+  ctx.lineTo(
     end.x - headLength * Math.cos(angle - Math.PI / 6),
     end.y - headLength * Math.sin(angle - Math.PI / 6)
   );
-  drawCtx.lineTo(
+  ctx.lineTo(
     end.x - headLength * Math.cos(angle + Math.PI / 6),
     end.y - headLength * Math.sin(angle + Math.PI / 6)
   );
-  drawCtx.closePath();
-  drawCtx.fill();
+  ctx.closePath();
+  ctx.fill();
 }
 
-function drawEllipse(start, end) {
+function drawEllipse(start, end, ctx = drawCtx) {
   const cx = (start.x + end.x) / 2;
   const cy = (start.y + end.y) / 2;
   const rx = Math.abs(end.x - start.x) / 2;
   const ry = Math.abs(end.y - start.y) / 2;
-  drawCtx.strokeStyle = controls.mainColor.value;
-  drawCtx.lineWidth = Number(controls.circleWidth.value);
-  drawCtx.beginPath();
-  drawCtx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-  drawCtx.stroke();
+  ctx.strokeStyle = controls.mainColor.value;
+  ctx.lineWidth = Number(controls.circleWidth.value);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function getStepStyle() {
+  const size = controls.stepSize ? controls.stepSize.value : "md";
+  switch (size) {
+    case "sm":
+      return { radius: 10, fontSize: 11, size };
+    case "lg":
+      return { radius: 18, fontSize: 16, size };
+    case "xl":
+      return { radius: 22, fontSize: 18, size };
+    default:
+      return { radius: 14, fontSize: 14, size: "md" };
+  }
 }
 
 function drawStepMarker(point) {
-  const radius = 14;
+  const { radius, fontSize, size } = getStepStyle();
   drawCtx.fillStyle = controls.mainColor.value;
   drawCtx.beginPath();
   drawCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
   drawCtx.fill();
   drawCtx.fillStyle = "#ffffff";
-  drawCtx.font = `bold 14px system-ui`;
+  drawCtx.font = `bold ${fontSize}px system-ui`;
   drawCtx.textAlign = "center";
   drawCtx.textBaseline = "middle";
   drawCtx.fillText(String(stepCounter), point.x, point.y);
+  console.log("[EDITOR][STEP_ADD]", { stepNumber: stepCounter, stepSize: size });
   stepCounter += 1;
 }
 
-function drawBlurPreview(start, end) {
-  drawCtx.strokeStyle = "#64748b";
-  drawCtx.lineWidth = 1;
-  drawCtx.setLineDash([4, 4]);
-  drawCtx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
-  drawCtx.setLineDash([]);
+function drawBlurPreview(start, end, ctx = previewCtx) {
+  if (!ctx) {
+    return;
+  }
+  ctx.strokeStyle = "#64748b";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
+  ctx.setLineDash([]);
 }
 
 function applyBlurRegion(start, end) {
@@ -755,6 +787,7 @@ function applyBlurRegion(start, end) {
 }
 
 function startDrawing(point) {
+  toolPerfStart = performance.now();
   if (currentTool === TOOL.pen) {
     drawCtx.strokeStyle = controls.mainColor.value;
     drawCtx.lineWidth = Number(controls.penWidth.value);
@@ -767,12 +800,7 @@ function startDrawing(point) {
       currentTool
     )
   ) {
-    previewImageData = drawCtx.getImageData(
-      0,
-      0,
-      imageSize.width,
-      imageSize.height
-    );
+    clearPreview();
   }
   isDrawing = true;
   startPoint = point;
@@ -806,22 +834,19 @@ function updateDrawing(point, shiftKey = false) {
     drawCtx.stroke();
     return;
   }
-  if (!previewImageData) {
-    return;
-  }
-  drawCtx.putImageData(previewImageData, 0, 0);
+  clearPreview();
   if (currentTool === TOOL.highlight) {
-    drawHighlightRect(startPoint, point);
+    drawHighlightRect(startPoint, point, previewCtx);
   } else if (currentTool === TOOL.circle) {
-    drawEllipse(startPoint, point);
+    drawEllipse(startPoint, point, previewCtx);
   } else if (currentTool === TOOL.rectangle) {
     const end = constrainPoint(startPoint, point, "square", shiftKey);
-    drawRectangle(startPoint, end, Number(controls.penWidth.value));
+    drawRectangle(startPoint, end, Number(controls.penWidth.value), previewCtx);
   } else if (currentTool === TOOL.arrow) {
     const end = constrainPoint(startPoint, point, "axis", shiftKey);
-    drawArrow(startPoint, end, Number(controls.penWidth.value));
+    drawArrow(startPoint, end, Number(controls.penWidth.value), previewCtx);
   } else if (currentTool === TOOL.blur) {
-    drawBlurPreview(startPoint, point);
+    drawBlurPreview(startPoint, point, previewCtx);
   }
 }
 
@@ -834,7 +859,7 @@ function finishDrawing(point, shiftKey = false) {
     pushState();
     console.log("[EDITOR][ANNOTATION_ADD]", { toolType: "pen", imageSpace: true });
   } else if (previewImageData && startPoint) {
-    drawCtx.putImageData(previewImageData, 0, 0);
+    clearPreview();
     const distanceX = Math.abs(point.x - startPoint.x);
     const distanceY = Math.abs(point.y - startPoint.y);
     if (distanceX > 1 || distanceY > 1) {
@@ -858,9 +883,17 @@ function finishDrawing(point, shiftKey = false) {
       });
     }
   }
-  previewImageData = null;
   isDrawing = false;
   startPoint = null;
+  if (toolPerfStart) {
+    const durationMs = Math.round(performance.now() - toolPerfStart);
+    console.log("[EDITOR][TOOL_PERF]", {
+      toolType: currentTool,
+      phase: "commit",
+      durationMs,
+    });
+    toolPerfStart = null;
+  }
 }
 
 async function loadScreenshot() {
@@ -902,9 +935,12 @@ async function loadScreenshot() {
       baseCanvas.height = imageSize.height;
       drawCanvas.width = imageSize.width;
       drawCanvas.height = imageSize.height;
+      previewCanvas.width = imageSize.width;
+      previewCanvas.height = imageSize.height;
       baseCtx.clearRect(0, 0, imageSize.width, imageSize.height);
       baseCtx.drawImage(image, 0, 0);
       drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+      previewCtx.clearRect(0, 0, imageSize.width, imageSize.height);
       zoom = 1;
       stepCounter = 1;
       updateScale();
@@ -957,9 +993,12 @@ async function loadScreenshot() {
     baseCanvas.height = imageSize.height;
     drawCanvas.width = imageSize.width;
     drawCanvas.height = imageSize.height;
+    previewCanvas.width = imageSize.width;
+    previewCanvas.height = imageSize.height;
     baseCtx.clearRect(0, 0, imageSize.width, imageSize.height);
     baseCtx.drawImage(image, 0, 0);
     drawCtx.clearRect(0, 0, imageSize.width, imageSize.height);
+    previewCtx.clearRect(0, 0, imageSize.width, imageSize.height);
     zoom = 1;
     stepCounter = 1;
     updateScale();
@@ -1079,7 +1118,20 @@ drawCanvas.addEventListener("pointermove", (event) => {
     return;
   }
   const point = getCanvasPoint(event);
-  updateDrawing(point, event.shiftKey);
+  pendingPoint = point;
+  pendingShift = event.shiftKey;
+  if (rafPending) {
+    return;
+  }
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    if (!pendingPoint) {
+      return;
+    }
+    updateDrawing(pendingPoint, pendingShift);
+    pendingPoint = null;
+  });
 });
 
 drawCanvas.addEventListener("pointerup", (event) => {
@@ -1088,16 +1140,17 @@ drawCanvas.addEventListener("pointerup", (event) => {
   }
   const point = getCanvasPoint(event);
   finishDrawing(point, event.shiftKey);
+  pendingPoint = null;
+  rafPending = false;
   activePointerId = null;
 });
 
 drawCanvas.addEventListener("pointercancel", () => {
-  if (previewImageData) {
-    drawCtx.putImageData(previewImageData, 0, 0);
-  }
+  clearPreview();
   isDrawing = false;
   startPoint = null;
-  previewImageData = null;
+  pendingPoint = null;
+  rafPending = false;
   activePointerId = null;
 });
 
@@ -1158,13 +1211,23 @@ if (buttons.resetSteps) {
   buttons.resetSteps.addEventListener("click", () => {
     stepCounter = 1;
     setStatus("Step numbers reset.", "success", 1500);
+    console.log("[EDITOR][STEP_RESET]", { nextStep: stepCounter });
   });
 }
 
 buttons.copy.addEventListener("click", async () => {
-  console.log("[EDITOR][COPY_REQUEST]", { isImageLoaded });
+  console.log("[EDITOR][COPY_REQUEST]", {
+    focused: document.hasFocus(),
+    isImageLoaded,
+  });
   if (!isImageLoaded) {
     setStatus("No screenshot to copy.", "error");
+    return;
+  }
+  if (!document.hasFocus()) {
+    const message = "Click the editor tab, then try Copy again.";
+    setStatus(message, "error");
+    console.log("[EDITOR][COPY_RESULT]", { ok: false, message });
     return;
   }
   if (editingTextEl) {
@@ -1184,10 +1247,12 @@ buttons.copy.addEventListener("click", async () => {
     ]);
     setStatus("Copied!", "success", 2000);
     console.log("[EDITOR][COPY_PNG]", { ok: true });
+    console.log("[EDITOR][COPY_RESULT]", { ok: true });
   } catch (error) {
     const message = error && error.message ? error.message : "Unknown error";
     setStatus(`Copy failed: ${message}. Use Download.`, "error");
     console.log("[EDITOR][COPY_PNG]", { ok: false });
+    console.log("[EDITOR][COPY_RESULT]", { ok: false, message });
   }
 });
 
