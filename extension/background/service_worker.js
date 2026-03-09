@@ -22,6 +22,16 @@ try {
 
 try {
   importScripts(
+    chrome.runtime.getURL("src/reporting/reportConfig.js"),
+    chrome.runtime.getURL("src/reporting/reportSessionModel.js"),
+    chrome.runtime.getURL("src/reporting/reportSessionManager.js")
+  );
+} catch (error) {
+  console.warn("Report modules unavailable:", error);
+}
+
+try {
+  importScripts(
     chrome.runtime.getURL("lib/jszip.min.js"),
     chrome.runtime.getURL("lib/zipBuilderChunked.js"),
     chrome.runtime.getURL("lib/idb.js"),
@@ -1042,6 +1052,17 @@ function isIdbAvailable() {
 
 function isNdjsonAvailable() {
   return Boolean(globalThis.NdjsonExporter);
+}
+
+function getReportConfig() {
+  const config = globalThis.ReportConfig || {};
+  return {
+    enabled: config.REPORTS_ENABLED === true,
+    version:
+      typeof config.REPORTS_VERSION === "string"
+        ? config.REPORTS_VERSION
+        : "1.1.0-scaffold",
+  };
 }
 
 function buildPartId(sessionId, partNumber) {
@@ -2575,6 +2596,35 @@ function createSession(mode, tab) {
     monotonic: monotonicBaseline.monotonic,
     monotonic_available: monotonicBaseline.monotonic_available,
   };
+  try {
+    const reportConfig = getReportConfig();
+    if (
+      reportConfig.enabled &&
+      globalThis.ReportSessionManager &&
+      typeof globalThis.ReportSessionManager.createSession === "function"
+    ) {
+      globalThis.ReportSessionManager.createSession({
+        sessionId: session.session_id,
+        startUrl: tab && tab.url ? tab.url : "",
+        currentUrl: tab && tab.url ? tab.url : "",
+        browserInfo: {
+          userAgent:
+            typeof navigator !== "undefined" ? navigator.userAgent || "" : "",
+          platform:
+            typeof navigator !== "undefined" ? navigator.platform || "" : "",
+          language:
+            typeof navigator !== "undefined" ? navigator.language || "" : "",
+        },
+        viewport: { width: 0, height: 0 },
+        meta: {
+          reportEnabled: true,
+          reportVersion: reportConfig.version,
+        },
+      });
+    }
+  } catch (error) {
+    // Report session is optional; ignore failures.
+  }
 }
 
 function ensureSessionForMode(mode, tab) {
@@ -2965,6 +3015,12 @@ async function buildPartExportData(context) {
       (sessionExport && sessionExport.filters_summary) ||
       buildFiltersSummary(activeFilters),
   };
+  const reportConfig = getReportConfig();
+  exportMetadata.report = {
+    enabled: reportConfig.enabled,
+    version: reportConfig.version,
+    hasSessionData: false,
+  };
   const sessionId = sessionExport ? sessionExport.session_id : null;
   const startedAtIso = sessionExport ? sessionExport.created_at : null;
   const endedAtIso = sessionExport ? sessionExport.ended_at : null;
@@ -3141,6 +3197,12 @@ async function buildEvidenceExportData(context) {
       session && session.filters_summary
         ? session.filters_summary
         : buildFiltersSummary(activeFilters),
+  };
+  const reportConfig = getReportConfig();
+  exportMetadata.report = {
+    enabled: reportConfig.enabled,
+    version: reportConfig.version,
+    hasSessionData: false,
   };
   const networkCapped = state.network.capped;
   const rawNetworkCount = Object.keys(state.network.requests).length;
@@ -4280,7 +4342,46 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       });
     }
-    baseItems = [...logItems, ...metaItems, ...summaryItems];
+    const reportItems = [];
+    let reportMeta = null;
+    try {
+      const reportConfig = getReportConfig();
+      reportMeta = {
+        enabled: reportConfig.enabled,
+        version: reportConfig.version,
+        hasSessionData: false,
+      };
+      if (
+        reportConfig.enabled &&
+        globalThis.ReportSessionManager &&
+        typeof globalThis.ReportSessionManager.getSessionData === "function"
+      ) {
+        const reportSession = globalThis.ReportSessionManager.getSessionData();
+        if (reportSession) {
+          reportMeta.hasSessionData = true;
+          reportItems.push({
+            path: "reports/report_session.json",
+            getData: () => JSON.stringify(reportSession, null, 2),
+            options: { date: zipDate },
+          });
+        }
+      }
+    } catch (error) {
+      const reportConfig = getReportConfig();
+      reportMeta = {
+        enabled: reportConfig.enabled,
+        version: reportConfig.version,
+        hasSessionData: false,
+        packagingError: true,
+      };
+    }
+    if (data.exportMetadata && reportMeta) {
+      data.exportMetadata.report = {
+        ...data.exportMetadata.report,
+        ...reportMeta,
+      };
+    }
+    baseItems = [...logItems, ...metaItems, ...summaryItems, ...reportItems];
     if (!EXTENDED_EXPORT) {
       console.info("[EXPORT] Minimal team export mode active");
     }
