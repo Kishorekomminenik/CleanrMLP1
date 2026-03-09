@@ -884,6 +884,22 @@ function clearStatusError() {
   }
 }
 
+function clearRecordingStartErrorMessage() {
+  if (!statusElements.message) {
+    return;
+  }
+  const message = statusElements.message.textContent || "";
+  if (
+    message.includes("Error starting tab capture") ||
+    message.includes("getUserMedia failed")
+  ) {
+    setStatus(statusElements.message, "-", "default");
+    if (controlsStatus) {
+      controlsStatus.classList.add("is-hidden");
+    }
+  }
+}
+
 function showRecordingInfo(message) {
   if (statusElements.download) {
     setStatus(statusElements.download, message, "success");
@@ -2079,6 +2095,13 @@ function updateStatusUI(state) {
   setNetworkButtons(state);
   applySessionLock(state);
   applyStatusMessage(state);
+  if (
+    recordingLiveState &&
+    (recordingLiveState.state === "recording" ||
+      recordingLiveState.state === "paused")
+  ) {
+    clearRecordingStartErrorMessage();
+  }
 
   const isRecordingMode = currentMode === "recording";
   if (buttons.download) {
@@ -2329,6 +2352,7 @@ async function handleRecordingStart() {
   if (st && st.ok) {
     recordingLiveState = st;
   }
+  clearRecordingStartErrorMessage();
   showRecordingInfo("Recording started.");
   recordingControlInFlight = false;
   setRecordingButtons({ recordingStatus: st?.state || "recording" });
