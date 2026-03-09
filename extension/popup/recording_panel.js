@@ -1,9 +1,11 @@
 const timerEl = document.getElementById("panel_timer");
 const stateEl = document.getElementById("panel_state");
 const messageEl = document.getElementById("panel_message");
+const startBtn = document.getElementById("panel_start");
 const pauseBtn = document.getElementById("panel_pause");
 const resumeBtn = document.getElementById("panel_resume");
 const stopBtn = document.getElementById("panel_stop");
+const downloadBtn = document.getElementById("panel_download");
 const closeBtn = document.getElementById("closePanel");
 
 async function send(type, payload = {}) {
@@ -40,6 +42,69 @@ function formatElapsedWithPauses(session) {
   return `${minutes}:${seconds}`;
 }
 
+function isRestrictedUrl(url) {
+  if (!url) {
+    return true;
+  }
+  return (
+    url.startsWith("chrome://") ||
+    url.startsWith("edge://") ||
+    url.startsWith("chrome-extension://") ||
+    url.startsWith("https://chrome.google.com/webstore") ||
+    url.startsWith("https://microsoftedge.microsoft.com/addons")
+  );
+}
+
+function getActiveTab() {
+  return chrome.tabs
+    .query({ active: true, currentWindow: true })
+    .then((tabs) => (Array.isArray(tabs) ? tabs[0] : null))
+    .catch(() => null);
+}
+
+function getMediaStreamId(tabId) {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(streamId);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function pickRecordingMimeType() {
+  if (!window.MediaRecorder || typeof MediaRecorder.isTypeSupported !== "function") {
+    return "";
+  }
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  for (const candidate of candidates) {
+    if (MediaRecorder.isTypeSupported(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function formatExportTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}-${hours}${minutes}${seconds}`;
+}
+
 function resolvePanelStateLabel({ liveState, sessionState, statusMessage }) {
   const message = statusMessage || "";
   const lower = message.toLowerCase();
@@ -74,9 +139,11 @@ async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
     messageEl.textContent = "Recording window closed.";
+    startBtn.disabled = true;
     pauseBtn.disabled = true;
     resumeBtn.disabled = true;
     stopBtn.disabled = true;
+    downloadBtn.disabled = true;
     return;
   }
   const state = res.state;
@@ -106,9 +173,17 @@ async function refreshStatus() {
     });
     const isCapturing = live.state === "recording";
     const isPaused = live.state === "paused";
+    const isTransition =
+      live.state === "starting" ||
+      live.state === "stopping" ||
+      sessionState === "finalizing";
+    startBtn.disabled = isCapturing || isPaused || isTransition;
     pauseBtn.disabled = !isCapturing;
     resumeBtn.disabled = !isPaused;
     stopBtn.disabled = !(isCapturing || isPaused);
+    const hasData =
+      Boolean(live.hasData) || Boolean(state.artifacts?.hasRecording);
+    downloadBtn.disabled = isCapturing || isPaused || isTransition || !hasData;
     return;
   }
 
@@ -120,10 +195,55 @@ async function refreshStatus() {
   });
   const isCapturing = sessionState === "capturing";
   const isPaused = sessionState === "paused";
+  startBtn.disabled = isCapturing || isPaused || sessionState === "finalizing";
   pauseBtn.disabled = !isCapturing;
   resumeBtn.disabled = !isPaused;
   stopBtn.disabled = !(isCapturing || isPaused);
+  downloadBtn.disabled =
+    !state.artifacts?.hasRecording || isCapturing || isPaused;
 }
+
+startBtn.addEventListener("click", async () => {
+  messageEl.textContent = "Starting recording...";
+  const tab = await getActiveTab();
+  if (!tab || !tab.id) {
+    messageEl.textContent = "No active tab.";
+    return;
+  }
+  if (isRestrictedUrl(tab.url)) {
+    messageEl.textContent = "Recording not supported on this page.";
+    return;
+  }
+  if (!chrome?.tabCapture?.getMediaStreamId) {
+    messageEl.textContent = "tabCapture.getMediaStreamId unavailable.";
+    return;
+  }
+  let streamId = null;
+  try {
+    streamId = await getMediaStreamId(tab.id);
+  } catch (error) {
+    messageEl.textContent =
+      error && error.message ? `Start failed: ${error.message}` : "Start failed.";
+    return;
+  }
+  if (!streamId) {
+    messageEl.textContent = "Start failed: no stream id.";
+    return;
+  }
+  const preferredMimeType = pickRecordingMimeType() || "video/webm";
+  const res = await send("RECORDING_START", {
+    tabId: tab.id,
+    streamId,
+    mimeType: preferredMimeType,
+  });
+  if (!res?.ok) {
+    messageEl.textContent = res?.error
+      ? `Failed to start: ${res.error}`
+      : "Failed to start recording.";
+    return;
+  }
+  await refreshStatus();
+});
 
 pauseBtn.addEventListener("click", async () => {
   await send("RECORDING_PAUSE");
@@ -136,6 +256,33 @@ resumeBtn.addEventListener("click", async () => {
 stopBtn.addEventListener("click", async () => {
   await send("RECORDING_STOP");
   await refreshStatus();
+});
+downloadBtn.addEventListener("click", async () => {
+  messageEl.textContent = "Preparing download...";
+  const res = await send("RECORDING_EXPORT_WEBM");
+  if (!res?.ok || !res.blobUrl) {
+    messageEl.textContent = res?.error || "No recording available.";
+    return;
+  }
+  if (!chrome.downloads?.download) {
+    messageEl.textContent = "Downloads API unavailable.";
+    return;
+  }
+  const exportTimestamp = formatExportTimestamp(new Date());
+  chrome.downloads.download(
+    {
+      url: res.blobUrl,
+      filename: `qa-session-video-${exportTimestamp}.webm`,
+      saveAs: false,
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        messageEl.textContent = chrome.runtime.lastError.message;
+        return;
+      }
+      messageEl.textContent = "Download started.";
+    }
+  );
 });
 closeBtn.addEventListener("click", () => window.close());
 

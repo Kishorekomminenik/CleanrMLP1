@@ -2193,6 +2193,12 @@ async function handleFullPageScreenshot() {
   beginCaptureAfterDismissal("full", { tabId });
 }
 
+async function handleLauncherCapture(mode) {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabId = activeTab && activeTab.id ? activeTab.id : null;
+  beginCaptureAfterDismissal(mode, { tabId });
+}
+
 function beginCaptureAfterDismissal(mode, payload) {
   console.log("[CAPTURE][POPUP][REQUESTED]", { mode });
   const port = chrome.runtime.connect({ name: "capture-request" });
@@ -2879,6 +2885,13 @@ async function handleRedactionToggle(checked) {
 async function handleOpenRecordingPanel() {
   await send("OPEN_RECORDING_PANEL");
   await refreshStatus();
+  window.close();
+}
+
+async function handleOpenLogsPanel() {
+  await send("OPEN_LOGS_PANEL");
+  await refreshStatus();
+  window.close();
 }
 
 function routeAction(action, el) {
@@ -2901,6 +2914,18 @@ function routeAction(action, el) {
     return;
   }
   switch (action) {
+    case "launcher:snap":
+      handleLauncherCapture("snap");
+      break;
+    case "launcher:full":
+      handleLauncherCapture("full");
+      break;
+    case "launcher:record":
+      handleOpenRecordingPanel();
+      break;
+    case "launcher:logs":
+      handleOpenLogsPanel();
+      break;
     case "help:open":
       openHelp();
       break;
@@ -2927,6 +2952,9 @@ function routeAction(action, el) {
       break;
     case "recording:panel":
       handleOpenRecordingPanel();
+      break;
+    case "logs:panel":
+      handleOpenLogsPanel();
       break;
     case "network:start":
       handleNetworkStart();

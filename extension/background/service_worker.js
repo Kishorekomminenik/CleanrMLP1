@@ -235,6 +235,7 @@ let statusMessage = null;
 let offscreenReady = false;
 let offscreenCreating = null;
 let recordingPanelWindowId = null;
+let logsPanelWindowId = null;
 let exportPhase = null;
 let exportJob = null;
 
@@ -2345,11 +2346,30 @@ async function openRecordingPanelWindow() {
   const created = await chrome.windows.create({
     url: chrome.runtime.getURL("popup/recording_panel.html"),
     type: "popup",
-    width: 340,
-    height: 240,
+    width: 360,
+    height: 300,
     focused: true,
   });
   recordingPanelWindowId = created && created.id ? created.id : null;
+}
+
+async function openLogsPanelWindow() {
+  if (logsPanelWindowId) {
+    try {
+      await chrome.windows.update(logsPanelWindowId, { focused: true });
+      return;
+    } catch (error) {
+      logsPanelWindowId = null;
+    }
+  }
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL("popup/logs_panel.html"),
+    type: "popup",
+    width: 360,
+    height: 320,
+    focused: true,
+  });
+  logsPanelWindowId = created && created.id ? created.id : null;
 }
 
 function closeRecordingPanelWindowIfOpen() {
@@ -2365,6 +2385,9 @@ function closeRecordingPanelWindowIfOpen() {
 chrome.windows.onRemoved.addListener((id) => {
   if (id === recordingPanelWindowId) {
     recordingPanelWindowId = null;
+  }
+  if (id === logsPanelWindowId) {
+    logsPanelWindowId = null;
   }
 });
 
@@ -7437,6 +7460,10 @@ async function handleMessage(message, sender) {
   switch (normalizedMessage.type) {
     case "OPEN_RECORDING_PANEL":
       await openRecordingPanelWindow();
+      result = { ok: true };
+      break;
+    case "OPEN_LOGS_PANEL":
+      await openLogsPanelWindow();
       result = { ok: true };
       break;
     case "OFFSCREEN_READY":

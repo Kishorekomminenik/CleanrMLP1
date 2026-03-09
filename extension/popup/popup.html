@@ -8,7 +8,34 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <div class="container">
+    <div class="launcher-shell">
+      <div class="launcher-card">
+        <div class="launcher-header">
+          <div class="launcher-brand">
+            <div class="launcher-title">Repro</div>
+            <div class="launcher-subtitle">QA capture</div>
+          </div>
+          <div class="launcher-badge">Local only</div>
+        </div>
+        <div class="launcher-actions">
+          <button class="launcher-btn primary" type="button" data-action="launcher:snap">
+            Snap
+          </button>
+          <button class="launcher-btn" type="button" data-action="launcher:full">
+            Full
+          </button>
+          <button class="launcher-btn" type="button" data-action="launcher:record">
+            Record
+          </button>
+          <button class="launcher-btn" type="button" data-action="launcher:logs">
+            Logs
+          </button>
+        </div>
+        <p class="launcher-hint">Fast actions open in place. Panels stay visible.</p>
+      </div>
+    </div>
+
+    <div class="container legacy-shell" aria-hidden="true">
       <header class="app-header">
         <div class="header-row">
           <div class="app-title">

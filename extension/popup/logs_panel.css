@@ -43,8 +43,8 @@ body {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -63,7 +63,7 @@ body {
 }
 
 .value {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -76,9 +76,13 @@ body {
 
 .button-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.button-row:first-of-type {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 button {
@@ -110,4 +114,9 @@ button.ghost {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.status-hint {
+  font-size: 11px;
+  color: #64748b;
 }
