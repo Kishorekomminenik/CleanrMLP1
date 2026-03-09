@@ -1407,6 +1407,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     "RECORDING_STOP",
     "RECORDING_EXPORT_WEBM",
     "RECORDING_RESET",
+    "RECORDING_CLEANUP_SESSION",
     "DOWNLOAD_BLOB",
     "FULLPAGE_COMPOSE_PARTIAL",
     "FULLPAGE_COMPOSE_FINAL",
@@ -1454,6 +1455,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "RECORDING_RESET":
           resetRecording();
           result = { ok: true };
+          break;
+        case "RECORDING_CLEANUP_SESSION":
+          // Cleanup is handled in the service worker/IDB layer.
+          result = { ok: true, ignored: true };
           break;
         case "DOWNLOAD_BLOB": {
           const blob = message.blob;
