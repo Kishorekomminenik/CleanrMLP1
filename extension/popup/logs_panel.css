@@ -138,8 +138,13 @@ body[data-embedded="true"] .panel {
   border: none;
   box-shadow: none;
   padding: 10px 12px 12px 12px;
+  background: transparent;
 }
 
 body[data-embedded="true"] .panel-header {
   display: none;
+}
+
+body[data-embedded="true"] {
+  background: transparent;
 }

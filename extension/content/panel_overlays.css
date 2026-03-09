@@ -75,11 +75,11 @@
 }
 
 .repro-panel-overlay.repro-panel-recording .repro-panel-frame {
-  height: 210px;
+  height: 240px;
 }
 
 .repro-panel-overlay.repro-panel-logs .repro-panel-frame {
-  height: 240px;
+  height: 270px;
 }
 
 @media (max-width: 380px) {
