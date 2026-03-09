@@ -2137,6 +2137,16 @@ function assertZipEocd(bytes) {
   throw error;
 }
 
+function computeFnv1a(bytes) {
+  let hash = 0x811c9dc5;
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i = 0; i < data.length; i += 1) {
+    hash ^= data[i];
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return `fnv1a32:${hash.toString(16).padStart(8, "0")}`;
+}
+
 function isRestrictedUrl(url) {
   if (!url) {
     return true;
@@ -4024,11 +4034,19 @@ async function runEvidenceZipExport(context) {
       },
     });
     console.log("[EXPORT][ZIP_BYTES]", { bytes: zipBytes.byteLength });
+    console.log("[EXPORT][ZIP_CHECKSUM_BYTES]", {
+      checksum: computeFnv1a(zipBytes),
+      bytes: zipBytes.byteLength,
+    });
     assertZipSignature(zipBytes);
     assertZipEocd(zipBytes);
     console.log("[EXPORT][ZIP_SIGNATURE_OK]", { bytes: zipBytes.byteLength });
     const zipArrayBuffer = getArrayBufferFromUint8Array(zipBytes);
     console.log("[EXPORT][ZIP_ARRAYBUFFER]", {
+      bytes: zipArrayBuffer.byteLength,
+    });
+    console.log("[EXPORT][ZIP_CHECKSUM_ARRAYBUFFER]", {
+      checksum: computeFnv1a(new Uint8Array(zipArrayBuffer)),
       bytes: zipArrayBuffer.byteLength,
     });
     logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });

@@ -40,12 +40,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? arrayBuffer.byteLength
           : 0;
       const blob = new Blob([arrayBuffer], { type: mimeType });
+      let checksum = null;
+      try {
+        const payload = new Uint8Array(arrayBuffer);
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < payload.length; i += 1) {
+          hash ^= payload[i];
+          hash = (hash * 0x01000193) >>> 0;
+        }
+        checksum = `fnv1a32:${hash.toString(16).padStart(8, "0")}`;
+      } catch (error) {
+        checksum = null;
+      }
       console.log("[BROKER][DOWNLOAD_BYTES]", {
         filename,
         mimeType,
         bytes: byteLength,
         nonEmpty: byteLength > 0,
         blobSize: blob.size,
+        checksum,
       });
       const url = URL.createObjectURL(blob);
       chrome.downloads.download(
