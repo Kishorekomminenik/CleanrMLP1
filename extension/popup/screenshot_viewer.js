@@ -1681,20 +1681,43 @@ if (buttons.copyCompressed) {
       return;
     }
     try {
-      const result = await exportCompressedAnnotatedBlob();
+      let result = await exportCompressedAnnotatedBlob();
       if (!result || !result.blob) {
         throw new Error("Failed to create compressed image.");
       }
-      await navigator.clipboard.write([
-        new ClipboardItem({ [result.mimeType]: result.blob }),
-      ]);
-      setStatus("Copied (small)!", "success", 2000);
-      console.log("[EDITOR][COPY_COMPRESSED]", {
-        ok: true,
-        bytes: result.blob.size,
-        mimeType: result.mimeType,
-        scale: result.scale,
-      });
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [result.mimeType]: result.blob }),
+        ]);
+        setStatus("Copied (small)!", "success", 2000);
+        console.log("[EDITOR][COPY_COMPRESSED]", {
+          ok: true,
+          bytes: result.blob.size,
+          mimeType: result.mimeType,
+          scale: result.scale,
+        });
+        return;
+      } catch (error) {
+        if (result.mimeType !== "image/jpeg") {
+          result = await exportCompressedAnnotatedBlob({
+            mimeType: "image/jpeg",
+          });
+        }
+        if (result && result.blob) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ [result.mimeType]: result.blob }),
+          ]);
+          setStatus("Copied (small)!", "success", 2000);
+          console.log("[EDITOR][COPY_COMPRESSED]", {
+            ok: true,
+            bytes: result.blob.size,
+            mimeType: result.mimeType,
+            scale: result.scale,
+          });
+          return;
+        }
+        throw error;
+      }
     } catch (error) {
       const message = error && error.message ? error.message : "Unknown error";
       setStatus(`Copy failed: ${message}. Use Download.`, "error");

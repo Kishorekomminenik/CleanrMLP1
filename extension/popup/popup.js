@@ -2883,15 +2883,37 @@ async function handleRedactionToggle(checked) {
 }
 
 async function handleOpenRecordingPanel() {
-  await send("OPEN_RECORDING_PANEL");
+  const tab = await getActiveTab();
+  const response = await send("OPEN_RECORDING_PANEL", {
+    tabId: tab && tab.id ? tab.id : null,
+  });
   await refreshStatus();
-  window.close();
+  if (response && response.ok) {
+    window.close();
+    return;
+  }
+  setStatus(
+    statusElements.message,
+    response && response.error ? response.error : "Failed to open recording panel.",
+    "error"
+  );
 }
 
 async function handleOpenLogsPanel() {
-  await send("OPEN_LOGS_PANEL");
+  const tab = await getActiveTab();
+  const response = await send("OPEN_LOGS_PANEL", {
+    tabId: tab && tab.id ? tab.id : null,
+  });
   await refreshStatus();
-  window.close();
+  if (response && response.ok) {
+    window.close();
+    return;
+  }
+  setStatus(
+    statusElements.message,
+    response && response.error ? response.error : "Failed to open logs panel.",
+    "error"
+  );
 }
 
 function routeAction(action, el) {
