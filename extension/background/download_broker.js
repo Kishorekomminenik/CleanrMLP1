@@ -1,3 +1,18 @@
+const activeDownloads = new Map();
+
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta || typeof delta.id !== "number") {
+    return;
+  }
+  if (delta.state && (delta.state.current === "complete" || delta.state.current === "interrupted")) {
+    const url = activeDownloads.get(delta.id);
+    if (url) {
+      URL.revokeObjectURL(url);
+      activeDownloads.delete(delta.id);
+    }
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
     return false;
@@ -48,12 +63,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
             return;
           }
+          activeDownloads.set(downloadId, url);
           sendResponse({ ok: true, downloadId });
         }
       );
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-      }, 4000);
     } catch (error) {
       sendResponse({
         ok: false,
