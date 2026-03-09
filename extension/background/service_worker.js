@@ -2113,6 +2113,30 @@ function assertZipSignature(bytes) {
   }
 }
 
+function assertZipEocd(bytes) {
+  if (!bytes || bytes.length < 22) {
+    const error = new Error("ZIP generation failed (missing EOCD).");
+    error.userMessage = "ZIP generation failed (missing EOCD).";
+    error.debugCode = "zip_missing_eocd";
+    throw error;
+  }
+  const tailScan = Math.max(0, bytes.length - 1024);
+  for (let i = bytes.length - 4; i >= tailScan; i -= 1) {
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x05 &&
+      bytes[i + 3] === 0x06
+    ) {
+      return;
+    }
+  }
+  const error = new Error("ZIP generation failed (missing EOCD).");
+  error.userMessage = "ZIP generation failed (missing EOCD).";
+  error.debugCode = "zip_missing_eocd";
+  throw error;
+}
+
 function isRestrictedUrl(url) {
   if (!url) {
     return true;
@@ -4001,8 +4025,12 @@ async function runEvidenceZipExport(context) {
     });
     console.log("[EXPORT][ZIP_BYTES]", { bytes: zipBytes.byteLength });
     assertZipSignature(zipBytes);
+    assertZipEocd(zipBytes);
     console.log("[EXPORT][ZIP_SIGNATURE_OK]", { bytes: zipBytes.byteLength });
     const zipArrayBuffer = getArrayBufferFromUint8Array(zipBytes);
+    console.log("[EXPORT][ZIP_ARRAYBUFFER]", {
+      bytes: zipArrayBuffer.byteLength,
+    });
     logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });
     reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 

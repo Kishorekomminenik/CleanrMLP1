@@ -39,13 +39,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         arrayBuffer && typeof arrayBuffer.byteLength === "number"
           ? arrayBuffer.byteLength
           : 0;
+      const blob = new Blob([arrayBuffer], { type: mimeType });
       console.log("[BROKER][DOWNLOAD_BYTES]", {
         filename,
         mimeType,
         bytes: byteLength,
         nonEmpty: byteLength > 0,
+        blobSize: blob.size,
       });
-      const blob = new Blob([arrayBuffer], { type: mimeType });
       const url = URL.createObjectURL(blob);
       chrome.downloads.download(
         {
