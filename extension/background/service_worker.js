@@ -1358,6 +1358,12 @@ async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
   if (!(arrayBuffer instanceof ArrayBuffer)) {
     throw new Error("Missing download bytes.");
   }
+  console.log("[EXPORT][BROKER_REQUEST]", {
+    filename,
+    mimeType: mimeType || "application/octet-stream",
+    bytes: arrayBuffer.byteLength,
+    nonEmpty: arrayBuffer.byteLength > 0,
+  });
   const response = await new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       {
@@ -1903,6 +1909,46 @@ async function buildEntriesJsonBlob(options) {
   }
   pushChunk("]}");
   return { blob: new Blob(parts, { type: "application/json" }), size };
+}
+
+async function buildNdjsonBlobFromEntries(options) {
+  const entries = Array.isArray(options.entries) ? options.entries : [];
+  const maxBytes =
+    typeof options.maxBytes === "number" ? options.maxBytes : null;
+  const yieldEvery =
+    typeof options.yieldEvery === "number" ? options.yieldEvery : JSON_BUILD_YIELD_EVERY;
+  const redactEntry =
+    typeof options.redactEntry === "function" ? options.redactEntry : null;
+  const onEntry =
+    typeof options.onEntry === "function" ? options.onEntry : null;
+  const parts = [];
+  let size = 0;
+  let count = 0;
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    if (onEntry) {
+      onEntry(entry);
+    }
+    const payload = redactEntry ? redactEntry(entry) : entry;
+    const line = `${JSON.stringify(payload)}\n`;
+    size += line.length;
+    if (maxBytes && size > maxBytes) {
+      throw buildExportSizeError(
+        `${options.label || "Export"} NDJSON exceeds size guard.`,
+        options.debugCode || "ndjson_too_large"
+      );
+    }
+    parts.push(line);
+    count += 1;
+    if (yieldEvery > 0 && i % yieldEvery === 0) {
+      await yieldExport();
+    }
+  }
+  return {
+    blob: new Blob(parts, { type: "application/x-ndjson" }),
+    size,
+    count,
+  };
 }
 
 async function buildEntriesJsonBlobFromIdb(options) {
@@ -3294,7 +3340,7 @@ async function runEvidenceZipExport(context) {
         : null;
     const redactionEnabled = usePartExport
       ? data.redactionEnabled === true
-      : null;
+      : data.exportMetadata && data.exportMetadata.redaction_enabled === true;
     const redactNetworkEntry =
       redactionEnabled && globalThis.RedactUtils
         ? (entry) => globalThis.RedactUtils.redactNetworkEntry(entry)
@@ -3367,6 +3413,10 @@ async function runEvidenceZipExport(context) {
       export_metadata: 0,
       export_truncation_report: 0,
       qa_summary: data.qaSummaryText ? data.qaSummaryText.length : 0,
+      summary_errors: 0,
+      summary_failed_requests: 0,
+      summary_session: 0,
+      summary_truncation: 0,
     };
     let totalJsonBytes = 0;
     const trackJsonSize = (key, size) => {
@@ -3377,6 +3427,72 @@ async function runEvidenceZipExport(context) {
           "Export too large (JSON). Reduce capture size and try again.",
           "json_total_too_large"
         );
+      }
+    };
+    const SUMMARY_SAMPLE_LIMIT = 200;
+    const summaryCounts = {
+      consoleErrors: 0,
+      failedRequests: 0,
+    };
+    const summarySamples = {
+      consoleErrors: [],
+      failedRequests: [],
+    };
+    const summaryFlags = {
+      consoleErrorsTruncated: false,
+      failedRequestsTruncated: false,
+    };
+    const recordConsoleError = (entry, redactEntry) => {
+      if (!entry || entry.level !== "error") {
+        return;
+      }
+      summaryCounts.consoleErrors += 1;
+      const payload = redactEntry ? redactEntry(entry) : entry;
+      if (summarySamples.consoleErrors.length < SUMMARY_SAMPLE_LIMIT) {
+        summarySamples.consoleErrors.push({
+          timestamp: payload.timestamp || null,
+          timestamp_epoch_ms: payload.timestamp_epoch_ms || null,
+          message: payload.message || "",
+          source: payload.source || "console",
+          url: payload.url || null,
+          line: payload.line || null,
+          column: payload.column || null,
+          stack: payload.stack || null,
+        });
+      } else {
+        summaryFlags.consoleErrorsTruncated = true;
+      }
+    };
+    const recordFailedRequest = (entry, redactEntry) => {
+      if (!entry) {
+        return;
+      }
+      const status =
+        typeof entry.response_status === "number" ? entry.response_status : null;
+      const isFailed =
+        (typeof status === "number" && status >= 400) ||
+        entry.incomplete ||
+        entry.finalize_reason;
+      if (!isFailed) {
+        return;
+      }
+      summaryCounts.failedRequests += 1;
+      const payload = redactEntry ? redactEntry(entry) : entry;
+      if (summarySamples.failedRequests.length < SUMMARY_SAMPLE_LIMIT) {
+        summarySamples.failedRequests.push({
+          request_id: payload.request_id || null,
+          timestamp: payload.timestamp || null,
+          timestamp_epoch_ms: payload.timestamp_epoch_ms || null,
+          url: payload.url || null,
+          method: payload.method || null,
+          response_status: payload.response_status || null,
+          response_status_text: payload.response_status_text || null,
+          error_text: payload.error_text || null,
+          incomplete: payload.incomplete || undefined,
+          finalize_reason: payload.finalize_reason || null,
+        });
+      } else {
+        summaryFlags.failedRequestsTruncated = true;
       }
     };
     const zip = new JSZip();
@@ -3444,6 +3560,14 @@ async function runEvidenceZipExport(context) {
       data.qaSummaryText = buildPartSummaryText(partInfo, truncationResult.note);
     };
     let baseItems = [];
+    const logItems = [];
+    const metaItems = [];
+    const summaryItems = [];
+    const exportSessionId =
+      captureState.sessionId ||
+      (session && session.session_id) ||
+      (data.session && data.session.session_id) ||
+      null;
     if (usePartExport && data.partId) {
       const networkTotal =
         data.partInfo && typeof data.partInfo.requestCount === "number"
@@ -3453,37 +3577,11 @@ async function runEvidenceZipExport(context) {
         data.partInfo && typeof data.partInfo.consoleCount === "number"
           ? data.partInfo.consoleCount
           : null;
-      baseItems = [
-        {
-          path: "network.ndjson",
-          getData: async () => {
-            if (metadataOnly) {
-              const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
-                {
-                  storeName: "network_entries",
-                  indexName: "partId",
-                  keyRange: IDBKeyRange.only(data.partId),
-                  maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-                  redactEntry: redactNetworkEntry,
-                  filterEntry: exportFilters
-                    ? (entry) => matchesExportNetworkEntry(entry, exportFilters)
-                    : null,
-                  totalCount: networkTotal,
-                  onProgress: ({ percent }) => {
-                    reportExportProgress(
-                      12 + Math.round((percent / 100) * 4),
-                      "ndjson_network",
-                      { percent }
-                    );
-                  },
-                }
-              );
-              trackJsonSize("network_ndjson", result.size);
-              networkBuilt = true;
-              finalizePartTruncationReport();
-              return result.blob;
-            }
-            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+      logItems.push({
+        path: "logs/network.ndjson",
+        getData: async () => {
+          const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
+            {
               storeName: "network_entries",
               indexName: "partId",
               keyRange: IDBKeyRange.only(data.partId),
@@ -3507,42 +3605,22 @@ async function runEvidenceZipExport(context) {
                 if (entry.response_body_truncated) {
                   truncationCounts.response += 1;
                 }
+                recordFailedRequest(entry, redactNetworkEntry);
               },
-            });
-            trackJsonSize("network_ndjson", result.size);
-            networkBuilt = true;
-            finalizePartTruncationReport();
-            return result.blob;
-          },
-          options: { date: zipDate },
-        },
-        {
-          path: "console.ndjson",
-          getData: async () => {
-            if (metadataOnly) {
-              const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
-                {
-                  storeName: "console_entries",
-                  indexName: "partId",
-                  keyRange: IDBKeyRange.only(data.partId),
-                  maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-                  redactEntry: redactConsoleEntry,
-                  totalCount: consoleTotal,
-                  onProgress: ({ percent }) => {
-                    reportExportProgress(
-                      16 + Math.round((percent / 100) * 4),
-                      "ndjson_console",
-                      { percent }
-                    );
-                  },
-                }
-              );
-              trackJsonSize("console_ndjson", result.size);
-              consoleBuilt = true;
-              finalizePartTruncationReport();
-              return result.blob;
             }
-            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+          );
+          trackJsonSize("network_ndjson", result.size);
+          networkBuilt = true;
+          finalizePartTruncationReport();
+          return result.blob;
+        },
+          options: { date: zipDate },
+        });
+      logItems.push({
+        path: "logs/console.ndjson",
+        getData: async () => {
+          const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
+            {
               storeName: "console_entries",
               indexName: "partId",
               keyRange: IDBKeyRange.only(data.partId),
@@ -3556,154 +3634,270 @@ async function runEvidenceZipExport(context) {
                   { percent }
                 );
               },
+              onEntry: (entry) => {
+                recordConsoleError(entry, redactConsoleEntry);
+              },
+            }
+          );
+          trackJsonSize("console_ndjson", result.size);
+          consoleBuilt = true;
+          finalizePartTruncationReport();
+          return result.blob;
+        },
+        options: { date: zipDate },
+      });
+      metaItems.push(
+        {
+          path: "meta/session.json",
+          getData: () => toJsonWithSize(data.session || {}, "session"),
+          options: { date: zipDate },
+        },
+        {
+          path: "meta/environment.json",
+          getData: () => toJsonWithSize(data.environment || {}, "environment"),
+          options: { date: zipDate },
+        },
+        {
+          path: "meta/export_metadata.json",
+          getData: () =>
+            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
+          options: { date: zipDate },
+        }
+      );
+    } else {
+      const networkTotal =
+        data.session && data.session.counts
+          ? data.session.counts.network_requests
+          : null;
+      const consoleTotal =
+        data.session && data.session.counts ? data.session.counts.console_entries : null;
+      logItems.push({
+        path: "logs/network.ndjson",
+        getData: async () => {
+          if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
+            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+              storeName: "network_entries",
+              indexName: "sessionId",
+              keyRange: IDBKeyRange.only(exportSessionId),
+              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+              redactEntry: redactNetworkEntry,
+              totalCount: networkTotal,
+              onProgress: ({ percent }) => {
+                reportExportProgress(
+                  12 + Math.round((percent / 100) * 4),
+                  "ndjson_network",
+                  { percent }
+                );
+              },
+              onEntry: (entry) => {
+                recordFailedRequest(entry, redactNetworkEntry);
+              },
+            });
+            trackJsonSize("network_ndjson", result.size);
+            return result.blob;
+          }
+          const fallbackEntries =
+            data.networkLogs && Array.isArray(data.networkLogs.entries)
+              ? data.networkLogs.entries
+              : [];
+          const result = await buildNdjsonBlobFromEntries({
+            entries: fallbackEntries,
+            maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+            label: "Network logs",
+            debugCode: "network_ndjson_too_large",
+            redactEntry: redactNetworkEntry,
+            onEntry: (entry) => {
+              recordFailedRequest(entry, redactNetworkEntry);
+            },
+          });
+          trackJsonSize("network_ndjson", result.size);
+          return result.blob;
+        },
+        options: { date: zipDate },
+      });
+      logItems.push({
+        path: "logs/console.ndjson",
+        getData: async () => {
+          if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
+            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+              storeName: "console_entries",
+              indexName: "sessionId",
+              keyRange: IDBKeyRange.only(exportSessionId),
+              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+              redactEntry: redactConsoleEntry,
+              totalCount: consoleTotal,
+              onProgress: ({ percent }) => {
+                reportExportProgress(
+                  16 + Math.round((percent / 100) * 4),
+                  "ndjson_console",
+                  { percent }
+                );
+              },
+              onEntry: (entry) => {
+                recordConsoleError(entry, redactConsoleEntry);
+              },
             });
             trackJsonSize("console_ndjson", result.size);
-            consoleBuilt = true;
-            finalizePartTruncationReport();
             return result.blob;
-          },
-          options: { date: zipDate },
+          }
+          const fallbackEntries =
+            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+              ? data.consoleLogs.entries
+              : [];
+          const result = await buildNdjsonBlobFromEntries({
+            entries: fallbackEntries,
+            maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+            label: "Console logs",
+            debugCode: "console_ndjson_too_large",
+            redactEntry: redactConsoleEntry,
+            onEntry: (entry) => {
+              recordConsoleError(entry, redactConsoleEntry);
+            },
+          });
+          trackJsonSize("console_ndjson", result.size);
+          return result.blob;
         },
+        options: { date: zipDate },
+      });
+      metaItems.push(
         {
-          path: "session.json",
+          path: "meta/session.json",
           getData: () => toJsonWithSize(data.session || {}, "session"),
           options: { date: zipDate },
         },
         {
-          path: "environment.json",
+          path: "meta/environment.json",
           getData: () => toJsonWithSize(data.environment || {}, "environment"),
           options: { date: zipDate },
         },
         {
-          path: "export_metadata.json",
+          path: "meta/export_metadata.json",
           getData: () =>
             toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
           options: { date: zipDate },
-        },
-      ];
-    } else {
-      baseItems = [
-        {
-          path: "network_logs.json",
-          getData: async () => {
-            if (metadataOnly) {
-              const result = await buildEntriesJsonBlob({
-                entries: [],
-                version: "1.0",
-                maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-                label: "Network logs",
-                debugCode: "network_json_too_large",
-              });
-              trackJsonSize("network_logs", result.size);
-              networkBuilt = true;
-              finalizePartTruncationReport();
-              return result.blob;
-            }
-            const result = await buildEntriesJsonBlob({
-              entries:
-                data.networkLogs && Array.isArray(data.networkLogs.entries)
-                  ? data.networkLogs.entries
-                  : [],
-              version: data.networkLogs && data.networkLogs.version
-                ? data.networkLogs.version
-                : "1.0",
-              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-              label: "Network logs",
-              debugCode: "network_json_too_large",
-            });
-            trackJsonSize("network_logs", result.size);
-            return result.blob;
-          },
-          options: { date: zipDate },
-        },
-        {
-          path: "console_logs.json",
-          getData: async () => {
-            if (metadataOnly) {
-              const result = await buildEntriesJsonBlob({
-                entries: [],
-                version: "1.0",
-                maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-                label: "Console logs",
-                debugCode: "console_json_too_large",
-              });
-              trackJsonSize("console_logs", result.size);
-              consoleBuilt = true;
-              finalizePartTruncationReport();
-              return result.blob;
-            }
-            const result = await buildEntriesJsonBlob({
-              entries:
-                data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-                  ? data.consoleLogs.entries
-                  : [],
-              version: data.consoleLogs && data.consoleLogs.version
-                ? data.consoleLogs.version
-                : "1.0",
-              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-              label: "Console logs",
-              debugCode: "console_json_too_large",
-            });
-            trackJsonSize("console_logs", result.size);
-            return result.blob;
-          },
-          options: { date: zipDate },
-        },
-        {
-          path: "session.json",
-          getData: () => toJsonWithSize(data.session || {}, "session"),
-          options: { date: zipDate },
-        },
-        {
-          path: "environment.json",
-          getData: () => toJsonWithSize(data.environment || {}, "environment"),
-          options: { date: zipDate },
-        },
-        {
-          path: "export_metadata.json",
-          getData: () =>
-            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
-          options: { date: zipDate },
-        },
-      ];
+        }
+      );
     }
     if (!usePartExport && data.qaSessionLog) {
-      baseItems.push({
-        path: "qa-session-log.json",
+      summaryItems.push({
+        path: "summary/qa-session-log.json",
         getData: () =>
           toJsonWithSize(data.qaSessionLog || {}, "qa_session_log"),
         options: { date: zipDate },
       });
     }
     if (data.qaSummaryText) {
-      baseItems.push({
-        path: "qa-summary.txt",
+      summaryItems.push({
+        path: "summary/qa-summary.txt",
         data: data.qaSummaryText,
         options: { date: zipDate },
       });
     }
+    summaryItems.push({
+      path: "summary/errors.json",
+      getData: () => {
+        const signalErrors =
+          data.qaSessionLog && Array.isArray(data.qaSessionLog.signals)
+            ? data.qaSessionLog.signals.filter((signal) => signal.level === "error")
+            : [];
+        return toJsonWithSize(
+          {
+            total_errors: summaryCounts.consoleErrors,
+            sampled: summarySamples.consoleErrors.length,
+            truncated: summaryFlags.consoleErrorsTruncated || false,
+            errors: summarySamples.consoleErrors,
+            signal_errors: signalErrors,
+          },
+          "summary_errors"
+        );
+      },
+      options: { date: zipDate },
+    });
+    summaryItems.push({
+      path: "summary/failed_requests.json",
+      getData: () =>
+        toJsonWithSize(
+          {
+            total_failed_requests: summaryCounts.failedRequests,
+            sampled: summarySamples.failedRequests.length,
+            truncated: summaryFlags.failedRequestsTruncated || false,
+            failed_requests: summarySamples.failedRequests,
+          },
+          "summary_failed_requests"
+        ),
+      options: { date: zipDate },
+    });
+    summaryItems.push({
+      path: "summary/session_summary.json",
+      getData: () => {
+        const sessionRecord = data.session || {};
+        const startedAtIso = sessionRecord.created_at || null;
+        const endedAtIso = sessionRecord.ended_at || null;
+        const startedAtMs = parseEpochMs(startedAtIso);
+        const endedAtMs = parseEpochMs(endedAtIso);
+        const durationMs =
+          startedAtMs !== null && endedAtMs !== null
+            ? Math.max(0, endedAtMs - startedAtMs)
+            : null;
+        const requestCount =
+          data.partInfo && typeof data.partInfo.requestCount === "number"
+            ? data.partInfo.requestCount
+            : sessionRecord.counts && typeof sessionRecord.counts.network_requests === "number"
+              ? sessionRecord.counts.network_requests
+              : 0;
+        const consoleCount =
+          data.partInfo && typeof data.partInfo.consoleCount === "number"
+            ? data.partInfo.consoleCount
+            : sessionRecord.counts && typeof sessionRecord.counts.console_entries === "number"
+              ? sessionRecord.counts.console_entries
+              : 0;
+        const errorCount =
+          data.partInfo && typeof data.partInfo.errorCount === "number"
+            ? data.partInfo.errorCount
+            : summaryCounts.consoleErrors;
+        return toJsonWithSize(
+          {
+            session_id: sessionRecord.session_id || null,
+            part_id: data.partId || null,
+            part_number:
+              data.partInfo && typeof data.partInfo.partNumber === "number"
+                ? data.partInfo.partNumber
+                : null,
+            started_at: startedAtIso,
+            ended_at: endedAtIso,
+            duration_ms: durationMs,
+            counts: {
+              network_requests: requestCount,
+              console_entries: consoleCount,
+              console_errors: errorCount,
+              failed_requests: summaryCounts.failedRequests,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: data.redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+          },
+          "summary_session"
+        );
+      },
+      options: { date: zipDate },
+    });
     if (data.exportTruncationReport) {
-      if (!usePartExport) {
-        baseItems.push({
-          path: "export_truncation_report.json",
-          getData: () =>
-            toJsonWithSize(
-              data.exportTruncationReport || {},
-              "export_truncation_report"
-            ),
-          options: { date: zipDate },
-        });
-      }
-      baseItems.push({
-        path: "truncation_report.json",
+      summaryItems.push({
+        path: "summary/truncation_report.json",
         getData: () =>
           toJsonWithSize(
             data.exportTruncationReport || {},
-            "export_truncation_report"
+            "summary_truncation"
           ),
         options: { date: zipDate },
       });
     }
+    baseItems = [...logItems, ...metaItems, ...summaryItems];
     logExportPhase("zip_add_json", { count: baseItems.length });
     await ZipBuilderChunked.addItemsInBatches(zip, baseItems, {
       batchSize: 1,
@@ -3805,12 +3999,19 @@ async function runEvidenceZipExport(context) {
         });
       },
     });
+    console.log("[EXPORT][ZIP_BYTES]", { bytes: zipBytes.byteLength });
     assertZipSignature(zipBytes);
+    console.log("[EXPORT][ZIP_SIGNATURE_OK]", { bytes: zipBytes.byteLength });
     const zipArrayBuffer = getArrayBufferFromUint8Array(zipBytes);
     logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });
     reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 
     const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+    console.log("[EXPORT][ZIP_DOWNLOAD_REQUEST]", {
+      filename,
+      mimeType: "application/zip",
+      bytes: zipBytes.byteLength,
+    });
     await brokerDownloadBytes(zipArrayBuffer, filename, "application/zip", {
       saveAs: false,
     });

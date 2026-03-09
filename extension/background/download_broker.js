@@ -20,6 +20,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, error: "Missing payload." });
         return;
       }
+      const byteLength =
+        arrayBuffer && typeof arrayBuffer.byteLength === "number"
+          ? arrayBuffer.byteLength
+          : 0;
+      console.log("[BROKER][DOWNLOAD_BYTES]", {
+        filename,
+        mimeType,
+        bytes: byteLength,
+        nonEmpty: byteLength > 0,
+      });
       const blob = new Blob([arrayBuffer], { type: mimeType });
       const url = URL.createObjectURL(blob);
       chrome.downloads.download(
