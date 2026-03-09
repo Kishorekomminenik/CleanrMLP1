@@ -113,6 +113,14 @@
       return clone(currentSession);
     },
 
+    getLastStep() {
+      if (!currentSession || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      const last = currentSession.steps[currentSession.steps.length - 1];
+      return clone(last);
+    },
+
     updateSession(partialPatch = {}) {
       if (!ensureSession()) {
         return null;
@@ -132,6 +140,58 @@
       });
       touch();
       return clone(currentSession);
+    },
+
+    updateStepById(stepId, partialPatch = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      if (!stepId || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      const idx = currentSession.steps.findIndex((step) => step.id === stepId);
+      if (idx === -1) {
+        return null;
+      }
+      currentSession.steps[idx] = {
+        ...currentSession.steps[idx],
+        ...partialPatch,
+      };
+      updateSummary();
+      touch();
+      return clone(currentSession.steps[idx]);
+    },
+
+    findRecentStep(predicate, options = {}) {
+      if (!currentSession || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      if (typeof predicate !== "function") {
+        return null;
+      }
+      const maxAgeMs =
+        typeof options.maxAgeMs === "number" ? options.maxAgeMs : null;
+      const maxCount =
+        typeof options.maxCount === "number" ? options.maxCount : null;
+      const nowMs = Date.now();
+      let checked = 0;
+      for (let i = currentSession.steps.length - 1; i >= 0; i -= 1) {
+        if (maxCount !== null && checked >= maxCount) {
+          break;
+        }
+        checked += 1;
+        const step = currentSession.steps[i];
+        if (maxAgeMs !== null && step && step.timestamp) {
+          const tsMs = Date.parse(step.timestamp);
+          if (!Number.isNaN(tsMs) && nowMs - tsMs > maxAgeMs) {
+            continue;
+          }
+        }
+        if (predicate(step)) {
+          return clone(step);
+        }
+      }
+      return null;
     },
 
     addStep(stepPartial = {}) {

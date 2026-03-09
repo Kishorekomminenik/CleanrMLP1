@@ -24,7 +24,8 @@ try {
   importScripts(
     chrome.runtime.getURL("src/reporting/reportConfig.js"),
     chrome.runtime.getURL("src/reporting/reportSessionModel.js"),
-    chrome.runtime.getURL("src/reporting/reportSessionManager.js")
+    chrome.runtime.getURL("src/reporting/reportSessionManager.js"),
+    chrome.runtime.getURL("src/reporting/reportStepTracker.js")
   );
 } catch (error) {
   console.warn("Report modules unavailable:", error);
@@ -2603,6 +2604,7 @@ function createSession(mode, tab) {
       globalThis.ReportSessionManager &&
       typeof globalThis.ReportSessionManager.createSession === "function"
     ) {
+      const now = nowIso();
       globalThis.ReportSessionManager.createSession({
         sessionId: session.session_id,
         startUrl: tab && tab.url ? tab.url : "",
@@ -2621,6 +2623,18 @@ function createSession(mode, tab) {
           reportVersion: reportConfig.version,
         },
       });
+      if (
+        globalThis.ReportStepTracker &&
+        typeof globalThis.ReportStepTracker.recordSessionStartStep === "function"
+      ) {
+        globalThis.ReportStepTracker.recordSessionStartStep({
+          url: tab && tab.url ? tab.url : "",
+          title: tab && tab.title ? tab.title : "",
+          timestamp: now,
+          navigationKind: "start",
+          tabId: tab && tab.id ? tab.id : null,
+        });
+      }
     }
   } catch (error) {
     // Report session is optional; ignore failures.
@@ -4836,14 +4850,40 @@ async function captureScreenshot() {
       const tMs = computeSessionOffsetMs(timestampIso);
       const index = session.screenshots.length + 1;
       const blob = dataUrlToBlob(dataUrl);
+      const fileName = `qa-screenshot-${String(index).padStart(3, "0")}.png`;
       session.screenshots.push({
         index,
         timestampIso,
         t_ms: tMs,
         blob,
-        fileName: `qa-screenshot-${String(index).padStart(3, "0")}.png`,
+        fileName,
         dataUrl,
       });
+      try {
+        if (
+          globalThis.ReportStepTracker &&
+          typeof globalThis.ReportStepTracker.recordScreenshotEvent === "function"
+        ) {
+          globalThis.ReportStepTracker.recordScreenshotEvent(
+            {
+              kind: "screenshot",
+              filename: fileName,
+              relativePath: `screenshots/${fileName}`,
+              mimeType: "image/png",
+              size: blob.size,
+              createdAt: timestampIso,
+            },
+            {
+              url: tab && tab.url ? tab.url : "",
+              title: tab && tab.title ? tab.title : "",
+              timestamp: timestampIso,
+              captureMode: "visible",
+            }
+          );
+        }
+      } catch (error) {
+        // Report tracking is optional; ignore failures.
+      }
     }
     clearStatusMessage();
     return dataUrl;
@@ -5682,6 +5722,33 @@ async function captureFullPageScreenshot(requestedTabId) {
       size: finalArtifact.byteLength || null,
       coveragePercent: finalArtifact.coveragePercent,
     });
+    try {
+      if (
+        globalThis.ReportStepTracker &&
+        typeof globalThis.ReportStepTracker.recordScreenshotEvent === "function"
+      ) {
+        const createdAt = nowIso();
+        const fileName = `${finalArtifact.artifactKey}.png`;
+        globalThis.ReportStepTracker.recordScreenshotEvent(
+          {
+            kind: "screenshot",
+            filename: fileName,
+            relativePath: `screenshots/${fileName}`,
+            mimeType: "image/png",
+            size: finalArtifact.byteLength || null,
+            createdAt,
+          },
+          {
+            url: session && session.active_tab ? session.active_tab.url : "",
+            title: session && session.active_tab ? session.active_tab.title : "",
+            timestamp: createdAt,
+            captureMode: "fullpage",
+          }
+        );
+      }
+    } catch (error) {
+      // Report tracking is optional; ignore failures.
+    }
     console.log("[FULLPAGE][CAPTURE][FINALIZE_SUCCESS]", {
       captureRunId,
       artifactKey: finalArtifact.artifactKey,
@@ -6589,6 +6656,41 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       endTime: params.timestamp,
     }, { allowCreate: false });
     finalizeNetworkEntry(params.requestId);
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!session || !session.active_tab || session.active_tab.tab_id !== tabId) {
+    return;
+  }
+  if (!changeInfo || (!changeInfo.url && changeInfo.status !== "loading")) {
+    return;
+  }
+  const url = changeInfo.url || (tab && tab.url) || "";
+  if (!url) {
+    return;
+  }
+  try {
+    const reportConfig = getReportConfig();
+    if (
+      reportConfig.enabled &&
+      globalThis.ReportStepTracker &&
+      typeof globalThis.ReportStepTracker.recordNavigationEvent === "function"
+    ) {
+      globalThis.ReportStepTracker.recordNavigationEvent({
+        url,
+        title: tab && tab.title ? tab.title : "",
+        timestamp: nowIso(),
+        navigationKind: changeInfo.url
+          ? "change"
+          : changeInfo.status === "loading"
+            ? "reload"
+            : "change",
+        tabId,
+      });
+    }
+  } catch (error) {
+    // Report tracking is optional; ignore failures.
   }
 });
 
