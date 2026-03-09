@@ -1982,6 +1982,54 @@ async function buildNdjsonBlobFromEntries(options) {
   };
 }
 
+function formatNetworkPrettyEntry(entry) {
+  return {
+    request_id: entry.request_id || null,
+    timestamp: entry.timestamp || null,
+    timestamp_epoch_ms: entry.timestamp_epoch_ms || null,
+    url: entry.url || null,
+    method: entry.method || null,
+    resource_type: entry.resource_type || null,
+    response_status: entry.response_status || null,
+    response_status_text: entry.response_status_text || null,
+    error_text: entry.error_text || null,
+    incomplete: entry.incomplete ? true : undefined,
+    finalize_reason: entry.finalize_reason || null,
+    response_mime_type: entry.response_mime_type || null,
+    from_disk_cache:
+      typeof entry.from_disk_cache === "boolean" ? entry.from_disk_cache : null,
+    from_service_worker:
+      typeof entry.from_service_worker === "boolean"
+        ? entry.from_service_worker
+        : null,
+    request_headers: entry.request_headers || null,
+    response_headers: entry.response_headers || null,
+    request_post_data: entry.request_post_data || null,
+    response_body: entry.response_body || null,
+    response_body_skipped: entry.response_body_skipped ? true : undefined,
+    request_body_truncated: entry.request_body_truncated ? true : undefined,
+    response_body_truncated: entry.response_body_truncated ? true : undefined,
+    request_body_original_bytes: entry.request_body_original_bytes || null,
+    response_body_original_bytes: entry.response_body_original_bytes || null,
+    timing: entry.timing || null,
+  };
+}
+
+function formatConsolePrettyEntry(entry) {
+  return {
+    timestamp: entry.timestamp || null,
+    timestamp_epoch_ms: entry.timestamp_epoch_ms || null,
+    level: entry.level || "log",
+    message: entry.message || "",
+    args: Array.isArray(entry.args) ? entry.args : [],
+    source: entry.source || "console",
+    url: entry.url || null,
+    line: typeof entry.line === "number" ? entry.line : null,
+    column: typeof entry.column === "number" ? entry.column : null,
+    stack: entry.stack || null,
+  };
+}
+
 async function buildEntriesJsonBlobFromIdb(options) {
   if (!isIdbAvailable()) {
     throw new Error("IndexedDB unavailable.");
@@ -3508,6 +3556,8 @@ async function runEvidenceZipExport(context) {
       console_logs: 0,
       network_ndjson: 0,
       console_ndjson: 0,
+      network_pretty: 0,
+      console_pretty: 0,
       session: 0,
       environment: 0,
       qa_session_log: 0,
@@ -3605,6 +3655,19 @@ async function runEvidenceZipExport(context) {
       const json = JSON.stringify(value || {}, null, 2);
       trackJsonSize(key, json.length);
       return json;
+    };
+    const isFailedRequest = (entry) => {
+      if (!entry) {
+        return false;
+      }
+      const status =
+        typeof entry.response_status === "number" ? entry.response_status : null;
+      return (
+        (typeof status === "number" && status >= 400) ||
+        entry.incomplete ||
+        entry.finalize_reason ||
+        entry.error_text
+      );
     };
     const truncationCounts = { request: 0, response: 0 };
     let networkBuilt = false;
@@ -3765,6 +3828,100 @@ async function runEvidenceZipExport(context) {
           options: { date: zipDate },
         }
       );
+      logItems.push({
+        path: "logs/network.pretty.json",
+        getData: async () => {
+          const entries = await loadLimitedEntriesFromIdb({
+            storeName: "network_entries",
+            indexName: "partId",
+            keyRange: IDBKeyRange.only(data.partId),
+            limit: data.exportLimits ? data.exportLimits.maxRequests : EXPORT_LIMITS.maxRequests,
+          });
+          const redactedEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          const failedCount = redactedEntries.filter((entry) =>
+            isFailedRequest(entry)
+          ).length;
+          const payload = {
+            session: {
+              session_id: data.session && data.session.session_id ? data.session.session_id : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_requests: redactedEntries.length,
+              failed_requests: failedCount,
+            },
+            requests: redactedEntries.map((entry) => formatNetworkPrettyEntry(entry)),
+          };
+          return toJsonWithSize(payload, "network_pretty");
+        },
+        options: { date: zipDate },
+      });
+      logItems.push({
+        path: "logs/console.pretty.json",
+        getData: async () => {
+          const entries = await loadLimitedEntriesFromIdb({
+            storeName: "console_entries",
+            indexName: "partId",
+            keyRange: IDBKeyRange.only(data.partId),
+            limit: data.exportLimits
+              ? data.exportLimits.maxConsoleEntries
+              : EXPORT_LIMITS.maxConsoleEntries,
+          });
+          const redactedEntries = redactConsoleEntry
+            ? entries.map((entry) => redactConsoleEntry(entry))
+            : entries;
+          const errorCount = redactedEntries.filter(
+            (entry) => entry && entry.level === "error"
+          ).length;
+          const payload = {
+            session: {
+              session_id: data.session && data.session.session_id ? data.session.session_id : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_entries: redactedEntries.length,
+              error_entries: errorCount,
+            },
+            entries: redactedEntries.map((entry) => formatConsolePrettyEntry(entry)),
+          };
+          return toJsonWithSize(payload, "console_pretty");
+        },
+        options: { date: zipDate },
+      });
     } else {
       const networkTotal =
         data.session && data.session.counts
@@ -3817,6 +3974,50 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       });
       logItems.push({
+        path: "logs/network.pretty.json",
+        getData: async () => {
+          const entries =
+            data.networkLogs && Array.isArray(data.networkLogs.entries)
+              ? data.networkLogs.entries
+              : [];
+          const redactedEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          const failedCount = redactedEntries.filter((entry) =>
+            isFailedRequest(entry)
+          ).length;
+          const payload = {
+            session: {
+              session_id: data.session && data.session.session_id ? data.session.session_id : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_requests: redactedEntries.length,
+              failed_requests: failedCount,
+            },
+            requests: redactedEntries.map((entry) => formatNetworkPrettyEntry(entry)),
+          };
+          return toJsonWithSize(payload, "network_pretty");
+        },
+        options: { date: zipDate },
+      });
+      logItems.push({
         path: "logs/console.ndjson",
         getData: async () => {
           if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
@@ -3857,6 +4058,50 @@ async function runEvidenceZipExport(context) {
           });
           trackJsonSize("console_ndjson", result.size);
           return result.blob;
+        },
+        options: { date: zipDate },
+      });
+      logItems.push({
+        path: "logs/console.pretty.json",
+        getData: async () => {
+          const entries =
+            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+              ? data.consoleLogs.entries
+              : [];
+          const redactedEntries = redactConsoleEntry
+            ? entries.map((entry) => redactConsoleEntry(entry))
+            : entries;
+          const errorCount = redactedEntries.filter(
+            (entry) => entry && entry.level === "error"
+          ).length;
+          const payload = {
+            session: {
+              session_id: data.session && data.session.session_id ? data.session.session_id : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_entries: redactedEntries.length,
+              error_entries: errorCount,
+            },
+            entries: redactedEntries.map((entry) => formatConsolePrettyEntry(entry)),
+          };
+          return toJsonWithSize(payload, "console_pretty");
         },
         options: { date: zipDate },
       });
