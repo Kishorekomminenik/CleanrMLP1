@@ -1320,13 +1320,12 @@ async function exportRecordingWebm() {
       error && error.message ? error.message : String(error)
     );
   }
-  if (recordingObjectUrl && recordingObjectUrlBytes !== blob.size) {
+  // Always refresh blob URL after finalization to ensure metadata updates.
+  if (recordingObjectUrl) {
     revokeRecordingUrl();
   }
-  if (!recordingObjectUrl) {
-    recordingObjectUrl = URL.createObjectURL(blob);
-    recordingObjectUrlBytes = blob.size;
-  }
+  recordingObjectUrl = URL.createObjectURL(blob);
+  recordingObjectUrlBytes = blob.size;
   const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
   if (recordingSessionId) {
     const artifactKey = `recording_final_${recordingSessionId}_${Date.now()}`;
