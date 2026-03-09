@@ -5161,6 +5161,7 @@ function applyTextAnnotations(ctx, annotations, dpr) {
 }
 
 async function startRecording(streamId, tabId, mimeType) {
+  // V1 STABLE: recording state orchestration (start).
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
   if (session) {
@@ -5308,6 +5309,7 @@ async function resumeRecording() {
 }
 
 async function stopRecording() {
+  // V1 STABLE: stop/finalize flow; changes require retesting normal + fallback.
   console.log("[REC][sw] STOP_REQUESTED");
   if (state.recording.sessionId) {
     console.log("[RECORDING][STATE]", {

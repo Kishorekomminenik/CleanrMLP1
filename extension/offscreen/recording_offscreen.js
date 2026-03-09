@@ -1,3 +1,6 @@
+// RECORDING V1 STABLE
+// Changes require retesting: normal stop, pause/resume, long recording,
+// and partial/fallback flows.
 // FULL-PAGE CAPTURE V1 LOCKED
 // DO NOT MODIFY WITHOUT TESTING SHORT + LONG PAGE.
 let mediaRecorder = null;
@@ -893,6 +896,7 @@ function attachRecorderHandlers(recorder) {
   };
   recorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
+      // V1 STABLE: chunk persistence + bounded buffer for long recordings.
       const chunk = event.data;
       recordedChunks.push(chunk);
       if (recordedChunks.length > RECORDING_CHUNK_BUFFER_LIMIT) {
@@ -1195,6 +1199,7 @@ async function stopRecording() {
   const result = await Promise.race([stopPromise, timeoutPromise]);
   if (result && result.ok === false && result.reason === "timeout") {
     if (recordingChunkCount > 0 || recordedChunks.length > 0) {
+      // V1 STABLE: stop-timeout fallback must preserve usable chunks.
       recordingLastError = null;
       recordingState = "idle";
       mediaRecorder = null;
@@ -1294,6 +1299,7 @@ async function exportRecordingWebm() {
     bytes: blob.size,
     mimeType: recordingMimeType || "video/webm",
   });
+  // V1 STABLE: duration metadata must be valid for playback controls.
   let durationMs =
     typeof recordingDurationMsSnapshot === "number"
       ? recordingDurationMsSnapshot
