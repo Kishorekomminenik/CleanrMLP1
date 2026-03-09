@@ -1,18 +1,30 @@
+:root {
+  --repro-bg: #f8fafc;
+  --repro-card: rgba(255, 255, 255, 0.96);
+  --repro-border: #e5e7eb;
+  --repro-text: #111827;
+  --repro-muted: #6b7280;
+  --repro-accent: #2563eb;
+  --repro-danger: #dc2626;
+  --repro-radius: 12px;
+  --repro-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial;
-  background: #f4f6fb;
-  color: #0f172a;
+  background: var(--repro-bg);
+  color: var(--repro-text);
 }
 
 .panel {
   margin: 14px;
-  padding: 16px;
-  background: #ffffff;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 16px;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+  padding: 14px;
+  background: var(--repro-card);
+  border: 1px solid var(--repro-border);
+  border-radius: var(--repro-radius);
+  box-shadow: var(--repro-shadow);
 }
 
 .panel-header {
@@ -29,14 +41,14 @@ body {
 
 .brand-subtitle {
   font-size: 12px;
-  color: #64748b;
+  color: var(--repro-muted);
   margin-top: 2px;
 }
 
 .icon-btn {
   border: none;
   background: transparent;
-  color: #2563eb;
+  color: var(--repro-accent);
   font-size: 12px;
   cursor: pointer;
 }
@@ -49,16 +61,16 @@ body {
 }
 
 .stat {
-  background: #f8fafc;
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid var(--repro-border);
+  border-radius: var(--repro-radius);
   padding: 8px 10px;
 }
 
 .label {
   display: block;
   font-size: 11px;
-  color: #64748b;
+  color: var(--repro-muted);
   margin-bottom: 4px;
 }
 
@@ -69,9 +81,9 @@ body {
 
 .message {
   font-size: 12px;
-  color: #475569;
+  color: var(--repro-muted);
   margin-bottom: 12px;
-  min-height: 16px;
+  min-height: 18px;
 }
 
 .button-row {
@@ -84,22 +96,22 @@ body {
 button {
   font-size: 12px;
   padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: #f8fafc;
-  color: #0f172a;
+  border-radius: var(--repro-radius);
+  border: 1px solid var(--repro-border);
+  background: #ffffff;
+  color: var(--repro-text);
   cursor: pointer;
 }
 
 button.primary {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: var(--repro-accent);
+  border-color: var(--repro-accent);
   color: #ffffff;
 }
 
 button.danger {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: var(--repro-danger);
+  border-color: var(--repro-danger);
   color: #ffffff;
 }
 
@@ -110,4 +122,15 @@ button.ghost {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+body[data-embedded="true"] .panel {
+  margin: 0;
+  border: none;
+  box-shadow: none;
+  padding: 10px 12px 12px 12px;
+}
+
+body[data-embedded="true"] .panel-header {
+  display: none;
 }

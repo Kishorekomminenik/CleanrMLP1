@@ -4,12 +4,12 @@
   --danger: #dc2626;
   --success: #16a34a;
   --warning: #d97706;
-  --text: #0f172a;
+  --text: #111827;
   --muted: #6b7280;
-  --border: rgba(0, 0, 0, 0.08);
-  --panel: #ffffff;
+  --border: #e5e7eb;
+  --panel: rgba(255, 255, 255, 0.96);
   --panel-alt: #f8fafc;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  --shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
 }
 
 * {
@@ -280,9 +280,9 @@ h2 {
 .launcher-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 14px;
   padding: 16px;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow);
 }
 
 .launcher-header {
@@ -310,8 +310,8 @@ h2 {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: #f8fafc;
-  color: #475569;
+  background: #ffffff;
+  color: var(--muted);
 }
 
 .launcher-actions {
@@ -335,19 +335,13 @@ h2 {
 
 .launcher-btn:hover {
   border-color: rgba(37, 99, 235, 0.3);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 
 .launcher-btn.primary {
   background: var(--accent);
   color: #ffffff;
   border-color: var(--accent);
-}
-
-.launcher-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .legacy-shell {

@@ -8,6 +8,11 @@ const stopBtn = document.getElementById("panel_stop");
 const downloadBtn = document.getElementById("panel_download");
 const closeBtn = document.getElementById("closePanel");
 
+const query = new URLSearchParams(window.location.search);
+if (query.get("embedded") === "1") {
+  document.body.dataset.embedded = "true";
+}
+
 async function send(type, payload = {}) {
   try {
     const res = await chrome.runtime.sendMessage({ type, ...payload });
@@ -138,7 +143,7 @@ function resolvePanelStateLabel({ liveState, sessionState, statusMessage }) {
 async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
-    messageEl.textContent = "Recording window closed.";
+    messageEl.textContent = "Panel unavailable.";
     startBtn.disabled = true;
     pauseBtn.disabled = true;
     resumeBtn.disabled = true;

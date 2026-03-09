@@ -10,6 +10,11 @@ const clearBtn = document.getElementById("panel_clear");
 const resetBtn = document.getElementById("panel_reset");
 const closeBtn = document.getElementById("closePanel");
 
+const query = new URLSearchParams(window.location.search);
+if (query.get("embedded") === "1") {
+  document.body.dataset.embedded = "true";
+}
+
 const EXPORT_EVENTS = {
   REQUEST: "EXPORT_EVIDENCE_ZIP_REQUEST",
   PROGRESS: "EXPORT_EVIDENCE_ZIP_PROGRESS",
@@ -181,7 +186,7 @@ function finishExportUI(message) {
 async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
-    messageEl.textContent = "Logs window closed.";
+    messageEl.textContent = "Panel unavailable.";
     startBtn.disabled = true;
     stopBtn.disabled = true;
     downloadBtn.disabled = true;

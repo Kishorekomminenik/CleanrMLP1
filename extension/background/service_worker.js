@@ -234,8 +234,8 @@ let session = null;
 let statusMessage = null;
 let offscreenReady = false;
 let offscreenCreating = null;
-let recordingPanelWindowId = null;
-let logsPanelWindowId = null;
+let recordingPanelTabId = null;
+let logsPanelTabId = null;
 let exportPhase = null;
 let exportJob = null;
 
@@ -2370,62 +2370,51 @@ function clearStatusMessage() {
   statusMessage = null;
 }
 
-async function openRecordingPanelWindow() {
-  if (recordingPanelWindowId) {
-    try {
-      await chrome.windows.update(recordingPanelWindowId, { focused: true });
-      return;
-    } catch (error) {
-      recordingPanelWindowId = null;
-    }
+async function ensurePanelOverlayInjected(tabId) {
+  if (!chrome.scripting || !chrome.scripting.executeScript) {
+    throw new Error("Scripting API unavailable.");
   }
-  const created = await chrome.windows.create({
-    url: chrome.runtime.getURL("popup/recording_panel.html"),
-    type: "popup",
-    width: 360,
-    height: 300,
-    focused: true,
+  await chrome.scripting.insertCSS({
+    target: { tabId },
+    files: ["content/panel_overlays.css"],
   });
-  recordingPanelWindowId = created && created.id ? created.id : null;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content/panel_overlays.js"],
+  });
 }
 
-async function openLogsPanelWindow() {
-  if (logsPanelWindowId) {
-    try {
-      await chrome.windows.update(logsPanelWindowId, { focused: true });
-      return;
-    } catch (error) {
-      logsPanelWindowId = null;
-    }
-  }
-  const created = await chrome.windows.create({
-    url: chrome.runtime.getURL("popup/logs_panel.html"),
-    type: "popup",
-    width: 360,
-    height: 320,
-    focused: true,
+async function sendPanelOverlayCommand(tabId, panel, action) {
+  return await sendMessageToTab(tabId, {
+    type: "REPRO_PANEL_OVERLAY",
+    panel,
+    action,
   });
-  logsPanelWindowId = created && created.id ? created.id : null;
 }
 
-function closeRecordingPanelWindowIfOpen() {
-  if (!recordingPanelWindowId) {
+async function showPanelOverlay(tabId, panel) {
+  try {
+    await sendPanelOverlayCommand(tabId, panel, "show");
     return;
+  } catch (error) {
+    await ensurePanelOverlayInjected(tabId);
+    await sendPanelOverlayCommand(tabId, panel, "show");
   }
-  chrome.windows.remove(recordingPanelWindowId, () => {
-    void chrome.runtime.lastError;
-  });
-  recordingPanelWindowId = null;
 }
 
-chrome.windows.onRemoved.addListener((id) => {
-  if (id === recordingPanelWindowId) {
-    recordingPanelWindowId = null;
-  }
-  if (id === logsPanelWindowId) {
-    logsPanelWindowId = null;
-  }
-});
+async function openRecordingPanelOverlay(tabId) {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+  ensureTabIsCapturable(tab);
+  await showPanelOverlay(tab.id, "recording");
+  recordingPanelTabId = tab.id;
+}
+
+async function openLogsPanelOverlay(tabId) {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+  ensureTabIsCapturable(tab);
+  await showPanelOverlay(tab.id, "logs");
+  logsPanelTabId = tab.id;
+}
 
 function createSessionId() {
   if (crypto && typeof crypto.randomUUID === "function") {
@@ -6259,7 +6248,6 @@ async function stopRecording() {
     }
   }
   clearStatusMessage();
-  closeRecordingPanelWindowIfOpen();
   return response;
 }
 
@@ -7505,11 +7493,11 @@ async function handleMessage(message, sender) {
   let result;
   switch (normalizedMessage.type) {
     case "OPEN_RECORDING_PANEL":
-      await openRecordingPanelWindow();
+      await openRecordingPanelOverlay();
       result = { ok: true };
       break;
     case "OPEN_LOGS_PANEL":
-      await openLogsPanelWindow();
+      await openLogsPanelOverlay();
       result = { ok: true };
       break;
     case "OFFSCREEN_READY":
@@ -7729,7 +7717,7 @@ async function handleMessage(message, sender) {
         if (session) {
           session.state = "capturing";
         }
-        await openRecordingPanelWindow();
+        await openRecordingPanelOverlay(message.tabId);
         result = response || { ok: true };
       } catch (error) {
         if (session) {

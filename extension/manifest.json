@@ -36,5 +36,20 @@
   ],
   "background": {
     "service_worker": "background/service_worker.js"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup/recording_panel.html",
+        "popup/recording_panel.css",
+        "popup/recording_panel.js",
+        "popup/logs_panel.html",
+        "popup/logs_panel.css",
+        "popup/logs_panel.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }
