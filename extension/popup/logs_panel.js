@@ -34,6 +34,27 @@ const DEFAULT_FILTERS = {
 let exportInProgress = false;
 let exportProgressPercent = 0;
 
+function setHidden(el, hidden) {
+  if (!el) {
+    return;
+  }
+  el.classList.toggle("is-hidden", Boolean(hidden));
+}
+
+function applyLogsControls({ logsState, hasArtifacts, isExporting }) {
+  const isCapturing = logsState === "capturing";
+  const isIdle = !isCapturing;
+  setHidden(startBtn, !isIdle);
+  setHidden(stopBtn, !isCapturing);
+  setHidden(downloadBtn, !hasArtifacts);
+
+  startBtn.disabled = !isIdle || isExporting;
+  stopBtn.disabled = !isCapturing || isExporting;
+  clearBtn.disabled = isExporting;
+  resetBtn.disabled = isExporting;
+  downloadBtn.disabled = !hasArtifacts || isExporting || isCapturing;
+}
+
 async function send(type, payload = {}) {
   try {
     const res = await chrome.runtime.sendMessage({ type, ...payload });
@@ -208,10 +229,11 @@ async function refreshStatus() {
       : "-";
 
   const hasArtifacts = Boolean(state.artifacts && state.artifacts.hasAnyArtifacts);
-  startBtn.disabled = logsState === "capturing" || logsState === "paused";
-  stopBtn.disabled = logsState === "idle";
-  downloadBtn.disabled =
-    exportInProgress || logsState !== "idle" || !hasArtifacts;
+  applyLogsControls({
+    logsState,
+    hasArtifacts,
+    isExporting: exportInProgress,
+  });
   if (!exportInProgress && hasArtifacts && logsState === "idle") {
     exportEl.textContent = "Ready.";
   }

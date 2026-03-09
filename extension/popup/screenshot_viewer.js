@@ -1716,6 +1716,23 @@ if (buttons.copyCompressed) {
           });
           return;
         }
+        const pngResult = await exportCompressedWithMime(
+          "image/png",
+          4 * 1024 * 1024
+        );
+        if (pngResult && pngResult.blob) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": pngResult.blob }),
+          ]);
+          setStatus("Copied (small)!", "success", 2000);
+          console.log("[EDITOR][COPY_COMPRESSED]", {
+            ok: true,
+            bytes: pngResult.blob.size,
+            mimeType: "image/png",
+            scale: pngResult.scale,
+          });
+          return;
+        }
         throw error;
       }
     } catch (error) {

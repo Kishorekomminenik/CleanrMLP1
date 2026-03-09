@@ -140,6 +140,36 @@ function resolvePanelStateLabel({ liveState, sessionState, statusMessage }) {
   return sessionState || "idle";
 }
 
+function setHidden(el, hidden) {
+  if (!el) {
+    return;
+  }
+  el.classList.toggle("is-hidden", Boolean(hidden));
+}
+
+function applyRecordingControls({
+  liveState,
+  sessionState,
+  hasData,
+  isFinalizing,
+}) {
+  const isRecording = liveState === "recording";
+  const isPaused = liveState === "paused";
+  const isIdle = liveState === "idle" || !liveState || sessionState === "idle";
+  const showStop = isRecording || isPaused || isFinalizing;
+  setHidden(startBtn, !isIdle);
+  setHidden(pauseBtn, !isRecording);
+  setHidden(resumeBtn, !isPaused);
+  setHidden(stopBtn, !showStop);
+  setHidden(downloadBtn, !hasData);
+
+  startBtn.disabled = !isIdle || isFinalizing;
+  pauseBtn.disabled = !isRecording || isFinalizing;
+  resumeBtn.disabled = !isPaused || isFinalizing;
+  stopBtn.disabled = !showStop || isFinalizing;
+  downloadBtn.disabled = !hasData || isFinalizing;
+}
+
 async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
@@ -182,13 +212,14 @@ async function refreshStatus() {
       live.state === "starting" ||
       live.state === "stopping" ||
       sessionState === "finalizing";
-    startBtn.disabled = isCapturing || isPaused || isTransition;
-    pauseBtn.disabled = !isCapturing;
-    resumeBtn.disabled = !isPaused;
-    stopBtn.disabled = !(isCapturing || isPaused);
     const hasData =
       Boolean(live.hasData) || Boolean(state.artifacts?.hasRecording);
-    downloadBtn.disabled = isCapturing || isPaused || isTransition || !hasData;
+    applyRecordingControls({
+      liveState: live.state,
+      sessionState,
+      hasData,
+      isFinalizing: isTransition,
+    });
     return;
   }
 
@@ -200,12 +231,12 @@ async function refreshStatus() {
   });
   const isCapturing = sessionState === "capturing";
   const isPaused = sessionState === "paused";
-  startBtn.disabled = isCapturing || isPaused || sessionState === "finalizing";
-  pauseBtn.disabled = !isCapturing;
-  resumeBtn.disabled = !isPaused;
-  stopBtn.disabled = !(isCapturing || isPaused);
-  downloadBtn.disabled =
-    !state.artifacts?.hasRecording || isCapturing || isPaused;
+  applyRecordingControls({
+    liveState: isCapturing ? "recording" : isPaused ? "paused" : "idle",
+    sessionState,
+    hasData: Boolean(state.artifacts?.hasRecording),
+    isFinalizing: sessionState === "finalizing",
+  });
 }
 
 startBtn.addEventListener("click", async () => {

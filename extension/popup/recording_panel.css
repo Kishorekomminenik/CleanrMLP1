@@ -124,6 +124,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.is-hidden {
+  display: none;
+}
+
 body[data-embedded="true"] .panel {
   margin: 0;
   border: none;
