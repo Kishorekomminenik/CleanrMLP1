@@ -1390,6 +1390,37 @@ async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
   return true;
 }
 
+async function brokerDownloadExportArtifact(artifactKey, filename, mimeType, opts = {}) {
+  await ensureBrokerReady();
+  if (!artifactKey) {
+    throw new Error("Missing export artifact key.");
+  }
+  const response = await new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "BROKER_DOWNLOAD_EXPORT_ARTIFACT",
+        payload: {
+          artifactKey,
+          filename,
+          mimeType: mimeType || "application/octet-stream",
+          saveAs: opts.saveAs === true,
+        },
+      },
+      (reply) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(reply);
+      }
+    );
+  });
+  if (!response || !response.ok) {
+    throw new Error(response && response.error ? response.error : "Download failed.");
+  }
+  return true;
+}
+
 function overlayBootstrap() {
   if (window.__reproTimestampOverlay) {
     return;
@@ -2145,6 +2176,42 @@ function computeFnv1a(bytes) {
     hash = (hash * 0x01000193) >>> 0;
   }
   return `fnv1a32:${hash.toString(16).padStart(8, "0")}`;
+}
+
+function buildExportArtifactKey() {
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : String(Math.floor(Math.random() * 1e9));
+  return `export_zip_${Date.now()}_${suffix}`;
+}
+
+async function storeExportArtifact(arrayBuffer, metadata) {
+  if (!isIdbAvailable()) {
+    throw new Error("IndexedDB unavailable.");
+  }
+  const artifactKey = buildExportArtifactKey();
+  const byteLength =
+    arrayBuffer && typeof arrayBuffer.byteLength === "number"
+      ? arrayBuffer.byteLength
+      : 0;
+  const checksum = computeFnv1a(new Uint8Array(arrayBuffer));
+  const record = {
+    key: artifactKey,
+    bytes: arrayBuffer,
+    size: byteLength,
+    checksum,
+    mimeType: metadata && metadata.mimeType ? metadata.mimeType : "application/zip",
+    filename: metadata && metadata.filename ? metadata.filename : null,
+    createdAtMs: Date.now(),
+  };
+  await ReproIdb.putOne("export_artifacts", record);
+  console.log("[EXPORT][ZIP_STORED]", {
+    artifactKey,
+    bytes: byteLength,
+    checksum,
+  });
+  return { artifactKey, checksum, byteLength };
 }
 
 function isRestrictedUrl(url) {
@@ -4053,12 +4120,17 @@ async function runEvidenceZipExport(context) {
     reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 
     const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+    const stored = await storeExportArtifact(zipArrayBuffer, {
+      filename,
+      mimeType: "application/zip",
+    });
     console.log("[EXPORT][ZIP_DOWNLOAD_REQUEST]", {
       filename,
       mimeType: "application/zip",
       bytes: zipBytes.byteLength,
+      artifactKey: stored.artifactKey,
     });
-    await brokerDownloadBytes(zipArrayBuffer, filename, "application/zip", {
+    await brokerDownloadExportArtifact(stored.artifactKey, filename, "application/zip", {
       saveAs: false,
     });
     reportExportProgress(100, "zip_download", { filename });
