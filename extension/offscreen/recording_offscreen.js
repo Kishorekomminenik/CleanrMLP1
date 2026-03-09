@@ -1534,6 +1534,8 @@ async function exportRecordingWebm() {
       durationMs = Math.round(recordingLastTimecodeMs);
     }
   }
+  let usedRemux = false;
+  let usedRawConcat = true;
   if (chunks.length > 1) {
     try {
       const remuxed = await remuxWebmChunks(
@@ -1543,6 +1545,8 @@ async function exportRecordingWebm() {
       );
       if (remuxed instanceof Blob) {
         blob = remuxed;
+        usedRemux = true;
+        usedRawConcat = false;
       }
     } catch (error) {
       console.log(
@@ -1551,6 +1555,12 @@ async function exportRecordingWebm() {
       );
     }
   }
+  console.log("[RECORDING][EXPORT][PATH]", {
+    chunkCount: chunks.length,
+    usedRemux,
+    usedRawConcat,
+    durationMs,
+  });
   try {
     const fixed = await fixWebmDuration(blob, durationMs);
     if (fixed instanceof Blob) {
@@ -1562,6 +1572,10 @@ async function exportRecordingWebm() {
       error && error.message ? error.message : String(error)
     );
   }
+  console.log("[RECORDING][EXPORT][BLOB]", {
+    finalSize: blob.size,
+    mimeType: recordingMimeType || "video/webm",
+  });
   // Always refresh blob URL after finalization to ensure metadata updates.
   if (recordingObjectUrl) {
     revokeRecordingUrl();
@@ -1609,6 +1623,7 @@ async function exportRecordingWebm() {
     size: blob.size,
     durationMs,
     sessionId: recordingSessionId,
+    exportSource: usedRemux ? "remux" : "raw",
   };
 }
 

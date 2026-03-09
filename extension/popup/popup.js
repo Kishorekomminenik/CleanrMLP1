@@ -2782,7 +2782,10 @@ async function handleRecordingDownload() {
       return;
     }
     const exportTimestamp = formatExportTimestamp(new Date());
-  console.log("[REC][popup] DOWNLOAD_TRIGGERED");
+    console.log("[REC][popup] DOWNLOAD_TRIGGERED");
+    console.log("[RECORDING][EXPORT][DOWNLOAD]", {
+      source: res.exportSource === "remux" ? "remux" : "raw",
+    });
     await new Promise((resolve, reject) => {
       chrome.downloads.download(
         {
