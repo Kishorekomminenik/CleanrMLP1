@@ -1,9 +1,5 @@
 (() => {
-  const NAV_TYPES = new Set([
-    "navigation-start",
-    "navigation-change",
-    "navigation-reload",
-  ]);
+  const NAV_TYPES = new Set(["navigation"]);
 
   const getConfig = () => {
     const config =
@@ -62,37 +58,38 @@
 
   const isNavigationType = (type) => NAV_TYPES.has(type);
 
-  const getNavigationType = (context) => {
+  const getNavigationKind = (context) => {
     if (context && context.navigationKind === "reload") {
-      return "navigation-reload";
+      return "reload";
     }
     if (context && context.navigationKind === "start") {
-      return "navigation-start";
+      return "start";
     }
-    return "navigation-change";
+    return "change";
   };
 
-  const buildNavigationStep = (context, type) => {
+  const buildNavigationStep = (context, navigationKind) => {
     const url = normalizeUrl(context && context.url);
     const title =
-      type === "navigation-start"
+      navigationKind === "start"
         ? "Opened page"
-        : type === "navigation-reload"
+        : navigationKind === "reload"
           ? "Reloaded page"
           : "Navigated to page";
     const verb =
-      type === "navigation-start"
+      navigationKind === "start"
         ? "Opened"
-        : type === "navigation-reload"
+        : navigationKind === "reload"
           ? "Reloaded"
           : "Navigated to";
     return {
-      type,
+      type: "navigation",
       title,
       description: `${verb} ${url || "page"}`,
       url,
       timestamp: normalizeTimestamp(context && context.timestamp),
-      meta: {
+      metadata: {
+        navigationKind,
         title: context && context.title ? context.title : "",
         tabId:
           context && typeof context.tabId === "number" ? context.tabId : null,
@@ -113,8 +110,11 @@
     if (!nextUrl || !lastUrl || nextUrl !== lastUrl) {
       return false;
     }
-    const nextType = getNavigationType(nextContext);
-    const lastType = lastStep.type;
+    const nextType = getNavigationKind(nextContext);
+    const lastType =
+      lastStep && lastStep.metadata && lastStep.metadata.navigationKind
+        ? lastStep.metadata.navigationKind
+        : "change";
     const nextMs = parseTimestampMs(nextContext && nextContext.timestamp);
     const lastMs = parseTimestampMs(lastStep.timestamp);
     if (nextMs !== null && lastMs !== null && nextMs - lastMs < minGapMs) {
@@ -137,10 +137,16 @@
     }
     const last = manager.getLastStep ? manager.getLastStep() : null;
     const url = normalizeUrl(context.url);
-    if (last && last.type === "navigation-start" && normalizeUrl(last.url) === url) {
+    if (
+      last &&
+      last.type === "navigation" &&
+      last.metadata &&
+      last.metadata.navigationKind === "start" &&
+      normalizeUrl(last.url) === url
+    ) {
       return last;
     }
-    return manager.addStep(buildNavigationStep(context, "navigation-start"));
+    return manager.addStep(buildNavigationStep(context, "start"));
   };
 
   const recordNavigationEvent = (context = {}) => {
@@ -159,8 +165,8 @@
     if (shouldSkipDuplicateNavigation(context, last, { minGapMs: 1500 })) {
       return last;
     }
-    const type = getNavigationType(context);
-    return manager.addStep(buildNavigationStep(context, type));
+    const kind = getNavigationKind(context);
+    return manager.addStep(buildNavigationStep(context, kind));
   };
 
   const recordScreenshotEvent = (fileMeta, context = {}) => {
@@ -192,14 +198,17 @@
       manager.findRecentStep(
         (step) =>
           step &&
-          ["navigation-start", "navigation-change", "navigation-reload", "screenshot"].includes(
-            step.type
-          ) &&
-          !step.screenshotFile,
+          ["navigation", "screenshot"].includes(step.type) &&
+          !(step.screenshotRef || step.screenshotFile),
         { maxAgeMs: 8000, maxCount: 5 }
       );
     if (recent && manager.updateStepById) {
+      const ref =
+        (fileMeta && fileMeta.relativePath) ||
+        (fileMeta && fileMeta.filename) ||
+        "";
       manager.updateStepById(recent.id, {
+        screenshotRef: ref,
         screenshotFile: fileMeta && fileMeta.filename ? fileMeta.filename : "",
         screenshotPath: fileMeta && fileMeta.relativePath ? fileMeta.relativePath : "",
         screenshotCapturedAt: timestamp,
@@ -213,9 +222,16 @@
         context.url || (fileMeta && fileMeta.url) || "current page"
       }`,
       url: context.url || (fileMeta && fileMeta.url) || "",
+      screenshotRef:
+        (fileMeta && fileMeta.relativePath) ||
+        (fileMeta && fileMeta.filename) ||
+        "",
       screenshotFile: fileMeta && fileMeta.filename ? fileMeta.filename : "",
       screenshotPath: fileMeta && fileMeta.relativePath ? fileMeta.relativePath : "",
       timestamp,
+      metadata: {
+        captureMode: context.captureMode || "unknown",
+      },
     });
   };
 

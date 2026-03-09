@@ -24,6 +24,17 @@
     return null;
   };
 
+  const getIdb = () => {
+    if (
+      typeof globalThis !== "undefined" &&
+      globalThis.ReproIdb &&
+      typeof globalThis.ReproIdb.putOne === "function"
+    ) {
+      return globalThis.ReproIdb;
+    }
+    return null;
+  };
+
   let currentSession = null;
 
   const clone = (value) => {
@@ -84,6 +95,48 @@
   const touch = () => {
     if (currentSession) {
       currentSession.updatedAt = new Date().toISOString();
+    }
+  };
+
+  const buildStepRecord = (session, step) => {
+    const sessionId = session && session.sessionId ? session.sessionId : null;
+    const stepId = step && step.stepId ? step.stepId : step && step.id ? step.id : "";
+    const key = sessionId ? `${sessionId}:${stepId}` : stepId;
+    const createdAtMs = step && step.timestamp ? Date.parse(step.timestamp) : null;
+    return {
+      key,
+      sessionId,
+      stepId,
+      index: step && typeof step.index === "number" ? step.index : null,
+      timestamp: step && step.timestamp ? step.timestamp : null,
+      type: step && step.type ? step.type : "",
+      title: step && step.title ? step.title : "",
+      description: step && step.description ? step.description : "",
+      url: step && step.url ? step.url : "",
+      screenshotRef: step && step.screenshotRef ? step.screenshotRef : "",
+      screenshotFile: step && step.screenshotFile ? step.screenshotFile : "",
+      screenshotPath: step && step.screenshotPath ? step.screenshotPath : "",
+      screenshotCapturedAt:
+        step && step.screenshotCapturedAt ? step.screenshotCapturedAt : null,
+      notes: step && step.notes ? step.notes : "",
+      metadata: step && step.metadata ? step.metadata : {},
+      createdAtMs:
+        typeof createdAtMs === "number" && !Number.isNaN(createdAtMs)
+          ? createdAtMs
+          : Date.now(),
+    };
+  };
+
+  const persistStep = (step) => {
+    const idb = getIdb();
+    if (!idb || !currentSession || !step) {
+      return;
+    }
+    try {
+      const record = buildStepRecord(currentSession, step);
+      void idb.putOne("report_steps", record);
+    } catch (error) {
+      // Persistence is best-effort only.
     }
   };
 
@@ -159,6 +212,7 @@
       };
       updateSummary();
       touch();
+      persistStep(currentSession.steps[idx]);
       return clone(currentSession.steps[idx]);
     },
 
@@ -205,11 +259,15 @@
       const steps = Array.isArray(currentSession.steps)
         ? currentSession.steps
         : [];
-      const normalized = model.normalizeStep(stepPartial, steps.length);
+      const normalized = model.normalizeStep(
+        { ...stepPartial, sessionId: currentSession.sessionId },
+        steps.length
+      );
       steps.push(normalized);
       currentSession.steps = steps;
       updateSummary();
       touch();
+      persistStep(normalized);
       return clone(normalized);
     },
 

@@ -66,8 +66,11 @@
   function normalizeStep(stepPartial = {}, currentStepCount = 0) {
     const index = currentStepCount + 1;
     const timestamp = safeString(stepPartial.timestamp) || nowIso();
+    const id = safeString(stepPartial.id) || `step_${String(index).padStart(4, "0")}`;
     return {
-      id: safeString(stepPartial.id) || `step_${String(index).padStart(4, "0")}`,
+      id,
+      stepId: safeString(stepPartial.stepId) || id,
+      sessionId: safeString(stepPartial.sessionId),
       index,
       timestamp,
       type: safeString(stepPartial.type),
@@ -75,7 +78,18 @@
       description: safeString(stepPartial.description),
       url: safeString(stepPartial.url),
       screenshotFile: safeString(stepPartial.screenshotFile),
+      screenshotRef:
+        safeString(stepPartial.screenshotRef) ||
+        safeString(stepPartial.screenshotPath) ||
+        safeString(stepPartial.screenshotFile),
+      notes: safeString(stepPartial.notes) || safeString(stepPartial.manualNote),
       manualNote: safeString(stepPartial.manualNote),
+      metadata:
+        stepPartial && typeof stepPartial.metadata === "object"
+          ? stepPartial.metadata
+          : stepPartial && typeof stepPartial.meta === "object"
+            ? stepPartial.meta
+            : {},
     };
   }
 

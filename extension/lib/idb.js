@@ -1,6 +1,6 @@
 (function () {
   const DB_NAME = "repro_evidence_db";
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   let dbPromise = null;
 
   function requestToPromise(request) {
@@ -98,6 +98,11 @@
         const store = db.createObjectStore("export_artifacts", { keyPath: "key" });
         store.createIndex("createdAtMs", "createdAtMs", { unique: false });
       }
+      if (!db.objectStoreNames.contains("report_steps")) {
+        const store = db.createObjectStore("report_steps", { keyPath: "key" });
+        store.createIndex("sessionId", "sessionId", { unique: false });
+        store.createIndex("createdAtMs", "createdAtMs", { unique: false });
+      }
     }
 
     function openWithVersion(version) {
@@ -131,6 +136,7 @@
             "recording_chunks",
             "recording_artifacts",
             "export_artifacts",
+            "report_steps",
           ].some((name) => !db.objectStoreNames.contains(name));
           let needsCompletedIndex = false;
           if (db.objectStoreNames.contains("parts")) {

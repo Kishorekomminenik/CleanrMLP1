@@ -1067,6 +1067,42 @@ function getReportConfig() {
   };
 }
 
+async function loadReportStepsForSession(sessionId) {
+  if (
+    !isIdbAvailable() ||
+    !sessionId ||
+    typeof IDBKeyRange === "undefined" ||
+    !globalThis.ReproIdb ||
+    typeof globalThis.ReproIdb.getAllByIndex !== "function"
+  ) {
+    return [];
+  }
+  try {
+    const records = await globalThis.ReproIdb.getAllByIndex(
+      "report_steps",
+      "sessionId",
+      IDBKeyRange.only(sessionId)
+    );
+    if (!Array.isArray(records)) {
+      return [];
+    }
+    return records.slice().sort((a, b) => {
+      const aIndex = typeof a.index === "number" ? a.index : 0;
+      const bIndex = typeof b.index === "number" ? b.index : 0;
+      return aIndex - bIndex;
+    });
+  } catch (error) {
+    return [];
+  }
+}
+
+function buildStepsNdjson(steps) {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return "";
+  }
+  return `${steps.map((step) => JSON.stringify(step)).join("\n")}\n`;
+}
+
 function buildPartId(sessionId, partNumber) {
   return `${sessionId}_part_${partNumber}`;
 }
@@ -4401,6 +4437,16 @@ async function runEvidenceZipExport(context) {
             getData: () => JSON.stringify(reportSession, null, 2),
             options: { date: zipDate },
           });
+          const reportSteps = await loadReportStepsForSession(
+            reportSession.sessionId
+          );
+          if (reportSteps.length > 0) {
+            reportItems.push({
+              path: "reports/steps.ndjson",
+              getData: () => buildStepsNdjson(reportSteps),
+              options: { date: zipDate },
+            });
+          }
         }
       }
     } catch (error) {
