@@ -174,11 +174,12 @@ async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
     messageEl.textContent = "Panel unavailable.";
-    startBtn.disabled = true;
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = true;
-    stopBtn.disabled = true;
-    downloadBtn.disabled = true;
+    applyRecordingControls({
+      liveState: "idle",
+      sessionState: "idle",
+      hasData: false,
+      isFinalizing: false,
+    });
     return;
   }
   const state = res.state;

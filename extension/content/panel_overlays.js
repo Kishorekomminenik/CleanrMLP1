@@ -113,19 +113,30 @@
     root.style.display = "none";
   };
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || message.type !== "REPRO_PANEL_OVERLAY") {
       return false;
     }
-    if (message.action === "show") {
-      showPanel(message.panel);
-      return false;
+    try {
+      if (message.action === "show") {
+        showPanel(message.panel);
+        sendResponse({ ok: true, panel: message.panel, action: "show" });
+        return true;
+      }
+      if (message.action === "hide") {
+        hidePanel(message.panel);
+        sendResponse({ ok: true, panel: message.panel, action: "hide" });
+        return true;
+      }
+      sendResponse({ ok: false, error: "Unknown overlay action." });
+      return true;
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: error && error.message ? error.message : String(error),
+      });
+      return true;
     }
-    if (message.action === "hide") {
-      hidePanel(message.panel);
-      return false;
-    }
-    return false;
   });
 
   window.__reproPanelOverlays = { showPanel, hidePanel };

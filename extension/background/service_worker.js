@@ -2385,34 +2385,49 @@ async function ensurePanelOverlayInjected(tabId) {
 }
 
 async function sendPanelOverlayCommand(tabId, panel, action) {
-  return await sendMessageToTab(tabId, {
+  const response = await sendMessageToTab(tabId, {
     type: "REPRO_PANEL_OVERLAY",
     panel,
     action,
   });
+  if (!response || response.ok !== true) {
+    throw new Error(
+      response && response.error
+        ? response.error
+        : "Overlay did not acknowledge."
+    );
+  }
+  return response;
 }
 
 async function showPanelOverlay(tabId, panel) {
   try {
     await sendPanelOverlayCommand(tabId, panel, "show");
-    return;
+    return true;
   } catch (error) {
     await ensurePanelOverlayInjected(tabId);
     await sendPanelOverlayCommand(tabId, panel, "show");
+    return true;
   }
 }
 
 async function openRecordingPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
-  await showPanelOverlay(tab.id, "recording");
+  const ok = await showPanelOverlay(tab.id, "recording");
+  if (!ok) {
+    throw new Error("Recording panel failed to open.");
+  }
   recordingPanelTabId = tab.id;
 }
 
 async function openLogsPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
-  await showPanelOverlay(tab.id, "logs");
+  const ok = await showPanelOverlay(tab.id, "logs");
+  if (!ok) {
+    throw new Error("Logs panel failed to open.");
+  }
   logsPanelTabId = tab.id;
 }
 

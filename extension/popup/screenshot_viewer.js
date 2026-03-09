@@ -1681,63 +1681,55 @@ if (buttons.copyCompressed) {
       return;
     }
     try {
-      let result = await exportCompressedAnnotatedBlob();
+      const supports =
+        typeof ClipboardItem.supports === "function"
+          ? ClipboardItem.supports.bind(ClipboardItem)
+          : null;
+      let clipboardMime = "image/png";
+      if (supports) {
+        if (supports("image/png")) {
+          clipboardMime = "image/png";
+        } else if (supports("image/jpeg")) {
+          clipboardMime = "image/jpeg";
+        } else if (supports("image/webp")) {
+          clipboardMime = "image/webp";
+        } else {
+          setStatus(
+            "Clipboard image write not supported here. Use Download Small.",
+            "error"
+          );
+          return;
+        }
+      }
+      const result =
+        clipboardMime === "image/png"
+          ? await exportCompressedWithMime(clipboardMime, 4 * 1024 * 1024)
+          : await exportCompressedAnnotatedBlob({
+              mimeType: clipboardMime,
+            });
       if (!result || !result.blob) {
         throw new Error("Failed to create compressed image.");
       }
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ [result.mimeType]: result.blob }),
-        ]);
-        setStatus("Copied (small)!", "success", 2000);
-        console.log("[EDITOR][COPY_COMPRESSED]", {
-          ok: true,
-          bytes: result.blob.size,
-          mimeType: result.mimeType,
-          scale: result.scale,
-        });
-        return;
-      } catch (error) {
-        if (result.mimeType !== "image/jpeg") {
-          result = await exportCompressedAnnotatedBlob({
-            mimeType: "image/jpeg",
-          });
-        }
-        if (result && result.blob) {
-          await navigator.clipboard.write([
-            new ClipboardItem({ [result.mimeType]: result.blob }),
-          ]);
-          setStatus("Copied (small)!", "success", 2000);
-          console.log("[EDITOR][COPY_COMPRESSED]", {
-            ok: true,
-            bytes: result.blob.size,
-            mimeType: result.mimeType,
-            scale: result.scale,
-          });
-          return;
-        }
-        const pngResult = await exportCompressedWithMime(
-          "image/png",
-          4 * 1024 * 1024
-        );
-        if (pngResult && pngResult.blob) {
-          await navigator.clipboard.write([
-            new ClipboardItem({ "image/png": pngResult.blob }),
-          ]);
-          setStatus("Copied (small)!", "success", 2000);
-          console.log("[EDITOR][COPY_COMPRESSED]", {
-            ok: true,
-            bytes: pngResult.blob.size,
-            mimeType: "image/png",
-            scale: pngResult.scale,
-          });
-          return;
-        }
-        throw error;
-      }
+      await navigator.clipboard.write([
+        new ClipboardItem({ [clipboardMime]: result.blob }),
+      ]);
+      setStatus("Copied (small)!", "success", 2000);
+      console.log("[EDITOR][COPY_COMPRESSED]", {
+        ok: true,
+        bytes: result.blob.size,
+        mimeType: clipboardMime,
+        scale: result.scale,
+      });
     } catch (error) {
       const message = error && error.message ? error.message : "Unknown error";
-      setStatus(`Copy failed: ${message}. Use Download.`, "error");
+      if (message.includes("not supported")) {
+        setStatus(
+          "Clipboard image write not supported here. Use Download Small.",
+          "error"
+        );
+      } else {
+        setStatus(`Copy failed: ${message}. Use Download.`, "error");
+      }
       console.log("[EDITOR][COPY_COMPRESSED]", { ok: false });
     }
   });

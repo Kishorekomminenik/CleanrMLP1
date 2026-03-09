@@ -208,9 +208,11 @@ async function refreshStatus() {
   const res = await send("GET_STATUS");
   if (!res || !res.ok) {
     messageEl.textContent = "Panel unavailable.";
-    startBtn.disabled = true;
-    stopBtn.disabled = true;
-    downloadBtn.disabled = true;
+    applyLogsControls({
+      logsState: "idle",
+      hasArtifacts: false,
+      isExporting: false,
+    });
     return;
   }
   const state = res.state || {};
