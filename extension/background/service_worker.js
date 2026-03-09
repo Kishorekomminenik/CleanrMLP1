@@ -65,6 +65,7 @@ const EXPORT_BATCH_DEFAULTS = {
   screenshots: 10,
   yieldEveryMs: 0,
 };
+const EXTENDED_EXPORT = false; // default minimal team export
 const EXPORT_SIZE_GUARDS = {
   maxNetworkJsonBytes: 30 * 1024 * 1024,
   maxConsoleJsonBytes: 12 * 1024 * 1024,
@@ -3815,113 +3816,131 @@ async function runEvidenceZipExport(context) {
           path: "meta/session.json",
           getData: () => toJsonWithSize(data.session || {}, "session"),
           options: { date: zipDate },
-        },
-        {
-          path: "meta/environment.json",
-          getData: () => toJsonWithSize(data.environment || {}, "environment"),
-          options: { date: zipDate },
-        },
-        {
-          path: "meta/export_metadata.json",
-          getData: () =>
-            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
-          options: { date: zipDate },
         }
       );
-      logItems.push({
-        path: "logs/network.pretty.json",
-        getData: async () => {
-          const entries = await loadLimitedEntriesFromIdb({
-            storeName: "network_entries",
-            indexName: "partId",
-            keyRange: IDBKeyRange.only(data.partId),
-            limit: data.exportLimits ? data.exportLimits.maxRequests : EXPORT_LIMITS.maxRequests,
-          });
-          const redactedEntries = redactNetworkEntry
-            ? entries.map((entry) => redactNetworkEntry(entry))
-            : entries;
-          const failedCount = redactedEntries.filter((entry) =>
-            isFailedRequest(entry)
-          ).length;
-          const payload = {
-            session: {
-              session_id: data.session && data.session.session_id ? data.session.session_id : null,
-              part_id: data.partId || null,
-              part_number:
-                data.partInfo && typeof data.partInfo.partNumber === "number"
-                  ? data.partInfo.partNumber
-                  : null,
-              started_at: data.session ? data.session.created_at || null : null,
-              ended_at: data.session ? data.session.ended_at || null : null,
-              mode: data.session ? data.session.mode || null : null,
-              active_tab: data.session ? data.session.active_tab || null : null,
-            },
-            export: {
-              export_timestamp: data.exportTimestamp || null,
-              redaction_enabled: redactionEnabled === true,
-              filters_summary:
-                data.exportMetadata && data.exportMetadata.filters_summary
-                  ? data.exportMetadata.filters_summary
-                  : null,
-            },
-            counts: {
-              total_requests: redactedEntries.length,
-              failed_requests: failedCount,
-            },
-            requests: redactedEntries.map((entry) => formatNetworkPrettyEntry(entry)),
-          };
-          return toJsonWithSize(payload, "network_pretty");
-        },
-        options: { date: zipDate },
-      });
-      logItems.push({
-        path: "logs/console.pretty.json",
-        getData: async () => {
-          const entries = await loadLimitedEntriesFromIdb({
-            storeName: "console_entries",
-            indexName: "partId",
-            keyRange: IDBKeyRange.only(data.partId),
-            limit: data.exportLimits
-              ? data.exportLimits.maxConsoleEntries
-              : EXPORT_LIMITS.maxConsoleEntries,
-          });
-          const redactedEntries = redactConsoleEntry
-            ? entries.map((entry) => redactConsoleEntry(entry))
-            : entries;
-          const errorCount = redactedEntries.filter(
-            (entry) => entry && entry.level === "error"
-          ).length;
-          const payload = {
-            session: {
-              session_id: data.session && data.session.session_id ? data.session.session_id : null,
-              part_id: data.partId || null,
-              part_number:
-                data.partInfo && typeof data.partInfo.partNumber === "number"
-                  ? data.partInfo.partNumber
-                  : null,
-              started_at: data.session ? data.session.created_at || null : null,
-              ended_at: data.session ? data.session.ended_at || null : null,
-              mode: data.session ? data.session.mode || null : null,
-              active_tab: data.session ? data.session.active_tab || null : null,
-            },
-            export: {
-              export_timestamp: data.exportTimestamp || null,
-              redaction_enabled: redactionEnabled === true,
-              filters_summary:
-                data.exportMetadata && data.exportMetadata.filters_summary
-                  ? data.exportMetadata.filters_summary
-                  : null,
-            },
-            counts: {
-              total_entries: redactedEntries.length,
-              error_entries: errorCount,
-            },
-            entries: redactedEntries.map((entry) => formatConsolePrettyEntry(entry)),
-          };
-          return toJsonWithSize(payload, "console_pretty");
-        },
-        options: { date: zipDate },
-      });
+      if (EXTENDED_EXPORT) {
+        metaItems.push(
+          {
+            path: "meta/environment.json",
+            getData: () => toJsonWithSize(data.environment || {}, "environment"),
+            options: { date: zipDate },
+          },
+          {
+            path: "meta/export_metadata.json",
+            getData: () =>
+              toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
+            options: { date: zipDate },
+          }
+        );
+      }
+      if (EXTENDED_EXPORT) {
+        logItems.push({
+          path: "logs/network.pretty.json",
+          getData: async () => {
+            const entries = await loadLimitedEntriesFromIdb({
+              storeName: "network_entries",
+              indexName: "partId",
+              keyRange: IDBKeyRange.only(data.partId),
+              limit: data.exportLimits
+                ? data.exportLimits.maxRequests
+                : EXPORT_LIMITS.maxRequests,
+            });
+            const redactedEntries = redactNetworkEntry
+              ? entries.map((entry) => redactNetworkEntry(entry))
+              : entries;
+            const failedCount = redactedEntries.filter((entry) =>
+              isFailedRequest(entry)
+            ).length;
+            const payload = {
+              session: {
+                session_id:
+                  data.session && data.session.session_id
+                    ? data.session.session_id
+                    : null,
+                part_id: data.partId || null,
+                part_number:
+                  data.partInfo && typeof data.partInfo.partNumber === "number"
+                    ? data.partInfo.partNumber
+                    : null,
+                started_at: data.session ? data.session.created_at || null : null,
+                ended_at: data.session ? data.session.ended_at || null : null,
+                mode: data.session ? data.session.mode || null : null,
+                active_tab: data.session ? data.session.active_tab || null : null,
+              },
+              export: {
+                export_timestamp: data.exportTimestamp || null,
+                redaction_enabled: redactionEnabled === true,
+                filters_summary:
+                  data.exportMetadata && data.exportMetadata.filters_summary
+                    ? data.exportMetadata.filters_summary
+                    : null,
+              },
+              counts: {
+                total_requests: redactedEntries.length,
+                failed_requests: failedCount,
+              },
+              requests: redactedEntries.map((entry) =>
+                formatNetworkPrettyEntry(entry)
+              ),
+            };
+            return toJsonWithSize(payload, "network_pretty");
+          },
+          options: { date: zipDate },
+        });
+        logItems.push({
+          path: "logs/console.pretty.json",
+          getData: async () => {
+            const entries = await loadLimitedEntriesFromIdb({
+              storeName: "console_entries",
+              indexName: "partId",
+              keyRange: IDBKeyRange.only(data.partId),
+              limit: data.exportLimits
+                ? data.exportLimits.maxConsoleEntries
+                : EXPORT_LIMITS.maxConsoleEntries,
+            });
+            const redactedEntries = redactConsoleEntry
+              ? entries.map((entry) => redactConsoleEntry(entry))
+              : entries;
+            const errorCount = redactedEntries.filter(
+              (entry) => entry && entry.level === "error"
+            ).length;
+            const payload = {
+              session: {
+                session_id:
+                  data.session && data.session.session_id
+                    ? data.session.session_id
+                    : null,
+                part_id: data.partId || null,
+                part_number:
+                  data.partInfo && typeof data.partInfo.partNumber === "number"
+                    ? data.partInfo.partNumber
+                    : null,
+                started_at: data.session ? data.session.created_at || null : null,
+                ended_at: data.session ? data.session.ended_at || null : null,
+                mode: data.session ? data.session.mode || null : null,
+                active_tab: data.session ? data.session.active_tab || null : null,
+              },
+              export: {
+                export_timestamp: data.exportTimestamp || null,
+                redaction_enabled: redactionEnabled === true,
+                filters_summary:
+                  data.exportMetadata && data.exportMetadata.filters_summary
+                    ? data.exportMetadata.filters_summary
+                    : null,
+              },
+              counts: {
+                total_entries: redactedEntries.length,
+                error_entries: errorCount,
+              },
+              entries: redactedEntries.map((entry) =>
+                formatConsolePrettyEntry(entry)
+              ),
+            };
+            return toJsonWithSize(payload, "console_pretty");
+          },
+          options: { date: zipDate },
+        });
+      }
     } else {
       const networkTotal =
         data.session && data.session.counts
@@ -3973,50 +3992,57 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      logItems.push({
-        path: "logs/network.pretty.json",
-        getData: async () => {
-          const entries =
-            data.networkLogs && Array.isArray(data.networkLogs.entries)
-              ? data.networkLogs.entries
-              : [];
-          const redactedEntries = redactNetworkEntry
-            ? entries.map((entry) => redactNetworkEntry(entry))
-            : entries;
-          const failedCount = redactedEntries.filter((entry) =>
-            isFailedRequest(entry)
-          ).length;
-          const payload = {
-            session: {
-              session_id: data.session && data.session.session_id ? data.session.session_id : null,
-              part_id: data.partId || null,
-              part_number:
-                data.partInfo && typeof data.partInfo.partNumber === "number"
-                  ? data.partInfo.partNumber
-                  : null,
-              started_at: data.session ? data.session.created_at || null : null,
-              ended_at: data.session ? data.session.ended_at || null : null,
-              mode: data.session ? data.session.mode || null : null,
-              active_tab: data.session ? data.session.active_tab || null : null,
-            },
-            export: {
-              export_timestamp: data.exportTimestamp || null,
-              redaction_enabled: redactionEnabled === true,
-              filters_summary:
-                data.exportMetadata && data.exportMetadata.filters_summary
-                  ? data.exportMetadata.filters_summary
-                  : null,
-            },
-            counts: {
-              total_requests: redactedEntries.length,
-              failed_requests: failedCount,
-            },
-            requests: redactedEntries.map((entry) => formatNetworkPrettyEntry(entry)),
-          };
-          return toJsonWithSize(payload, "network_pretty");
-        },
-        options: { date: zipDate },
-      });
+      if (EXTENDED_EXPORT) {
+        logItems.push({
+          path: "logs/network.pretty.json",
+          getData: async () => {
+            const entries =
+              data.networkLogs && Array.isArray(data.networkLogs.entries)
+                ? data.networkLogs.entries
+                : [];
+            const redactedEntries = redactNetworkEntry
+              ? entries.map((entry) => redactNetworkEntry(entry))
+              : entries;
+            const failedCount = redactedEntries.filter((entry) =>
+              isFailedRequest(entry)
+            ).length;
+            const payload = {
+              session: {
+                session_id:
+                  data.session && data.session.session_id
+                    ? data.session.session_id
+                    : null,
+                part_id: data.partId || null,
+                part_number:
+                  data.partInfo && typeof data.partInfo.partNumber === "number"
+                    ? data.partInfo.partNumber
+                    : null,
+                started_at: data.session ? data.session.created_at || null : null,
+                ended_at: data.session ? data.session.ended_at || null : null,
+                mode: data.session ? data.session.mode || null : null,
+                active_tab: data.session ? data.session.active_tab || null : null,
+              },
+              export: {
+                export_timestamp: data.exportTimestamp || null,
+                redaction_enabled: redactionEnabled === true,
+                filters_summary:
+                  data.exportMetadata && data.exportMetadata.filters_summary
+                    ? data.exportMetadata.filters_summary
+                    : null,
+              },
+              counts: {
+                total_requests: redactedEntries.length,
+                failed_requests: failedCount,
+              },
+              requests: redactedEntries.map((entry) =>
+                formatNetworkPrettyEntry(entry)
+              ),
+            };
+            return toJsonWithSize(payload, "network_pretty");
+          },
+          options: { date: zipDate },
+        });
+      }
       logItems.push({
         path: "logs/console.ndjson",
         getData: async () => {
@@ -4061,80 +4087,91 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      logItems.push({
-        path: "logs/console.pretty.json",
-        getData: async () => {
-          const entries =
-            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-              ? data.consoleLogs.entries
-              : [];
-          const redactedEntries = redactConsoleEntry
-            ? entries.map((entry) => redactConsoleEntry(entry))
-            : entries;
-          const errorCount = redactedEntries.filter(
-            (entry) => entry && entry.level === "error"
-          ).length;
-          const payload = {
-            session: {
-              session_id: data.session && data.session.session_id ? data.session.session_id : null,
-              part_id: data.partId || null,
-              part_number:
-                data.partInfo && typeof data.partInfo.partNumber === "number"
-                  ? data.partInfo.partNumber
-                  : null,
-              started_at: data.session ? data.session.created_at || null : null,
-              ended_at: data.session ? data.session.ended_at || null : null,
-              mode: data.session ? data.session.mode || null : null,
-              active_tab: data.session ? data.session.active_tab || null : null,
-            },
-            export: {
-              export_timestamp: data.exportTimestamp || null,
-              redaction_enabled: redactionEnabled === true,
-              filters_summary:
-                data.exportMetadata && data.exportMetadata.filters_summary
-                  ? data.exportMetadata.filters_summary
-                  : null,
-            },
-            counts: {
-              total_entries: redactedEntries.length,
-              error_entries: errorCount,
-            },
-            entries: redactedEntries.map((entry) => formatConsolePrettyEntry(entry)),
-          };
-          return toJsonWithSize(payload, "console_pretty");
-        },
-        options: { date: zipDate },
-      });
+      if (EXTENDED_EXPORT) {
+        logItems.push({
+          path: "logs/console.pretty.json",
+          getData: async () => {
+            const entries =
+              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                ? data.consoleLogs.entries
+                : [];
+            const redactedEntries = redactConsoleEntry
+              ? entries.map((entry) => redactConsoleEntry(entry))
+              : entries;
+            const errorCount = redactedEntries.filter(
+              (entry) => entry && entry.level === "error"
+            ).length;
+            const payload = {
+              session: {
+                session_id:
+                  data.session && data.session.session_id
+                    ? data.session.session_id
+                    : null,
+                part_id: data.partId || null,
+                part_number:
+                  data.partInfo && typeof data.partInfo.partNumber === "number"
+                    ? data.partInfo.partNumber
+                    : null,
+                started_at: data.session ? data.session.created_at || null : null,
+                ended_at: data.session ? data.session.ended_at || null : null,
+                mode: data.session ? data.session.mode || null : null,
+                active_tab: data.session ? data.session.active_tab || null : null,
+              },
+              export: {
+                export_timestamp: data.exportTimestamp || null,
+                redaction_enabled: redactionEnabled === true,
+                filters_summary:
+                  data.exportMetadata && data.exportMetadata.filters_summary
+                    ? data.exportMetadata.filters_summary
+                    : null,
+              },
+              counts: {
+                total_entries: redactedEntries.length,
+                error_entries: errorCount,
+              },
+              entries: redactedEntries.map((entry) =>
+                formatConsolePrettyEntry(entry)
+              ),
+            };
+            return toJsonWithSize(payload, "console_pretty");
+          },
+          options: { date: zipDate },
+        });
+      }
       metaItems.push(
         {
           path: "meta/session.json",
           getData: () => toJsonWithSize(data.session || {}, "session"),
           options: { date: zipDate },
-        },
-        {
-          path: "meta/environment.json",
-          getData: () => toJsonWithSize(data.environment || {}, "environment"),
-          options: { date: zipDate },
-        },
-        {
-          path: "meta/export_metadata.json",
-          getData: () =>
-            toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
-          options: { date: zipDate },
         }
       );
+      if (EXTENDED_EXPORT) {
+        metaItems.push(
+          {
+            path: "meta/environment.json",
+            getData: () => toJsonWithSize(data.environment || {}, "environment"),
+            options: { date: zipDate },
+          },
+          {
+            path: "meta/export_metadata.json",
+            getData: () =>
+              toJsonWithSize(data.exportMetadata || {}, "export_metadata"),
+            options: { date: zipDate },
+          }
+        );
+      }
     }
-    if (!usePartExport && data.qaSessionLog) {
+    if (EXTENDED_EXPORT && !usePartExport && data.qaSessionLog) {
       summaryItems.push({
-        path: "summary/qa-session-log.json",
+        path: "qa/qa-session-log.json",
         getData: () =>
           toJsonWithSize(data.qaSessionLog || {}, "qa_session_log"),
         options: { date: zipDate },
       });
     }
-    if (data.qaSummaryText) {
+    if (EXTENDED_EXPORT && data.qaSummaryText) {
       summaryItems.push({
-        path: "summary/qa-summary.txt",
+        path: "qa/qa-summary.txt",
         data: data.qaSummaryText,
         options: { date: zipDate },
       });
@@ -4232,9 +4269,9 @@ async function runEvidenceZipExport(context) {
       },
       options: { date: zipDate },
     });
-    if (data.exportTruncationReport) {
+    if (EXTENDED_EXPORT && data.exportTruncationReport) {
       summaryItems.push({
-        path: "summary/truncation_report.json",
+        path: "qa/truncation_report.json",
         getData: () =>
           toJsonWithSize(
             data.exportTruncationReport || {},
@@ -4244,6 +4281,9 @@ async function runEvidenceZipExport(context) {
       });
     }
     baseItems = [...logItems, ...metaItems, ...summaryItems];
+    if (!EXTENDED_EXPORT) {
+      console.info("[EXPORT] Minimal team export mode active");
+    }
     logExportPhase("zip_add_json", { count: baseItems.length });
     await ZipBuilderChunked.addItemsInBatches(zip, baseItems, {
       batchSize: 1,
