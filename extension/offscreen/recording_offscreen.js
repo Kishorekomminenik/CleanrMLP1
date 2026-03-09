@@ -18,6 +18,7 @@ let recordingSegmentMode = false;
 let recordingObjectUrl = null;
 let recordingObjectUrlBytes = 0;
 let recordingFinalChunkLogged = false;
+let recordingLastTimecodeMs = null;
 let recordingSessionId = null;
 let recordingTabId = null;
 let recordingChunkIndex = 0;
@@ -765,6 +766,7 @@ function resetRecordingState() {
   recordingChunkBufferDropped = false;
   recordingStopFallbackUsed = false;
   recordingSessionMeta = null;
+  recordingLastTimecodeMs = null;
   revokeRecordingUrl();
 }
 
@@ -913,6 +915,12 @@ function attachRecorderHandlers(recorder) {
             : null,
         createdAt: Date.now(),
       };
+      if (typeof record.timecode === "number") {
+        recordingLastTimecodeMs =
+          typeof recordingLastTimecodeMs === "number"
+            ? Math.max(recordingLastTimecodeMs, record.timecode)
+            : record.timecode;
+      }
       queueRecordingChunkFlush(record);
       if (!recordingHasData) {
         recordingHasData = true;
@@ -1019,6 +1027,7 @@ async function startRecording(streamId, tabId, requestedMime, sessionId) {
       mediaRecorder = null;
       stopStreamTracks();
       notifyStateChanged("ended");
+      recordingDurationMsSnapshot = computeElapsedMs();
       recordingStopFallbackUsed = true;
       console.log("[RECORDING][TRACK_ENDED]", {
         sessionId: recordingSessionId,
@@ -1191,6 +1200,7 @@ async function stopRecording() {
       mediaRecorder = null;
       stopStreamTracks();
       notifyStateChanged("stop");
+      recordingDurationMsSnapshot = computeElapsedMs();
       recordingStopFallbackUsed = true;
       const fallback = {
         ok: true,
@@ -1284,10 +1294,15 @@ async function exportRecordingWebm() {
     bytes: blob.size,
     mimeType: recordingMimeType || "video/webm",
   });
-  const durationMs =
+  let durationMs =
     typeof recordingDurationMsSnapshot === "number"
       ? recordingDurationMsSnapshot
       : computeElapsedMs();
+  if (!durationMs || durationMs <= 0) {
+    if (typeof recordingLastTimecodeMs === "number") {
+      durationMs = Math.round(recordingLastTimecodeMs);
+    }
+  }
   try {
     const fixed = await fixWebmDuration(blob, durationMs);
     if (fixed instanceof Blob) {
