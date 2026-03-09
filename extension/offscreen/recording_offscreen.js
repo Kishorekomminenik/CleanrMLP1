@@ -582,6 +582,16 @@ function encodeVintSize(value, length) {
   return bytes;
 }
 
+function encodeEbmlSize(value) {
+  for (let length = 1; length <= 8; length += 1) {
+    const max = Math.pow(2, 7 * length) - 1;
+    if (value >= 0 && value < max) {
+      return encodeVintSize(value, length);
+    }
+  }
+  throw new Error("Value does not fit in EBML size");
+}
+
 function findElement(buffer, start, end, targetId) {
   const view = new DataView(buffer);
   let offset = start;
@@ -611,6 +621,221 @@ function findElement(buffer, start, end, targetId) {
     offset = dataEnd;
   }
   return null;
+}
+
+function encodeUnsignedInt(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return new Uint8Array([0x00]);
+  }
+  let remaining = Math.floor(value);
+  const bytes = [];
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining = Math.floor(remaining / 256);
+  }
+  return new Uint8Array(bytes);
+}
+
+function buildEbmlElement(idBytes, payloadBytes) {
+  const sizeBytes = encodeEbmlSize(payloadBytes.length);
+  const element = new Uint8Array(idBytes.length + sizeBytes.length + payloadBytes.length);
+  element.set(idBytes, 0);
+  element.set(sizeBytes, idBytes.length);
+  element.set(payloadBytes, idBytes.length + sizeBytes.length);
+  return element;
+}
+
+function concatUint8(chunks) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return combined;
+}
+
+function readUnsignedInt(view, offset, length) {
+  let value = 0;
+  for (let i = 0; i < length; i += 1) {
+    value = value * 256 + view.getUint8(offset + i);
+  }
+  return value;
+}
+
+function readClusterTimecode(view, start, end) {
+  let offset = start;
+  while (offset < end) {
+    const id = readVintId(view, offset);
+    offset += id.length;
+    const size = readVintSize(view, offset);
+    offset += size.length;
+    const dataStart = offset;
+    const dataEnd = size.unknown ? end : offset + size.value;
+    if (id.value === 0xe7) {
+      return readUnsignedInt(view, dataStart, size.value);
+    }
+    if (size.unknown) {
+      break;
+    }
+    offset = dataEnd;
+  }
+  return 0;
+}
+
+function parseTrackNumber(buffer, tracksElement) {
+  const view = new DataView(buffer);
+  let offset = tracksElement.dataStart;
+  while (offset < tracksElement.dataEnd) {
+    const id = readVintId(view, offset);
+    offset += id.length;
+    const size = readVintSize(view, offset);
+    offset += size.length;
+    const dataStart = offset;
+    const dataEnd = size.unknown ? tracksElement.dataEnd : offset + size.value;
+    if (id.value === 0xae) {
+      let entryOffset = dataStart;
+      while (entryOffset < dataEnd) {
+        const entryId = readVintId(view, entryOffset);
+        entryOffset += entryId.length;
+        const entrySize = readVintSize(view, entryOffset);
+        entryOffset += entrySize.length;
+        const entryDataStart = entryOffset;
+        const entryDataEnd = entrySize.unknown ? dataEnd : entryOffset + entrySize.value;
+        if (entryId.value === 0xd7) {
+          return readUnsignedInt(view, entryDataStart, entrySize.value);
+        }
+        if (entrySize.unknown) {
+          break;
+        }
+        entryOffset = entryDataEnd;
+      }
+      break;
+    }
+    if (size.unknown) {
+      break;
+    }
+    offset = dataEnd;
+  }
+  return null;
+}
+
+function parseClustersFromBuffer(buffer) {
+  const segment = findElement(buffer, 0, buffer.byteLength, 0x18538067);
+  if (!segment) {
+    return [];
+  }
+  const view = new DataView(buffer);
+  const segmentEnd = segment.sizeUnknown ? buffer.byteLength : segment.dataEnd;
+  let offset = segment.dataStart;
+  const clusters = [];
+  while (offset < segmentEnd) {
+    const idStart = offset;
+    const id = readVintId(view, offset);
+    offset += id.length;
+    const size = readVintSize(view, offset);
+    offset += size.length;
+    const dataStart = offset;
+    const dataEnd = size.unknown ? segmentEnd : offset + size.value;
+    if (id.value === 0x1f43b675) {
+      const bytes = new Uint8Array(buffer.slice(idStart, dataEnd));
+      const timecode = readClusterTimecode(view, dataStart, dataEnd);
+      clusters.push({ bytes, timecode });
+      if (size.unknown) {
+        break;
+      }
+    }
+    if (size.unknown) {
+      break;
+    }
+    offset = dataEnd;
+  }
+  return clusters;
+}
+
+async function remuxWebmChunks(chunks, durationMs, mimeType) {
+  console.log("[RECORDING][REMUX][START]", {
+    chunkCount: chunks.length,
+    durationMs,
+  });
+  const buffers = await Promise.all(chunks.map((chunk) => chunk.arrayBuffer()));
+  const first = buffers[0];
+  const segment = findElement(first, 0, first.byteLength, 0x18538067);
+  if (!segment) {
+    return null;
+  }
+  const segmentEnd = segment.sizeUnknown ? first.byteLength : segment.dataEnd;
+  const info = findElement(first, segment.dataStart, segmentEnd, 0x1549a966);
+  const tracks = findElement(first, segment.dataStart, segmentEnd, 0x1654ae6b);
+  if (!info || !tracks) {
+    return null;
+  }
+  const headerBytes = new Uint8Array(first.slice(0, segment.headerStart));
+  const infoBytes = new Uint8Array(first.slice(info.headerStart, info.dataEnd));
+  const tracksBytes = new Uint8Array(first.slice(tracks.headerStart, tracks.dataEnd));
+  const parsedTrackNumber = parseTrackNumber(first, tracks);
+  const trackNumber = parsedTrackNumber || 1;
+  const clusters = [];
+  buffers.forEach((buffer) => {
+    clusters.push(...parseClustersFromBuffer(buffer));
+  });
+  console.log("[RECORDING][REMUX][PARSE]", {
+    clusterCount: clusters.length,
+    trackInfoFound: parsedTrackNumber !== null,
+    infoFound: Boolean(info),
+  });
+  if (!clusters.length) {
+    return null;
+  }
+  const cuePoints = [];
+  const clusterBytes = [];
+  let clusterBytesTotal = 0;
+  let clusterOffset = infoBytes.length + tracksBytes.length;
+  for (const cluster of clusters) {
+    cuePoints.push(
+      buildEbmlElement(
+        new Uint8Array([0xbb]),
+        concatUint8([
+          buildEbmlElement(new Uint8Array([0xb3]), encodeUnsignedInt(cluster.timecode)),
+          buildEbmlElement(
+            new Uint8Array([0xb7]),
+            concatUint8([
+              buildEbmlElement(new Uint8Array([0xf7]), encodeUnsignedInt(trackNumber)),
+              buildEbmlElement(new Uint8Array([0xf1]), encodeUnsignedInt(clusterOffset)),
+            ])
+          ),
+        ])
+      )
+    );
+    clusterBytes.push(cluster.bytes);
+    clusterBytesTotal += cluster.bytes.length;
+    clusterOffset += cluster.bytes.length;
+  }
+  const cuesPayload = concatUint8(cuePoints);
+  const cuesElement = buildEbmlElement(new Uint8Array([0x1c, 0x53, 0xbb, 0x6b]), cuesPayload);
+  console.log("[RECORDING][REMUX][CUES]", { cueCount: cuePoints.length });
+  const segmentDataLength =
+    infoBytes.length + tracksBytes.length + clusterBytesTotal + cuesElement.length;
+  const segmentSizeBytes = encodeEbmlSize(segmentDataLength);
+  const segmentHeader = concatUint8([
+    new Uint8Array([0x18, 0x53, 0x80, 0x67]),
+    segmentSizeBytes,
+  ]);
+  const output = concatUint8([
+    headerBytes,
+    segmentHeader,
+    infoBytes,
+    tracksBytes,
+    ...clusterBytes,
+    cuesElement,
+  ]);
+  console.log("[RECORDING][REMUX][DONE]", {
+    inputBytes: sumChunkBytes(chunks),
+    outputBytes: output.length,
+    seekable: true,
+  });
+  return new Blob([output], { type: mimeType || "video/webm" });
 }
 
 async function fixWebmDuration(blob, durationMs) {
@@ -1307,6 +1532,23 @@ async function exportRecordingWebm() {
   if (!durationMs || durationMs <= 0) {
     if (typeof recordingLastTimecodeMs === "number") {
       durationMs = Math.round(recordingLastTimecodeMs);
+    }
+  }
+  if (chunks.length > 1) {
+    try {
+      const remuxed = await remuxWebmChunks(
+        chunks,
+        durationMs,
+        recordingMimeType || "video/webm"
+      );
+      if (remuxed instanceof Blob) {
+        blob = remuxed;
+      }
+    } catch (error) {
+      console.log(
+        "[REC] remux failed",
+        error && error.message ? error.message : String(error)
+      );
     }
   }
   try {
