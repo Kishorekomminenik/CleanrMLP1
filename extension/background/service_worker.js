@@ -236,6 +236,54 @@ let offscreenReady = false;
 let offscreenCreating = null;
 let recordingPanelTabId = null;
 let logsPanelTabId = null;
+let recordingPanelWindowId = null;
+let recordingPanelWindowTabId = null;
+const panelOverlayState = {
+  recording: {
+    closedTabs: new Set(),
+    hiddenForCaptureTabs: new Set(),
+  },
+  logs: {
+    closedTabs: new Set(),
+    hiddenForCaptureTabs: new Set(),
+  },
+};
+
+function isPanelClosed(tabId, panel) {
+  if (!tabId || !panelOverlayState[panel]) {
+    return false;
+  }
+  return panelOverlayState[panel].closedTabs.has(tabId);
+}
+
+function markPanelClosed(tabId, panel, closed = true) {
+  if (!tabId || !panelOverlayState[panel]) {
+    return;
+  }
+  if (closed) {
+    panelOverlayState[panel].closedTabs.add(tabId);
+  } else {
+    panelOverlayState[panel].closedTabs.delete(tabId);
+  }
+}
+
+function isPanelHiddenForCapture(tabId, panel) {
+  if (!tabId || !panelOverlayState[panel]) {
+    return false;
+  }
+  return panelOverlayState[panel].hiddenForCaptureTabs.has(tabId);
+}
+
+function setPanelHiddenForCapture(tabId, panel, hidden) {
+  if (!tabId || !panelOverlayState[panel]) {
+    return;
+  }
+  if (hidden) {
+    panelOverlayState[panel].hiddenForCaptureTabs.add(tabId);
+  } else {
+    panelOverlayState[panel].hiddenForCaptureTabs.delete(tabId);
+  }
+}
 let exportPhase = null;
 let exportJob = null;
 
@@ -2400,6 +2448,17 @@ async function sendPanelOverlayCommand(tabId, panel, action) {
   return response;
 }
 
+async function mountPanelOverlay(tabId, panel) {
+  try {
+    await sendPanelOverlayCommand(tabId, panel, "mount");
+    return true;
+  } catch (error) {
+    await ensurePanelOverlayInjected(tabId);
+    await sendPanelOverlayCommand(tabId, panel, "mount");
+    return true;
+  }
+}
+
 async function showPanelOverlay(tabId, panel) {
   try {
     await sendPanelOverlayCommand(tabId, panel, "show");
@@ -2411,9 +2470,19 @@ async function showPanelOverlay(tabId, panel) {
   }
 }
 
+async function hidePanelOverlay(tabId, panel) {
+  try {
+    await sendPanelOverlayCommand(tabId, panel, "hide");
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function openRecordingPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
+  markPanelClosed(tab.id, "recording", false);
   const ok = await showPanelOverlay(tab.id, "recording");
   if (!ok) {
     throw new Error("Recording panel failed to open.");
@@ -2421,9 +2490,42 @@ async function openRecordingPanelOverlay(tabId) {
   recordingPanelTabId = tab.id;
 }
 
+async function openRecordingPanelWindow(tabId) {
+  if (recordingPanelWindowId) {
+    try {
+      await chrome.windows.update(recordingPanelWindowId, { focused: true });
+      return;
+    } catch (error) {
+      recordingPanelWindowId = null;
+      recordingPanelWindowTabId = null;
+    }
+  }
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL("popup/recording_panel.html"),
+    type: "popup",
+    width: 320,
+    height: 280,
+    focused: true,
+  });
+  recordingPanelWindowId = created && created.id ? created.id : null;
+  recordingPanelWindowTabId = tabId || null;
+}
+
+function closeRecordingPanelWindowIfOpen() {
+  if (!recordingPanelWindowId) {
+    return;
+  }
+  chrome.windows.remove(recordingPanelWindowId, () => {
+    void chrome.runtime.lastError;
+  });
+  recordingPanelWindowId = null;
+  recordingPanelWindowTabId = null;
+}
+
 async function openLogsPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
+  markPanelClosed(tab.id, "logs", false);
   const ok = await showPanelOverlay(tab.id, "logs");
   if (!ok) {
     throw new Error("Logs panel failed to open.");
@@ -6018,6 +6120,15 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!streamId) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
+    if (!isPanelClosed(tab.id, "recording")) {
+      await openRecordingPanelWindow(tab.id);
+      setPanelHiddenForCapture(tab.id, "recording", true);
+      await hidePanelOverlay(tab.id, "recording");
+    }
+    if (state.network.active && !isPanelClosed(tab.id, "logs")) {
+      setPanelHiddenForCapture(tab.id, "logs", true);
+      await hidePanelOverlay(tab.id, "logs");
+    }
     const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
     state.recording.sessionId = recordingSessionId;
     console.log("[REC][sw] routing RECORDING_START to offscreen", {
@@ -6079,6 +6190,11 @@ async function startRecording(streamId, tabId, mimeType) {
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
     });
+    if (tab && tab.id && isPanelHiddenForCapture(tab.id, "recording")) {
+      setPanelHiddenForCapture(tab.id, "recording", false);
+      await showPanelOverlay(tab.id, "recording");
+      closeRecordingPanelWindowIfOpen();
+    }
     throw error;
   }
 }
@@ -6156,6 +6272,7 @@ async function resumeRecording() {
 async function stopRecording() {
   // V1 STABLE: stop/finalize flow; changes require retesting normal + fallback.
   console.log("[REC][sw] STOP_REQUESTED");
+  const recordingTabId = recordingOverlayState.tabId;
   if (state.recording.sessionId) {
     console.log("[RECORDING][STATE]", {
       from: state.recording.status || "unknown",
@@ -6263,6 +6380,17 @@ async function stopRecording() {
     }
   }
   clearStatusMessage();
+  if (recordingTabId && !isPanelClosed(recordingTabId, "recording")) {
+    setPanelHiddenForCapture(recordingTabId, "recording", false);
+    await showPanelOverlay(recordingTabId, "recording");
+    closeRecordingPanelWindowIfOpen();
+  }
+  if (recordingTabId && !isPanelClosed(recordingTabId, "logs")) {
+    setPanelHiddenForCapture(recordingTabId, "logs", false);
+    if (state.network.active) {
+      await showPanelOverlay(recordingTabId, "logs");
+    }
+  }
   return response;
 }
 
@@ -6764,6 +6892,44 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   } catch (error) {
     // Report tracking is optional; ignore failures.
   }
+
+  if (changeInfo.status !== "complete") {
+    return;
+  }
+
+  if (
+    recordingOverlayState.tabId === tabId &&
+    (state.recording.status === "recording" || state.recording.status === "paused")
+  ) {
+    if (!isPanelClosed(tabId, "recording")) {
+      if (isPanelHiddenForCapture(tabId, "recording")) {
+        void mountPanelOverlay(tabId, "recording");
+      } else {
+        void showPanelOverlay(tabId, "recording");
+      }
+    }
+    if (state.network.active && !isPanelClosed(tabId, "logs")) {
+      if (isPanelHiddenForCapture(tabId, "logs")) {
+        void mountPanelOverlay(tabId, "logs");
+      } else {
+        void showPanelOverlay(tabId, "logs");
+      }
+    }
+  } else if (state.network.active && state.network.tabId === tabId) {
+    if (!isPanelClosed(tabId, "logs")) {
+      void showPanelOverlay(tabId, "logs");
+    }
+  }
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === recordingPanelWindowId) {
+    recordingPanelWindowId = null;
+    if (recordingPanelWindowTabId) {
+      markPanelClosed(recordingPanelWindowTabId, "recording", true);
+    }
+    recordingPanelWindowTabId = null;
+  }
 });
 
 // V1 STABLE: detach finalization must preserve queued logs.
@@ -7000,17 +7166,21 @@ function buildNetworkStorageRecord(entry) {
   if (!entry || !captureState.partId) {
     return null;
   }
-  const responseHeaders =
-    entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0
-      ? entry.responseHeaders
-      : null;
+  const hasRequestHeaders =
+    entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0;
+  const hasResponseHeaders =
+    entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0;
+  const responseHeaders = hasResponseHeaders ? entry.responseHeaders : null;
   const skipBody = shouldSkipResponseBody(responseHeaders);
   const timestampIso = entry.timestampIso || nowIso();
   const timestampEpochMs = parseEpochMs(timestampIso);
+  const hasRequestBody = typeof entry.requestBody === "string";
   const requestBodyMeta = truncateBodyWithMeta(
-    typeof entry.requestBody === "string" ? entry.requestBody : null,
+    hasRequestBody ? entry.requestBody : null,
     captureState.maxBodyBytes
   );
+  const hasResponseBody =
+    !skipBody && typeof entry.responseBody === "string";
   const responseBodyMeta = skipBody
     ? { value: null, truncated: false, originalBytes: null }
     : decodeResponseBodyWithLimit(entry, captureState.maxBodyBytes);
@@ -7022,17 +7192,24 @@ function buildNetworkStorageRecord(entry) {
     url: entry.url || null,
     method: entry.method || null,
     resource_type: entry.resourceType || null,
-    request_headers:
-      entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
-        ? entry.requestHeaders
-        : null,
+    request_headers: hasRequestHeaders ? entry.requestHeaders : null,
+    request_headers_unavailable: hasRequestHeaders ? undefined : true,
     request_post_data: requestBodyMeta.value,
+    request_body_unavailable: hasRequestBody ? undefined : true,
+    request_body_unavailable_reason: hasRequestBody ? null : "unavailable",
     response_status: typeof entry.status === "number" ? entry.status : null,
     response_status_text: entry.statusText || null,
     response_headers: responseHeaders,
+    response_headers_unavailable: hasResponseHeaders ? undefined : true,
     response_mime_type: entry.mimeType || null,
     response_body_skipped: skipBody ? true : undefined,
     response_body: responseBodyMeta.value,
+    response_body_unavailable: hasResponseBody ? undefined : true,
+    response_body_unavailable_reason: skipBody
+      ? "binary_content"
+      : hasResponseBody
+        ? null
+        : "unavailable",
     timing: entry.timing || null,
     from_disk_cache:
       typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
@@ -7410,13 +7587,17 @@ function buildNetworkExportEntries() {
   }
   return sliceIds.map((id) => {
     const entry = state.network.requests[id] || {};
-    const responseHeaders =
-      entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0
-        ? entry.responseHeaders
-        : null;
+    const hasRequestHeaders =
+      entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0;
+    const hasResponseHeaders =
+      entry.responseHeaders && Object.keys(entry.responseHeaders).length > 0;
+    const responseHeaders = hasResponseHeaders ? entry.responseHeaders : null;
     const skipBody = shouldSkipResponseBody(responseHeaders);
     const timestampIso = entry.timestampIso || nowIso();
     const timestampEpochMs = parseEpochMs(timestampIso);
+    const hasRequestBody = typeof entry.requestBody === "string";
+    const hasResponseBody =
+      !skipBody && typeof entry.responseBody === "string";
     return {
       request_id: entry.id || null,
       timestamp: timestampIso,
@@ -7424,19 +7605,25 @@ function buildNetworkExportEntries() {
       time_missing: timestampEpochMs === null ? true : undefined,
       url: entry.url || null,
       method: entry.method || null,
-      request_headers:
-        entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0
-          ? entry.requestHeaders
-          : null,
-      request_post_data:
-        typeof entry.requestBody === "string" ? entry.requestBody : null,
+      request_headers: hasRequestHeaders ? entry.requestHeaders : null,
+      request_headers_unavailable: hasRequestHeaders ? undefined : true,
+      request_post_data: hasRequestBody ? entry.requestBody : null,
+      request_body_unavailable: hasRequestBody ? undefined : true,
+      request_body_unavailable_reason: hasRequestBody ? null : "unavailable",
       response_status:
         typeof entry.status === "number" ? entry.status : null,
       response_status_text: entry.statusText || null,
       response_headers: responseHeaders,
+      response_headers_unavailable: hasResponseHeaders ? undefined : true,
       response_mime_type: entry.mimeType || null,
       response_body_skipped: skipBody ? true : undefined,
       response_body: skipBody ? null : decodeResponseBody(entry),
+      response_body_unavailable: hasResponseBody ? undefined : true,
+      response_body_unavailable_reason: skipBody
+        ? "binary_content"
+        : hasResponseBody
+          ? null
+          : "unavailable",
       timing: entry.timing || null,
       from_disk_cache:
         typeof entry.fromDiskCache === "boolean" ? entry.fromDiskCache : null,
@@ -7507,6 +7694,16 @@ async function handleMessage(message, sender) {
   console.log("[SW] msg", normalizedMessage.type);
   let result;
   switch (normalizedMessage.type) {
+    case "PANEL_OVERLAY_CLOSED":
+      if (sender && sender.tab && sender.tab.id) {
+        const panel = normalizedMessage.panel === "logs" ? "logs" : "recording";
+        markPanelClosed(sender.tab.id, panel, true);
+        if (panel === "recording" && sender.tab.id === recordingPanelTabId) {
+          closeRecordingPanelWindowIfOpen();
+        }
+      }
+      result = { ok: true };
+      break;
     case "OPEN_RECORDING_PANEL":
       await openRecordingPanelOverlay();
       result = { ok: true };

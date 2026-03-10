@@ -30,6 +30,14 @@
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", () => {
       root.style.display = "none";
+      try {
+        chrome.runtime.sendMessage({
+          type: "PANEL_OVERLAY_CLOSED",
+          panel,
+        });
+      } catch (error) {
+        // Ignore overlay close telemetry failures.
+      }
     });
 
     header.appendChild(brand);
@@ -105,6 +113,15 @@
     root.style.display = "block";
   };
 
+  const mountPanel = (panel) => {
+    let root = overlays.get(panel);
+    if (!root) {
+      root = buildPanel(panel);
+      overlays.set(panel, root);
+    }
+    root.style.display = "none";
+  };
+
   const hidePanel = (panel) => {
     const root = overlays.get(panel);
     if (!root) {
@@ -121,6 +138,11 @@
       if (message.action === "show") {
         showPanel(message.panel);
         sendResponse({ ok: true, panel: message.panel, action: "show" });
+        return true;
+      }
+      if (message.action === "mount") {
+        mountPanel(message.panel);
+        sendResponse({ ok: true, panel: message.panel, action: "mount" });
         return true;
       }
       if (message.action === "hide") {
