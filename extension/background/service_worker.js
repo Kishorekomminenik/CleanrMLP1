@@ -4938,15 +4938,6 @@ async function clearAllCaptureData() {
   return { ok: true };
 }
 
-function sendMessageToTab(tabId, message) {
-  if (!tabId) {
-    return;
-  }
-  chrome.tabs.sendMessage(tabId, message, () => {
-    void chrome.runtime.lastError;
-  });
-}
-
 function sendMessageToTabWithResponse(tabId, message) {
   return new Promise((resolve) => {
     if (!tabId) {
