@@ -1470,26 +1470,40 @@ async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
     bytes: arrayBuffer.byteLength,
     nonEmpty: arrayBuffer.byteLength > 0,
   });
-  const response = await new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      {
-        type: "BROKER_DOWNLOAD_BYTES",
-        payload: {
-          arrayBuffer,
-          filename,
-          mimeType: mimeType || "application/octet-stream",
-          saveAs: opts.saveAs === true,
+  const sendRequest = () =>
+    new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "BROKER_DOWNLOAD_BYTES",
+          payload: {
+            arrayBuffer,
+            filename,
+            mimeType: mimeType || "application/octet-stream",
+            saveAs: opts.saveAs === true,
+          },
         },
-      },
-      (reply) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+        (reply) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(reply);
         }
-        resolve(reply);
-      }
-    );
-  });
+      );
+    });
+  let response;
+  try {
+    response = await sendRequest();
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    if (message.includes("message port closed")) {
+      brokerState.ready = false;
+      await ensureBrokerReady();
+      response = await sendRequest();
+    } else {
+      throw error;
+    }
+  }
   if (!response || !response.ok) {
     throw new Error(response && response.error ? response.error : "Download failed.");
   }
@@ -1501,26 +1515,40 @@ async function brokerDownloadExportArtifact(artifactKey, filename, mimeType, opt
   if (!artifactKey) {
     throw new Error("Missing export artifact key.");
   }
-  const response = await new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      {
-        type: "BROKER_DOWNLOAD_EXPORT_ARTIFACT",
-        payload: {
-          artifactKey,
-          filename,
-          mimeType: mimeType || "application/octet-stream",
-          saveAs: opts.saveAs === true,
+  const sendRequest = () =>
+    new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        {
+          type: "BROKER_DOWNLOAD_EXPORT_ARTIFACT",
+          payload: {
+            artifactKey,
+            filename,
+            mimeType: mimeType || "application/octet-stream",
+            saveAs: opts.saveAs === true,
+          },
         },
-      },
-      (reply) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+        (reply) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(reply);
         }
-        resolve(reply);
-      }
-    );
-  });
+      );
+    });
+  let response;
+  try {
+    response = await sendRequest();
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    if (message.includes("message port closed")) {
+      brokerState.ready = false;
+      await ensureBrokerReady();
+      response = await sendRequest();
+    } else {
+      throw error;
+    }
+  }
   if (!response || !response.ok) {
     throw new Error(response && response.error ? response.error : "Download failed.");
   }
