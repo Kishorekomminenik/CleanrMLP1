@@ -2432,11 +2432,12 @@ async function ensurePanelOverlayInjected(tabId) {
   });
 }
 
-async function sendPanelOverlayCommand(tabId, panel, action) {
+async function sendPanelOverlayCommand(tabId, panel, action, payload = {}) {
   const response = await sendMessageToTab(tabId, {
     type: "REPRO_PANEL_OVERLAY",
     panel,
     action,
+    ...payload,
   });
   if (!response || response.ok !== true) {
     throw new Error(
@@ -2455,6 +2456,21 @@ async function mountPanelOverlay(tabId, panel) {
   } catch (error) {
     await ensurePanelOverlayInjected(tabId);
     await sendPanelOverlayCommand(tabId, panel, "mount");
+    return true;
+  }
+}
+
+async function setPanelOverlayHidden(tabId, panel, hidden) {
+  try {
+    await sendPanelOverlayCommand(tabId, panel, "set_hidden", {
+      hidden: hidden === true,
+    });
+    return true;
+  } catch (error) {
+    await ensurePanelOverlayInjected(tabId);
+    await sendPanelOverlayCommand(tabId, panel, "set_hidden", {
+      hidden: hidden === true,
+    });
     return true;
   }
 }
@@ -2483,6 +2499,7 @@ async function openRecordingPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
   markPanelClosed(tab.id, "recording", false);
+  await setPanelOverlayHidden(tab.id, "recording", false);
   const ok = await showPanelOverlay(tab.id, "recording");
   if (!ok) {
     throw new Error("Recording panel failed to open.");
@@ -6121,13 +6138,13 @@ async function startRecording(streamId, tabId, mimeType) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
     if (!isPanelClosed(tab.id, "recording")) {
-      await openRecordingPanelWindow(tab.id);
       setPanelHiddenForCapture(tab.id, "recording", true);
-      await hidePanelOverlay(tab.id, "recording");
+      await setPanelOverlayHidden(tab.id, "recording", true);
+      await openRecordingPanelWindow(tab.id);
     }
     if (state.network.active && !isPanelClosed(tab.id, "logs")) {
       setPanelHiddenForCapture(tab.id, "logs", true);
-      await hidePanelOverlay(tab.id, "logs");
+      await setPanelOverlayHidden(tab.id, "logs", true);
     }
     const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
     state.recording.sessionId = recordingSessionId;
@@ -6192,7 +6209,7 @@ async function startRecording(streamId, tabId, mimeType) {
     });
     if (tab && tab.id && isPanelHiddenForCapture(tab.id, "recording")) {
       setPanelHiddenForCapture(tab.id, "recording", false);
-      await showPanelOverlay(tab.id, "recording");
+      await setPanelOverlayHidden(tab.id, "recording", false);
       closeRecordingPanelWindowIfOpen();
     }
     throw error;
@@ -6382,11 +6399,12 @@ async function stopRecording() {
   clearStatusMessage();
   if (recordingTabId && !isPanelClosed(recordingTabId, "recording")) {
     setPanelHiddenForCapture(recordingTabId, "recording", false);
+    await setPanelOverlayHidden(recordingTabId, "recording", false);
     await showPanelOverlay(recordingTabId, "recording");
-    closeRecordingPanelWindowIfOpen();
   }
   if (recordingTabId && !isPanelClosed(recordingTabId, "logs")) {
     setPanelHiddenForCapture(recordingTabId, "logs", false);
+    await setPanelOverlayHidden(recordingTabId, "logs", false);
     if (state.network.active) {
       await showPanelOverlay(recordingTabId, "logs");
     }
@@ -6904,19 +6922,24 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!isPanelClosed(tabId, "recording")) {
       if (isPanelHiddenForCapture(tabId, "recording")) {
         void mountPanelOverlay(tabId, "recording");
+        void setPanelOverlayHidden(tabId, "recording", true);
       } else {
+        void setPanelOverlayHidden(tabId, "recording", false);
         void showPanelOverlay(tabId, "recording");
       }
     }
     if (state.network.active && !isPanelClosed(tabId, "logs")) {
       if (isPanelHiddenForCapture(tabId, "logs")) {
         void mountPanelOverlay(tabId, "logs");
+        void setPanelOverlayHidden(tabId, "logs", true);
       } else {
+        void setPanelOverlayHidden(tabId, "logs", false);
         void showPanelOverlay(tabId, "logs");
       }
     }
   } else if (state.network.active && state.network.tabId === tabId) {
     if (!isPanelClosed(tabId, "logs")) {
+      void setPanelOverlayHidden(tabId, "logs", false);
       void showPanelOverlay(tabId, "logs");
     }
   }

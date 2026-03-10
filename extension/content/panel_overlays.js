@@ -9,6 +9,7 @@
     const root = document.createElement("div");
     root.className = `repro-panel-overlay repro-panel-${panel}`;
     root.setAttribute("data-repro-panel", panel);
+    root.setAttribute("data-repro-hidden", "false");
 
     const header = document.createElement("div");
     header.className = "repro-panel-header";
@@ -130,6 +131,18 @@
     root.style.display = "none";
   };
 
+  const setHidden = (panel, hidden) => {
+    let root = overlays.get(panel);
+    if (!root) {
+      root = buildPanel(panel);
+      overlays.set(panel, root);
+    }
+    root.setAttribute("data-repro-hidden", hidden ? "true" : "false");
+    if (!hidden && root.style.display === "none") {
+      root.style.display = "block";
+    }
+  };
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || message.type !== "REPRO_PANEL_OVERLAY") {
       return false;
@@ -143,6 +156,16 @@
       if (message.action === "mount") {
         mountPanel(message.panel);
         sendResponse({ ok: true, panel: message.panel, action: "mount" });
+        return true;
+      }
+      if (message.action === "set_hidden") {
+        setHidden(message.panel, message.hidden === true);
+        sendResponse({
+          ok: true,
+          panel: message.panel,
+          action: "set_hidden",
+          hidden: message.hidden === true,
+        });
         return true;
       }
       if (message.action === "hide") {
@@ -161,5 +184,5 @@
     }
   });
 
-  window.__reproPanelOverlays = { showPanel, hidePanel };
+  window.__reproPanelOverlays = { showPanel, hidePanel, setHidden };
 })();

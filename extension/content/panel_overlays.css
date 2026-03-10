@@ -26,6 +26,10 @@
     Helvetica, Arial, sans-serif;
 }
 
+.repro-panel-overlay[data-repro-hidden="true"] {
+  display: none !important;
+}
+
 .repro-panel-header {
   display: flex;
   align-items: center;
