@@ -2475,6 +2475,22 @@ async function setPanelOverlayHidden(tabId, panel, hidden) {
   }
 }
 
+async function restorePanelAfterRecording(tabId) {
+  if (!tabId) {
+    return;
+  }
+  setPanelHiddenForCapture(tabId, "recording", false);
+  await setPanelOverlayHidden(tabId, "recording", false);
+  if (!isPanelClosed(tabId, "recording")) {
+    await showPanelOverlay(tabId, "recording");
+  }
+  setPanelHiddenForCapture(tabId, "logs", false);
+  await setPanelOverlayHidden(tabId, "logs", false);
+  if (state.network.active && !isPanelClosed(tabId, "logs")) {
+    await showPanelOverlay(tabId, "logs");
+  }
+}
+
 async function showPanelOverlay(tabId, panel) {
   try {
     await sendPanelOverlayCommand(tabId, panel, "show");
@@ -2511,7 +2527,14 @@ async function openRecordingPanelOverlay(tabId) {
       tabId: tab.id,
       error: error && error.message ? error.message : String(error),
     });
-    throw error;
+    const message = error && error.message ? error.message : String(error);
+    if (message.includes("Scripting API unavailable")) {
+      throw new Error("Recording panel unavailable: scripting blocked on this page.");
+    }
+    if (message.includes("Cannot access") || message.includes("not allowed")) {
+      throw new Error("Recording panel unavailable on this page.");
+    }
+    throw new Error(`Recording panel failed to open: ${message}`);
   }
 }
 
@@ -2563,7 +2586,14 @@ async function openLogsPanelOverlay(tabId) {
       tabId: tab.id,
       error: error && error.message ? error.message : String(error),
     });
-    throw error;
+    const message = error && error.message ? error.message : String(error);
+    if (message.includes("Scripting API unavailable")) {
+      throw new Error("Logs panel unavailable: scripting blocked on this page.");
+    }
+    if (message.includes("Cannot access") || message.includes("not allowed")) {
+      throw new Error("Logs panel unavailable on this page.");
+    }
+    throw new Error(`Logs panel failed to open: ${message}`);
   }
 }
 
@@ -6319,7 +6349,7 @@ async function stopRecording() {
       RECORDING_STOP_TIMEOUT_MS
     );
   });
-  const response = await Promise.race([
+  let response = await Promise.race([
     sendMessageToOffscreen({ type: "RECORDING_STOP" }),
     timeoutPromise,
   ]);
@@ -6347,6 +6377,7 @@ async function stopRecording() {
     addDiagnostic("error", "Recording stop failed.", {
       error: response.error || "Failed to stop recording.",
     });
+    await restorePanelAfterRecording(recordingTabId);
     throw new Error(response.error || "Failed to stop recording.");
   }
   syncRecordingState(response);
@@ -6408,18 +6439,7 @@ async function stopRecording() {
     }
   }
   clearStatusMessage();
-  if (recordingTabId && !isPanelClosed(recordingTabId, "recording")) {
-    setPanelHiddenForCapture(recordingTabId, "recording", false);
-    await setPanelOverlayHidden(recordingTabId, "recording", false);
-    await showPanelOverlay(recordingTabId, "recording");
-  }
-  if (recordingTabId && !isPanelClosed(recordingTabId, "logs")) {
-    setPanelHiddenForCapture(recordingTabId, "logs", false);
-    await setPanelOverlayHidden(recordingTabId, "logs", false);
-    if (state.network.active) {
-      await showPanelOverlay(recordingTabId, "logs");
-    }
-  }
+  await restorePanelAfterRecording(recordingTabId);
   return response;
 }
 
@@ -8299,6 +8319,7 @@ async function handleMessage(message, sender) {
     case "RECORDING_TRACK_ENDED": {
       const sessionId =
         message && message.sessionId ? message.sessionId : state.recording.sessionId;
+      const recordingTabId = recordingOverlayState.tabId;
       console.log("[RECORDING][TRACK_ENDED]", {
         sessionId: sessionId || null,
         reason: "track_ended",
@@ -8338,12 +8359,14 @@ async function handleMessage(message, sender) {
             artifactSize: exportResponse.size || null,
             isPartial: true,
           });
+          await restorePanelAfterRecording(recordingTabId);
           result = { ok: true, partial: true };
           break;
         }
       } catch (error) {
         console.warn("[RECORDING][TRACK_ENDED_EXPORT_FAILED]", error);
       }
+      await restorePanelAfterRecording(recordingTabId);
       result = { ok: true, partial: false };
       break;
     }
@@ -8354,6 +8377,11 @@ async function handleMessage(message, sender) {
       addDiagnostic("error", "Recording failed.", {
         error: message.error || "Recording failed.",
       });
+      if (recordingOverlayState.tabId) {
+        const recordingTabId = recordingOverlayState.tabId;
+        recordingOverlayState.tabId = null;
+        await restorePanelAfterRecording(recordingTabId);
+      }
       result = { ok: true };
       break;
     case "NETWORK_RESET":
