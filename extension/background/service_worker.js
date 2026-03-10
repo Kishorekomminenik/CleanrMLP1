@@ -236,8 +236,6 @@ let offscreenReady = false;
 let offscreenCreating = null;
 let recordingPanelTabId = null;
 let logsPanelTabId = null;
-let recordingPanelWindowId = null;
-let recordingPanelWindowTabId = null;
 const panelOverlayState = {
   recording: {
     closedTabs: new Set(),
@@ -2576,38 +2574,6 @@ async function openRecordingPanelOverlay(tabId) {
     });
     throw new Error(classified.userMessage);
   }
-}
-
-async function openRecordingPanelWindow(tabId) {
-  if (recordingPanelWindowId) {
-    try {
-      await chrome.windows.update(recordingPanelWindowId, { focused: true });
-      return;
-    } catch (error) {
-      recordingPanelWindowId = null;
-      recordingPanelWindowTabId = null;
-    }
-  }
-  const created = await chrome.windows.create({
-    url: chrome.runtime.getURL("popup/recording_panel.html"),
-    type: "popup",
-    width: 320,
-    height: 280,
-    focused: true,
-  });
-  recordingPanelWindowId = created && created.id ? created.id : null;
-  recordingPanelWindowTabId = tabId || null;
-}
-
-function closeRecordingPanelWindowIfOpen() {
-  if (!recordingPanelWindowId) {
-    return;
-  }
-  chrome.windows.remove(recordingPanelWindowId, () => {
-    void chrome.runtime.lastError;
-  });
-  recordingPanelWindowId = null;
-  recordingPanelWindowTabId = null;
 }
 
 async function openLogsPanelOverlay(tabId) {
@@ -6216,7 +6182,6 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!isPanelClosed(tab.id, "recording")) {
       setPanelHiddenForCapture(tab.id, "recording", true);
       await setPanelOverlayHidden(tab.id, "recording", true);
-      await openRecordingPanelWindow(tab.id);
     }
     if (state.network.active && !isPanelClosed(tab.id, "logs")) {
       setPanelHiddenForCapture(tab.id, "logs", true);
@@ -6286,7 +6251,6 @@ async function startRecording(streamId, tabId, mimeType) {
     if (tab && tab.id && isPanelHiddenForCapture(tab.id, "recording")) {
       setPanelHiddenForCapture(tab.id, "recording", false);
       await setPanelOverlayHidden(tab.id, "recording", false);
-      closeRecordingPanelWindowIfOpen();
     }
     throw error;
   }
@@ -7008,16 +6972,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       void setPanelOverlayHidden(tabId, "logs", false);
       void showPanelOverlay(tabId, "logs");
     }
-  }
-});
-
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === recordingPanelWindowId) {
-    recordingPanelWindowId = null;
-    if (recordingPanelWindowTabId) {
-      markPanelClosed(recordingPanelWindowTabId, "recording", true);
-    }
-    recordingPanelWindowTabId = null;
   }
 });
 
@@ -7787,9 +7741,6 @@ async function handleMessage(message, sender) {
       if (sender && sender.tab && sender.tab.id) {
         const panel = normalizedMessage.panel === "logs" ? "logs" : "recording";
         markPanelClosed(sender.tab.id, panel, true);
-        if (panel === "recording" && sender.tab.id === recordingPanelTabId) {
-          closeRecordingPanelWindowIfOpen();
-        }
       }
       result = { ok: true };
       break;
