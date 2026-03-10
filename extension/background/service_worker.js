@@ -6198,6 +6198,17 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!streamId) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
+    if (
+      recordingPanelTabId === tab.id &&
+      !isPanelClosed(tab.id, "recording")
+    ) {
+      setPanelHiddenForCapture(tab.id, "recording", true);
+      await setPanelOverlayHidden(tab.id, "recording", true);
+    }
+    if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
+      setPanelHiddenForCapture(tab.id, "logs", true);
+      await setPanelOverlayHidden(tab.id, "logs", true);
+    }
     const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
     state.recording.sessionId = recordingSessionId;
     console.log("[REC][sw] routing RECORDING_START to offscreen", {
@@ -6239,24 +6250,6 @@ async function startRecording(streamId, tabId, mimeType) {
         state.recording.videoStartEpochMs = Date.now();
       }
       state.recording.videoEndEpochMs = null;
-    }
-    const shouldHidePanels =
-      response.state === "recording" ||
-      response.state === "paused" ||
-      state.recording.status === "recording" ||
-      state.recording.status === "paused";
-    if (shouldHidePanels) {
-      if (
-        recordingPanelTabId === tab.id &&
-        !isPanelClosed(tab.id, "recording")
-      ) {
-        setPanelHiddenForCapture(tab.id, "recording", true);
-        await setPanelOverlayHidden(tab.id, "recording", true);
-      }
-      if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
-        setPanelHiddenForCapture(tab.id, "logs", true);
-        await setPanelOverlayHidden(tab.id, "logs", true);
-      }
     }
     recordingOverlayState.startMs =
       typeof state.recording.videoStartEpochMs === "number"
@@ -7812,6 +7805,10 @@ async function handleMessage(message, sender) {
           debuggerApiPresent: Boolean(chrome?.debugger),
         },
       };
+      break;
+    case "RECORDING_PREPARE":
+      await ensureOffscreenReady();
+      result = { ok: true };
       break;
     case "PROBE_DEBUGGER": {
       let tabId = message.tabId;
