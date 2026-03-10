@@ -2499,12 +2499,20 @@ async function openRecordingPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
   markPanelClosed(tab.id, "recording", false);
-  await setPanelOverlayHidden(tab.id, "recording", false);
-  const ok = await showPanelOverlay(tab.id, "recording");
-  if (!ok) {
-    throw new Error("Recording panel failed to open.");
+  try {
+    await setPanelOverlayHidden(tab.id, "recording", false);
+    const ok = await showPanelOverlay(tab.id, "recording");
+    if (!ok) {
+      throw new Error("Recording panel failed to open.");
+    }
+    recordingPanelTabId = tab.id;
+  } catch (error) {
+    console.warn("[PANEL][OVERLAY][RECORDING_OPEN_FAILED]", {
+      tabId: tab.id,
+      error: error && error.message ? error.message : String(error),
+    });
+    throw error;
   }
-  recordingPanelTabId = tab.id;
 }
 
 async function openRecordingPanelWindow(tabId) {
@@ -2543,11 +2551,20 @@ async function openLogsPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
   markPanelClosed(tab.id, "logs", false);
-  const ok = await showPanelOverlay(tab.id, "logs");
-  if (!ok) {
-    throw new Error("Logs panel failed to open.");
+  try {
+    await setPanelOverlayHidden(tab.id, "logs", false);
+    const ok = await showPanelOverlay(tab.id, "logs");
+    if (!ok) {
+      throw new Error("Logs panel failed to open.");
+    }
+    logsPanelTabId = tab.id;
+  } catch (error) {
+    console.warn("[PANEL][OVERLAY][LOGS_OPEN_FAILED]", {
+      tabId: tab.id,
+      error: error && error.message ? error.message : String(error),
+    });
+    throw error;
   }
-  logsPanelTabId = tab.id;
 }
 
 function createSessionId() {
@@ -4091,114 +4108,112 @@ async function runEvidenceZipExport(context) {
           }
         );
       }
-      if (EXTENDED_EXPORT) {
-        logItems.push({
-          path: "logs/network.json",
-          getData: async () => {
-            const entries = await loadLimitedEntriesFromIdb({
-              storeName: "network_entries",
-              indexName: "partId",
-              keyRange: IDBKeyRange.only(data.partId),
-              limit: data.exportLimits
-                ? data.exportLimits.maxRequests
-                : EXPORT_LIMITS.maxRequests,
-            });
-            const redactedEntries = redactNetworkEntry
-              ? entries.map((entry) => redactNetworkEntry(entry))
-              : entries;
-            const failedCount = redactedEntries.filter((entry) =>
-              isFailedRequest(entry)
-            ).length;
-            const payload = {
-              session: {
-                session_id:
-                  data.session && data.session.session_id
-                    ? data.session.session_id
-                    : null,
-                part_id: data.partId || null,
-                part_number:
-                  data.partInfo && typeof data.partInfo.partNumber === "number"
-                    ? data.partInfo.partNumber
-                    : null,
-                started_at: data.session ? data.session.created_at || null : null,
-                ended_at: data.session ? data.session.ended_at || null : null,
-                mode: data.session ? data.session.mode || null : null,
-                active_tab: data.session ? data.session.active_tab || null : null,
-              },
-              export: {
-                export_timestamp: data.exportTimestamp || null,
-                redaction_enabled: redactionEnabled === true,
-                filters_summary:
-                  data.exportMetadata && data.exportMetadata.filters_summary
-                    ? data.exportMetadata.filters_summary
-                    : null,
-              },
-              counts: {
-                total_requests: redactedEntries.length,
-                failed_requests: failedCount,
-              },
-              requests: redactedEntries.map((entry) =>
-                formatNetworkPrettyEntry(entry)
-              ),
-            };
-            return toJsonWithSize(payload, "network_json");
-          },
-          options: { date: zipDate },
-        });
-        logItems.push({
-          path: "logs/console.json",
-          getData: async () => {
-            const entries = await loadLimitedEntriesFromIdb({
-              storeName: "console_entries",
-              indexName: "partId",
-              keyRange: IDBKeyRange.only(data.partId),
-              limit: data.exportLimits
-                ? data.exportLimits.maxConsoleEntries
-                : EXPORT_LIMITS.maxConsoleEntries,
-            });
-            const redactedEntries = redactConsoleEntry
-              ? entries.map((entry) => redactConsoleEntry(entry))
-              : entries;
-            const errorCount = redactedEntries.filter(
-              (entry) => entry && entry.level === "error"
-            ).length;
-            const payload = {
-              session: {
-                session_id:
-                  data.session && data.session.session_id
-                    ? data.session.session_id
-                    : null,
-                part_id: data.partId || null,
-                part_number:
-                  data.partInfo && typeof data.partInfo.partNumber === "number"
-                    ? data.partInfo.partNumber
-                    : null,
-                started_at: data.session ? data.session.created_at || null : null,
-                ended_at: data.session ? data.session.ended_at || null : null,
-                mode: data.session ? data.session.mode || null : null,
-                active_tab: data.session ? data.session.active_tab || null : null,
-              },
-              export: {
-                export_timestamp: data.exportTimestamp || null,
-                redaction_enabled: redactionEnabled === true,
-                filters_summary:
-                  data.exportMetadata && data.exportMetadata.filters_summary
-                    ? data.exportMetadata.filters_summary
-                    : null,
-              },
-              counts: {
-                total_entries: redactedEntries.length,
-                error_entries: errorCount,
-              },
-              entries: redactedEntries.map((entry) =>
-                formatConsolePrettyEntry(entry)
-              ),
-            };
-            return toJsonWithSize(payload, "console_json");
-          },
-          options: { date: zipDate },
-        });
-      }
+      logItems.push({
+        path: "logs/network.json",
+        getData: async () => {
+          const entries = await loadLimitedEntriesFromIdb({
+            storeName: "network_entries",
+            indexName: "partId",
+            keyRange: IDBKeyRange.only(data.partId),
+            limit: data.exportLimits
+              ? data.exportLimits.maxRequests
+              : EXPORT_LIMITS.maxRequests,
+          });
+          const redactedEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          const failedCount = redactedEntries.filter((entry) =>
+            isFailedRequest(entry)
+          ).length;
+          const payload = {
+            session: {
+              session_id:
+                data.session && data.session.session_id
+                  ? data.session.session_id
+                  : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_requests: redactedEntries.length,
+              failed_requests: failedCount,
+            },
+            requests: redactedEntries.map((entry) =>
+              formatNetworkPrettyEntry(entry)
+            ),
+          };
+          return toJsonWithSize(payload, "network_json");
+        },
+        options: { date: zipDate },
+      });
+      logItems.push({
+        path: "logs/console.json",
+        getData: async () => {
+          const entries = await loadLimitedEntriesFromIdb({
+            storeName: "console_entries",
+            indexName: "partId",
+            keyRange: IDBKeyRange.only(data.partId),
+            limit: data.exportLimits
+              ? data.exportLimits.maxConsoleEntries
+              : EXPORT_LIMITS.maxConsoleEntries,
+          });
+          const redactedEntries = redactConsoleEntry
+            ? entries.map((entry) => redactConsoleEntry(entry))
+            : entries;
+          const errorCount = redactedEntries.filter(
+            (entry) => entry && entry.level === "error"
+          ).length;
+          const payload = {
+            session: {
+              session_id:
+                data.session && data.session.session_id
+                  ? data.session.session_id
+                  : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_entries: redactedEntries.length,
+              error_entries: errorCount,
+            },
+            entries: redactedEntries.map((entry) =>
+              formatConsolePrettyEntry(entry)
+            ),
+          };
+          return toJsonWithSize(payload, "console_json");
+        },
+        options: { date: zipDate },
+      });
     } else {
       const networkTotal =
         data.session && data.session.counts
@@ -4250,57 +4265,55 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      if (EXTENDED_EXPORT) {
-        logItems.push({
-          path: "logs/network.json",
-          getData: async () => {
-            const entries =
-              data.networkLogs && Array.isArray(data.networkLogs.entries)
-                ? data.networkLogs.entries
-                : [];
-            const redactedEntries = redactNetworkEntry
-              ? entries.map((entry) => redactNetworkEntry(entry))
-              : entries;
-            const failedCount = redactedEntries.filter((entry) =>
-              isFailedRequest(entry)
-            ).length;
-            const payload = {
-              session: {
-                session_id:
-                  data.session && data.session.session_id
-                    ? data.session.session_id
-                    : null,
-                part_id: data.partId || null,
-                part_number:
-                  data.partInfo && typeof data.partInfo.partNumber === "number"
-                    ? data.partInfo.partNumber
-                    : null,
-                started_at: data.session ? data.session.created_at || null : null,
-                ended_at: data.session ? data.session.ended_at || null : null,
-                mode: data.session ? data.session.mode || null : null,
-                active_tab: data.session ? data.session.active_tab || null : null,
-              },
-              export: {
-                export_timestamp: data.exportTimestamp || null,
-                redaction_enabled: redactionEnabled === true,
-                filters_summary:
-                  data.exportMetadata && data.exportMetadata.filters_summary
-                    ? data.exportMetadata.filters_summary
-                    : null,
-              },
-              counts: {
-                total_requests: redactedEntries.length,
-                failed_requests: failedCount,
-              },
-              requests: redactedEntries.map((entry) =>
-                formatNetworkPrettyEntry(entry)
-              ),
-            };
-            return toJsonWithSize(payload, "network_json");
-          },
-          options: { date: zipDate },
-        });
-      }
+      logItems.push({
+        path: "logs/network.json",
+        getData: async () => {
+          const entries =
+            data.networkLogs && Array.isArray(data.networkLogs.entries)
+              ? data.networkLogs.entries
+              : [];
+          const redactedEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          const failedCount = redactedEntries.filter((entry) =>
+            isFailedRequest(entry)
+          ).length;
+          const payload = {
+            session: {
+              session_id:
+                data.session && data.session.session_id
+                  ? data.session.session_id
+                  : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_requests: redactedEntries.length,
+              failed_requests: failedCount,
+            },
+            requests: redactedEntries.map((entry) =>
+              formatNetworkPrettyEntry(entry)
+            ),
+          };
+          return toJsonWithSize(payload, "network_json");
+        },
+        options: { date: zipDate },
+      });
       logItems.push({
         path: "logs/console.ndjson",
         getData: async () => {
@@ -4345,57 +4358,55 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      if (EXTENDED_EXPORT) {
-        logItems.push({
-          path: "logs/console.json",
-          getData: async () => {
-            const entries =
-              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-                ? data.consoleLogs.entries
-                : [];
-            const redactedEntries = redactConsoleEntry
-              ? entries.map((entry) => redactConsoleEntry(entry))
-              : entries;
-            const errorCount = redactedEntries.filter(
-              (entry) => entry && entry.level === "error"
-            ).length;
-            const payload = {
-              session: {
-                session_id:
-                  data.session && data.session.session_id
-                    ? data.session.session_id
-                    : null,
-                part_id: data.partId || null,
-                part_number:
-                  data.partInfo && typeof data.partInfo.partNumber === "number"
-                    ? data.partInfo.partNumber
-                    : null,
-                started_at: data.session ? data.session.created_at || null : null,
-                ended_at: data.session ? data.session.ended_at || null : null,
-                mode: data.session ? data.session.mode || null : null,
-                active_tab: data.session ? data.session.active_tab || null : null,
-              },
-              export: {
-                export_timestamp: data.exportTimestamp || null,
-                redaction_enabled: redactionEnabled === true,
-                filters_summary:
-                  data.exportMetadata && data.exportMetadata.filters_summary
-                    ? data.exportMetadata.filters_summary
-                    : null,
-              },
-              counts: {
-                total_entries: redactedEntries.length,
-                error_entries: errorCount,
-              },
-              entries: redactedEntries.map((entry) =>
-                formatConsolePrettyEntry(entry)
-              ),
-            };
-            return toJsonWithSize(payload, "console_json");
-          },
-          options: { date: zipDate },
-        });
-      }
+      logItems.push({
+        path: "logs/console.json",
+        getData: async () => {
+          const entries =
+            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+              ? data.consoleLogs.entries
+              : [];
+          const redactedEntries = redactConsoleEntry
+            ? entries.map((entry) => redactConsoleEntry(entry))
+            : entries;
+          const errorCount = redactedEntries.filter(
+            (entry) => entry && entry.level === "error"
+          ).length;
+          const payload = {
+            session: {
+              session_id:
+                data.session && data.session.session_id
+                  ? data.session.session_id
+                  : null,
+              part_id: data.partId || null,
+              part_number:
+                data.partInfo && typeof data.partInfo.partNumber === "number"
+                  ? data.partInfo.partNumber
+                  : null,
+              started_at: data.session ? data.session.created_at || null : null,
+              ended_at: data.session ? data.session.ended_at || null : null,
+              mode: data.session ? data.session.mode || null : null,
+              active_tab: data.session ? data.session.active_tab || null : null,
+            },
+            export: {
+              export_timestamp: data.exportTimestamp || null,
+              redaction_enabled: redactionEnabled === true,
+              filters_summary:
+                data.exportMetadata && data.exportMetadata.filters_summary
+                  ? data.exportMetadata.filters_summary
+                  : null,
+            },
+            counts: {
+              total_entries: redactedEntries.length,
+              error_entries: errorCount,
+            },
+            entries: redactedEntries.map((entry) =>
+              formatConsolePrettyEntry(entry)
+            ),
+          };
+          return toJsonWithSize(payload, "console_json");
+        },
+        options: { date: zipDate },
+      });
       metaItems.push(
         {
           path: "meta/session.json",
