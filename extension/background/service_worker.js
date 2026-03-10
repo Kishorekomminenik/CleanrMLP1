@@ -6198,14 +6198,6 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!streamId) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
-    if (!isPanelClosed(tab.id, "recording")) {
-      setPanelHiddenForCapture(tab.id, "recording", true);
-      await setPanelOverlayHidden(tab.id, "recording", true);
-    }
-    if (state.network.active && !isPanelClosed(tab.id, "logs")) {
-      setPanelHiddenForCapture(tab.id, "logs", true);
-      await setPanelOverlayHidden(tab.id, "logs", true);
-    }
     const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
     state.recording.sessionId = recordingSessionId;
     console.log("[REC][sw] routing RECORDING_START to offscreen", {
@@ -6248,6 +6240,24 @@ async function startRecording(streamId, tabId, mimeType) {
       }
       state.recording.videoEndEpochMs = null;
     }
+    const shouldHidePanels =
+      response.state === "recording" ||
+      response.state === "paused" ||
+      state.recording.status === "recording" ||
+      state.recording.status === "paused";
+    if (shouldHidePanels) {
+      if (
+        recordingPanelTabId === tab.id &&
+        !isPanelClosed(tab.id, "recording")
+      ) {
+        setPanelHiddenForCapture(tab.id, "recording", true);
+        await setPanelOverlayHidden(tab.id, "recording", true);
+      }
+      if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
+        setPanelHiddenForCapture(tab.id, "logs", true);
+        await setPanelOverlayHidden(tab.id, "logs", true);
+      }
+    }
     recordingOverlayState.startMs =
       typeof state.recording.videoStartEpochMs === "number"
         ? state.recording.videoStartEpochMs
@@ -6270,6 +6280,10 @@ async function startRecording(streamId, tabId, mimeType) {
     if (tab && tab.id && isPanelHiddenForCapture(tab.id, "recording")) {
       setPanelHiddenForCapture(tab.id, "recording", false);
       await setPanelOverlayHidden(tab.id, "recording", false);
+    }
+    if (tab && tab.id && isPanelHiddenForCapture(tab.id, "logs")) {
+      setPanelHiddenForCapture(tab.id, "logs", false);
+      await setPanelOverlayHidden(tab.id, "logs", false);
     }
     throw error;
   }
