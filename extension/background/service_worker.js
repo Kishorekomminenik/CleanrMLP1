@@ -7739,11 +7739,15 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "OPEN_RECORDING_PANEL":
-      await openRecordingPanelOverlay();
+      await openRecordingPanelOverlay(
+        typeof normalizedMessage.tabId === "number" ? normalizedMessage.tabId : null
+      );
       result = { ok: true };
       break;
     case "OPEN_LOGS_PANEL":
-      await openLogsPanelOverlay();
+      await openLogsPanelOverlay(
+        typeof normalizedMessage.tabId === "number" ? normalizedMessage.tabId : null
+      );
       result = { ok: true };
       break;
     case "OFFSCREEN_READY":
