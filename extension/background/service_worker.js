@@ -2149,6 +2149,264 @@ function formatNetworkPrettyEntry(entry) {
   };
 }
 
+function isPostmanStaticAssetUrl(url) {
+  if (!url) {
+    return true;
+  }
+  const lower = String(url).toLowerCase();
+  if (
+    lower.startsWith("chrome://") ||
+    lower.startsWith("edge://") ||
+    lower.startsWith("about:") ||
+    lower.startsWith("chrome-extension://") ||
+    lower.startsWith("moz-extension://")
+  ) {
+    return true;
+  }
+  const staticExts = [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".css",
+    ".map",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",
+    ".mp4",
+    ".mp3",
+    ".webm",
+    ".wav",
+    ".m4a",
+    ".avi",
+    ".mov",
+    ".pdf",
+  ];
+  return staticExts.some((ext) => lower.includes(ext));
+}
+
+function isPostmanEligibleEntry(entry) {
+  if (!entry || !entry.url || !entry.method) {
+    return false;
+  }
+  if (isPostmanStaticAssetUrl(entry.url)) {
+    return false;
+  }
+  const type = entry.resource_type
+    ? String(entry.resource_type).toLowerCase()
+    : "";
+  if (type) {
+    const allowed = new Set(["xhr", "fetch", "other"]);
+    if (!allowed.has(type)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function normalizePostmanHeaders(raw) {
+  if (!raw) {
+    return [];
+  }
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => {
+        if (item && typeof item === "object") {
+          const key = item.key || item.name;
+          if (!key) {
+            return null;
+          }
+          return { key: String(key), value: String(item.value ?? "") };
+        }
+        if (Array.isArray(item) && item.length >= 2) {
+          return { key: String(item[0]), value: String(item[1] ?? "") };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+  if (typeof raw === "object") {
+    return Object.entries(raw).map(([key, value]) => ({
+      key: String(key),
+      value: String(value ?? ""),
+    }));
+  }
+  return [];
+}
+
+function buildPostmanUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname
+      .split("/")
+      .filter((segment) => segment.length > 0);
+    const query = [];
+    parsed.searchParams.forEach((value, key) => {
+      query.push({ key, value });
+    });
+    const result = {
+      raw: url,
+      protocol: parsed.protocol.replace(":", ""),
+      host: parsed.hostname ? parsed.hostname.split(".") : [],
+      path: pathParts,
+    };
+    if (parsed.port) {
+      result.port = parsed.port;
+    }
+    if (query.length > 0) {
+      result.query = query;
+    }
+    return result;
+  } catch (error) {
+    return { raw: url };
+  }
+}
+
+function buildPostmanBody(entry, headers) {
+  if (!entry || entry.request_body_unavailable) {
+    return null;
+  }
+  const body =
+    entry.request_post_data ??
+    entry.request_body ??
+    entry.request_body_raw ??
+    null;
+  if (body === null || body === undefined || body === "") {
+    return null;
+  }
+  let contentType = "";
+  for (const header of headers) {
+    if (header.key && header.key.toLowerCase() === "content-type") {
+      contentType = String(header.value || "").toLowerCase();
+      break;
+    }
+  }
+  const bodyText = typeof body === "string" ? body : String(body);
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = JSON.parse(bodyText);
+      return {
+        mode: "raw",
+        raw: JSON.stringify(parsed, null, 2),
+        options: { raw: { language: "json" } },
+      };
+    } catch (error) {
+      return { mode: "raw", raw: bodyText };
+    }
+  }
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const urlencoded = [];
+    try {
+      const params = new URLSearchParams(bodyText);
+      params.forEach((value, key) => {
+        urlencoded.push({ key, value, type: "text" });
+      });
+    } catch (error) {
+      return { mode: "raw", raw: bodyText };
+    }
+    return { mode: "urlencoded", urlencoded };
+  }
+  return { mode: "raw", raw: bodyText };
+}
+
+function buildPostmanRequestName(entry) {
+  const method = String(entry.method || "GET").toUpperCase();
+  try {
+    const parsed = new URL(entry.url);
+    const path = parsed.pathname || "/";
+    return `${method} ${path}`;
+  } catch (error) {
+    return `${method} ${entry.url || ""}`.trim();
+  }
+}
+
+function buildPostmanItem(entry) {
+  if (!isPostmanEligibleEntry(entry)) {
+    return null;
+  }
+  const headers = normalizePostmanHeaders(entry.request_headers);
+  const request = {
+    method: String(entry.method || "GET").toUpperCase(),
+    header: headers,
+    url: buildPostmanUrl(entry.url),
+  };
+  const body = buildPostmanBody(entry, headers);
+  if (body) {
+    request.body = body;
+  }
+  const item = {
+    name: buildPostmanRequestName(entry),
+    request,
+  };
+  const responseHeaders = normalizePostmanHeaders(entry.response_headers);
+  const responseBody = entry.response_body;
+  if (
+    entry.response_status !== null ||
+    responseHeaders.length > 0 ||
+    (responseBody !== null && responseBody !== undefined && responseBody !== "")
+  ) {
+    let bodyText = "";
+    if (typeof responseBody === "string") {
+      bodyText = responseBody;
+    } else if (responseBody !== null && responseBody !== undefined) {
+      bodyText = JSON.stringify(responseBody, null, 2);
+    }
+    item.response = [
+      {
+        name: `Example response ${entry.response_status || ""}`.trim(),
+        originalRequest: request,
+        status: String(entry.response_status || ""),
+        code:
+          typeof entry.response_status === "number" ? entry.response_status : 0,
+        header: responseHeaders,
+        body: bodyText,
+      },
+    ];
+  }
+  return item;
+}
+
+function buildPostmanCollection(entries, sourceName) {
+  const grouped = {};
+  entries.forEach((entry) => {
+    let host = "unknown-host";
+    try {
+      host = new URL(entry.url).hostname || host;
+    } catch (error) {
+      host = "unknown-host";
+    }
+    if (!grouped[host]) {
+      grouped[host] = [];
+    }
+    grouped[host].push(entry);
+  });
+  const folders = Object.keys(grouped)
+    .sort()
+    .map((host) => {
+      const items = grouped[host]
+        .map((entry) => buildPostmanItem(entry))
+        .filter(Boolean);
+      return items.length > 0 ? { name: host, item: items } : null;
+    })
+    .filter(Boolean);
+  return {
+    info: {
+      name: `Repro Import - ${sourceName}`,
+      _postman_id: `repro-${sourceName}`,
+      schema:
+        "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      description: "Generated from Repro network NDJSON export.",
+    },
+    item: folders,
+    variable: [],
+  };
+}
+
 function formatConsolePrettyEntry(entry) {
   return {
     timestamp: entry.timestamp || null,
@@ -4062,6 +4320,7 @@ async function runEvidenceZipExport(context) {
     const logItems = [];
     const metaItems = [];
     const summaryItems = [];
+    const automationItems = [];
     const exportSessionId =
       captureState.sessionId ||
       (session && session.session_id) ||
@@ -4220,6 +4479,40 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
+      automationItems.push({
+        path: "automation/postman_collection.json",
+        getData: async () => {
+          const entries = await loadLimitedEntriesFromIdb({
+            storeName: "network_entries",
+            indexName: "partId",
+            keyRange: IDBKeyRange.only(data.partId),
+            limit: data.exportLimits
+              ? data.exportLimits.maxRequests
+              : EXPORT_LIMITS.maxRequests,
+          });
+          let postmanEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          if (exportFilters) {
+            postmanEntries = postmanEntries.filter((entry) =>
+              matchesExportNetworkEntry(entry, exportFilters)
+            );
+          }
+          postmanEntries = postmanEntries.filter((entry) =>
+            isPostmanEligibleEntry(entry)
+          );
+          const sourceName =
+            data.partId ||
+            (data.session && data.session.session_id
+              ? data.session.session_id
+              : "session");
+          return toJsonWithSize(
+            buildPostmanCollection(postmanEntries, sourceName),
+            "postman_collection"
+          );
+        },
+        options: { date: zipDate },
+      });
       logItems.push({
         path: "logs/console.json",
         getData: async () => {
@@ -4370,6 +4663,43 @@ async function runEvidenceZipExport(context) {
             ),
           };
           return toJsonWithSize(payload, "network_json");
+        },
+        options: { date: zipDate },
+      });
+      automationItems.push({
+        path: "automation/postman_collection.json",
+        getData: async () => {
+          let entries = [];
+          if (exportSessionId && isIdbAvailable()) {
+            entries = await loadLimitedEntriesFromIdb({
+              storeName: "network_entries",
+              indexName: "sessionId",
+              keyRange: IDBKeyRange.only(exportSessionId),
+              limit: data.exportLimits
+                ? data.exportLimits.maxRequests
+                : EXPORT_LIMITS.maxRequests,
+            });
+          } else {
+            entries =
+              data.networkLogs && Array.isArray(data.networkLogs.entries)
+                ? data.networkLogs.entries
+                : [];
+          }
+          let postmanEntries = redactNetworkEntry
+            ? entries.map((entry) => redactNetworkEntry(entry))
+            : entries;
+          postmanEntries = postmanEntries.filter((entry) =>
+            isPostmanEligibleEntry(entry)
+          );
+          const sourceName =
+            data.partId ||
+            (data.session && data.session.session_id
+              ? data.session.session_id
+              : "session");
+          return toJsonWithSize(
+            buildPostmanCollection(postmanEntries, sourceName),
+            "postman_collection"
+          );
         },
         options: { date: zipDate },
       });
@@ -4657,7 +4987,13 @@ async function runEvidenceZipExport(context) {
         ...reportMeta,
       };
     }
-    baseItems = [...logItems, ...metaItems, ...summaryItems, ...reportItems];
+    baseItems = [
+      ...logItems,
+      ...metaItems,
+      ...summaryItems,
+      ...automationItems,
+      ...reportItems,
+    ];
     if (!EXTENDED_EXPORT) {
       console.info("[EXPORT] Minimal team export mode active");
     }
