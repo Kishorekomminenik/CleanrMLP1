@@ -52,6 +52,7 @@ const recordingUnavailable = document.getElementById("recording-disabled-msg");
 const networkUnavailable = document.getElementById("network-disabled-msg");
 const exportHint = document.getElementById("exportHint");
 const toastEl = document.getElementById("toast");
+const launcherError = document.getElementById("launcher_error");
 const quickActions = document.getElementById("quick_actions");
 const autoDownloadToggle = document.getElementById("toggle_auto_download_rollover");
 const autoDownloadStatus = document.getElementById("autoDownloadStatus");
@@ -2882,7 +2883,21 @@ async function handleRedactionToggle(checked) {
   redactionStatus.textContent = checked ? "ON" : "OFF";
 }
 
+function setLauncherError(message) {
+  if (!launcherError) {
+    return;
+  }
+  if (!message) {
+    launcherError.textContent = "";
+    launcherError.classList.add("is-hidden");
+    return;
+  }
+  launcherError.textContent = message;
+  launcherError.classList.remove("is-hidden");
+}
+
 async function handleOpenRecordingPanel() {
+  setLauncherError(null);
   const tab = await getActiveTab();
   const response = await send("OPEN_RECORDING_PANEL", {
     tabId: tab && tab.id ? tab.id : null,
@@ -2892,6 +2907,9 @@ async function handleOpenRecordingPanel() {
     window.close();
     return;
   }
+  setLauncherError(
+    response && response.error ? response.error : "Failed to open recording panel."
+  );
   setStatus(
     statusElements.message,
     response && response.error ? response.error : "Failed to open recording panel.",
@@ -2900,6 +2918,7 @@ async function handleOpenRecordingPanel() {
 }
 
 async function handleOpenLogsPanel() {
+  setLauncherError(null);
   const tab = await getActiveTab();
   const response = await send("OPEN_LOGS_PANEL", {
     tabId: tab && tab.id ? tab.id : null,
@@ -2909,6 +2928,9 @@ async function handleOpenLogsPanel() {
     window.close();
     return;
   }
+  setLauncherError(
+    response && response.error ? response.error : "Failed to open logs panel."
+  );
   setStatus(
     statusElements.message,
     response && response.error ? response.error : "Failed to open logs panel.",
