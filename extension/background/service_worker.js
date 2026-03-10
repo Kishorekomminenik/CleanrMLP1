@@ -2478,7 +2478,7 @@ async function probeOverlayHost(tabId) {
 }
 
 async function sendPanelOverlayCommand(tabId, panel, action, payload = {}) {
-  const response = await sendMessageToTab(tabId, {
+  const response = await sendMessageToTabWithResponse(tabId, {
     type: "REPRO_PANEL_OVERLAY",
     panel,
     action,
