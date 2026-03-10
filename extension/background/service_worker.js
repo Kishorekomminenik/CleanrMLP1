@@ -7806,10 +7806,6 @@ async function handleMessage(message, sender) {
         },
       };
       break;
-    case "RECORDING_PREPARE":
-      await ensureOffscreenReady();
-      result = { ok: true };
-      break;
     case "PROBE_DEBUGGER": {
       let tabId = message.tabId;
       let tab = null;

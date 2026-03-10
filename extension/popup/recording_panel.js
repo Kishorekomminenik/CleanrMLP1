@@ -261,7 +261,7 @@ startBtn.addEventListener("click", async () => {
     messageEl.textContent = "tabCapture.getMediaStreamId unavailable.";
     return;
   }
-  const prep = await send("RECORDING_PREPARE");
+  const prep = await send("RECORDING_GET_STATE");
   if (!prep || !prep.ok) {
     messageEl.textContent = prep?.error
       ? `Recording unavailable: ${prep.error}`
