@@ -2432,6 +2432,51 @@ async function ensurePanelOverlayInjected(tabId) {
   });
 }
 
+function classifyOverlayError(error) {
+  const message = error && error.message ? error.message : String(error || "");
+  if (message.includes("Scripting API unavailable")) {
+    return {
+      userMessage: "Panel unavailable: scripting blocked on this page.",
+      detail: message,
+    };
+  }
+  if (
+    message.includes("Cannot access") ||
+    message.includes("not allowed") ||
+    message.includes("restricted")
+  ) {
+    return {
+      userMessage: "Panel unavailable on this page.",
+      detail: message,
+    };
+  }
+  if (message.includes("Overlay did not acknowledge")) {
+    return {
+      userMessage:
+        "Panel failed to load. This page may block extension scripts.",
+      detail: message,
+    };
+  }
+  return {
+    userMessage: `Panel failed to open: ${message}`,
+    detail: message,
+  };
+}
+
+async function probeOverlayHost(tabId) {
+  if (!chrome.scripting || !chrome.scripting.executeScript) {
+    throw new Error("Scripting API unavailable.");
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      ok: true,
+      hasOverlay: Boolean(window.__reproPanelOverlays),
+    }),
+  });
+  return results && results[0] ? results[0].result : { ok: true, hasOverlay: false };
+}
+
 async function sendPanelOverlayCommand(tabId, panel, action, payload = {}) {
   const response = await sendMessageToTab(tabId, {
     type: "REPRO_PANEL_OVERLAY",
@@ -2516,6 +2561,7 @@ async function openRecordingPanelOverlay(tabId) {
   ensureTabIsCapturable(tab);
   markPanelClosed(tab.id, "recording", false);
   try {
+    await probeOverlayHost(tab.id);
     await setPanelOverlayHidden(tab.id, "recording", false);
     const ok = await showPanelOverlay(tab.id, "recording");
     if (!ok) {
@@ -2523,18 +2569,12 @@ async function openRecordingPanelOverlay(tabId) {
     }
     recordingPanelTabId = tab.id;
   } catch (error) {
+    const classified = classifyOverlayError(error);
     console.warn("[PANEL][OVERLAY][RECORDING_OPEN_FAILED]", {
       tabId: tab.id,
-      error: error && error.message ? error.message : String(error),
+      error: classified.detail,
     });
-    const message = error && error.message ? error.message : String(error);
-    if (message.includes("Scripting API unavailable")) {
-      throw new Error("Recording panel unavailable: scripting blocked on this page.");
-    }
-    if (message.includes("Cannot access") || message.includes("not allowed")) {
-      throw new Error("Recording panel unavailable on this page.");
-    }
-    throw new Error(`Recording panel failed to open: ${message}`);
+    throw new Error(classified.userMessage);
   }
 }
 
@@ -2575,6 +2615,7 @@ async function openLogsPanelOverlay(tabId) {
   ensureTabIsCapturable(tab);
   markPanelClosed(tab.id, "logs", false);
   try {
+    await probeOverlayHost(tab.id);
     await setPanelOverlayHidden(tab.id, "logs", false);
     const ok = await showPanelOverlay(tab.id, "logs");
     if (!ok) {
@@ -2582,18 +2623,12 @@ async function openLogsPanelOverlay(tabId) {
     }
     logsPanelTabId = tab.id;
   } catch (error) {
+    const classified = classifyOverlayError(error);
     console.warn("[PANEL][OVERLAY][LOGS_OPEN_FAILED]", {
       tabId: tab.id,
-      error: error && error.message ? error.message : String(error),
+      error: classified.detail,
     });
-    const message = error && error.message ? error.message : String(error);
-    if (message.includes("Scripting API unavailable")) {
-      throw new Error("Logs panel unavailable: scripting blocked on this page.");
-    }
-    if (message.includes("Cannot access") || message.includes("not allowed")) {
-      throw new Error("Logs panel unavailable on this page.");
-    }
-    throw new Error(`Logs panel failed to open: ${message}`);
+    throw new Error(classified.userMessage);
   }
 }
 
