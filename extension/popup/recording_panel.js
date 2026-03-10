@@ -6,6 +6,7 @@ const pauseBtn = document.getElementById("panel_pause");
 const resumeBtn = document.getElementById("panel_resume");
 const stopBtn = document.getElementById("panel_stop");
 const downloadBtn = document.getElementById("panel_download");
+const resetBtn = document.getElementById("panel_reset");
 const closeBtn = document.getElementById("closePanel");
 
 const query = new URLSearchParams(window.location.search);
@@ -157,17 +158,22 @@ function applyRecordingControls({
   const isPaused = liveState === "paused";
   const isIdle = liveState === "idle" || !liveState || sessionState === "idle";
   const showStop = isRecording || isPaused || isFinalizing;
+  const showReset = hasData && !isRecording && !isPaused && !isFinalizing;
   setHidden(startBtn, !isIdle);
   setHidden(pauseBtn, !isRecording);
   setHidden(resumeBtn, !isPaused);
   setHidden(stopBtn, !showStop);
   setHidden(downloadBtn, !hasData);
+  setHidden(resetBtn, !showReset);
 
   startBtn.disabled = !isIdle || isFinalizing;
   pauseBtn.disabled = !isRecording || isFinalizing;
   resumeBtn.disabled = !isPaused || isFinalizing;
   stopBtn.disabled = !showStop || isFinalizing;
   downloadBtn.disabled = !hasData || isFinalizing;
+  if (resetBtn) {
+    resetBtn.disabled = !showReset || isFinalizing;
+  }
 }
 
 async function refreshStatus() {
@@ -320,6 +326,24 @@ downloadBtn.addEventListener("click", async () => {
       messageEl.textContent = "Download started.";
     }
   );
+});
+resetBtn.addEventListener("click", async () => {
+  const confirmReset = window.confirm(
+    "Clear the finished recording? This allows a new recording to start."
+  );
+  if (!confirmReset) {
+    return;
+  }
+  messageEl.textContent = "Resetting recording...";
+  const res = await send("RECORDING_RESET");
+  if (!res?.ok) {
+    messageEl.textContent = res?.error || "Failed to reset recording.";
+    await refreshStatus();
+    return;
+  }
+  timerEl.textContent = "00:00";
+  messageEl.textContent = "Recording cleared.";
+  await refreshStatus();
 });
 closeBtn.addEventListener("click", () => window.close());
 
