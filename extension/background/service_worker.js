@@ -2190,23 +2190,113 @@ function isPostmanStaticAssetUrl(url) {
   return staticExts.some((ext) => lower.includes(ext));
 }
 
+function isPostmanStaticMimeType(mimeType) {
+  if (!mimeType) {
+    return false;
+  }
+  const lower = String(mimeType).toLowerCase();
+  return (
+    lower.startsWith("image/") ||
+    lower.startsWith("font/") ||
+    lower.startsWith("audio/") ||
+    lower.startsWith("video/") ||
+    lower === "text/css" ||
+    lower.includes("font-woff") ||
+    lower.includes("font-woff2") ||
+    lower.includes("font-opentype") ||
+    lower.includes("font-ttf") ||
+    lower.includes("font-eot")
+  );
+}
+
+function getHeaderValue(rawHeaders, name) {
+  if (!rawHeaders || !name) {
+    return "";
+  }
+  const target = name.toLowerCase();
+  if (Array.isArray(rawHeaders)) {
+    for (const item of rawHeaders) {
+      if (item && typeof item === "object") {
+        const key = item.key || item.name;
+        if (key && String(key).toLowerCase() === target) {
+          return String(item.value ?? "");
+        }
+      } else if (Array.isArray(item) && item.length >= 2) {
+        if (String(item[0]).toLowerCase() === target) {
+          return String(item[1] ?? "");
+        }
+      }
+    }
+    return "";
+  }
+  if (typeof rawHeaders === "object") {
+    const matchKey = Object.keys(rawHeaders).find(
+      (key) => String(key).toLowerCase() === target
+    );
+    if (matchKey) {
+      return String(rawHeaders[matchKey] ?? "");
+    }
+  }
+  return "";
+}
+
+function isPostmanStaticAsset(entry) {
+  if (!entry) {
+    return true;
+  }
+  if (isPostmanStaticAssetUrl(entry.url)) {
+    return true;
+  }
+  return isPostmanStaticMimeType(entry.response_mime_type);
+}
+
+function isPostmanApiLikeOther(entry) {
+  if (!entry) {
+    return false;
+  }
+  const method = String(entry.method || "").toUpperCase();
+  if (method && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    return true;
+  }
+  const url = String(entry.url || "").toLowerCase();
+  if (url.includes("/api/") || url.includes("/graphql")) {
+    return true;
+  }
+  const contentType = getHeaderValue(entry.request_headers, "content-type").toLowerCase();
+  if (
+    contentType.includes("application/json") ||
+    contentType.includes("application/graphql") ||
+    contentType.includes("application/x-www-form-urlencoded")
+  ) {
+    return true;
+  }
+  const responseMime = String(entry.response_mime_type || "").toLowerCase();
+  if (responseMime.includes("json") || responseMime.includes("graphql")) {
+    return true;
+  }
+  return false;
+}
+
 function isPostmanEligibleEntry(entry) {
   if (!entry || !entry.url || !entry.method) {
     return false;
   }
-  if (isPostmanStaticAssetUrl(entry.url)) {
+  if (isPostmanStaticAsset(entry)) {
     return false;
   }
   const type = entry.resource_type
     ? String(entry.resource_type).toLowerCase()
     : "";
-  if (type) {
-    const allowed = new Set(["xhr", "fetch", "other"]);
-    if (!allowed.has(type)) {
-      return false;
-    }
+  if (!type) {
+    return isPostmanApiLikeOther(entry);
   }
-  return true;
+  if (type === "xhr" || type === "fetch") {
+    return true;
+  }
+  if (type === "other") {
+    return isPostmanApiLikeOther(entry);
+  }
+  return false;
 }
 
 function normalizePostmanHeaders(raw) {
@@ -2268,7 +2358,11 @@ function buildPostmanUrl(url) {
 }
 
 function buildPostmanBody(entry, headers) {
-  if (!entry || entry.request_body_unavailable) {
+  if (
+    !entry ||
+    entry.request_body_unavailable ||
+    entry.request_body_truncated
+  ) {
     return null;
   }
   const body =
@@ -2314,6 +2408,34 @@ function buildPostmanBody(entry, headers) {
   return { mode: "raw", raw: bodyText };
 }
 
+function buildPostmanDescription(entry) {
+  if (!entry) {
+    return "";
+  }
+  const bits = [];
+  const fields = [
+    "timestamp",
+    "request_id",
+    "resource_type",
+    "response_status",
+    "response_status_text",
+    "incomplete",
+    "finalize_reason",
+    "error_text",
+    "request_body_unavailable",
+    "request_body_truncated",
+    "response_body_unavailable",
+    "response_body_truncated",
+    "response_body_skipped",
+  ];
+  fields.forEach((field) => {
+    if (entry[field] !== undefined && entry[field] !== null) {
+      bits.push(`${field}: ${entry[field]}`);
+    }
+  });
+  return bits.join("\n");
+}
+
 function buildPostmanRequestName(entry) {
   const method = String(entry.method || "GET").toUpperCase();
   try {
@@ -2343,8 +2465,15 @@ function buildPostmanItem(entry) {
     name: buildPostmanRequestName(entry),
     request,
   };
+  const description = buildPostmanDescription(entry);
+  if (description) {
+    item.request.description = description;
+  }
   const responseHeaders = normalizePostmanHeaders(entry.response_headers);
-  const responseBody = entry.response_body;
+  const responseBody =
+    entry.response_body_unavailable || entry.response_body_skipped
+      ? null
+      : entry.response_body;
   if (
     entry.response_status !== null ||
     responseHeaders.length > 0 ||
@@ -2356,17 +2485,19 @@ function buildPostmanItem(entry) {
     } else if (responseBody !== null && responseBody !== undefined) {
       bodyText = JSON.stringify(responseBody, null, 2);
     }
-    item.response = [
-      {
-        name: `Example response ${entry.response_status || ""}`.trim(),
-        originalRequest: request,
-        status: String(entry.response_status || ""),
-        code:
-          typeof entry.response_status === "number" ? entry.response_status : 0,
-        header: responseHeaders,
-        body: bodyText,
-      },
-    ];
+    const responseStatusText =
+      entry.response_status_text || String(entry.response_status || "");
+    const responsePayload = {
+      name: `Example response ${entry.response_status || ""}`.trim(),
+      originalRequest: request,
+      status: responseStatusText,
+      code: typeof entry.response_status === "number" ? entry.response_status : 0,
+      header: responseHeaders,
+    };
+    if (bodyText && !entry.response_body_unavailable && !entry.response_body_skipped) {
+      responsePayload.body = bodyText;
+    }
+    item.response = [responsePayload];
   }
   return item;
 }

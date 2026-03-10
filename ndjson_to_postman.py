@@ -83,6 +83,121 @@ def normalize_headers(raw: Any) -> list[dict[str, str]]:
     return output
 
 
+def is_static_asset_url(url: str | None) -> bool:
+    if not url:
+        return True
+    lower = url.lower()
+    if (
+        lower.startswith("chrome://")
+        or lower.startswith("edge://")
+        or lower.startswith("about:")
+        or lower.startswith("chrome-extension://")
+        or lower.startswith("moz-extension://")
+    ):
+        return True
+    static_exts = [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".ico",
+        ".css",
+        ".map",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".mp4",
+        ".mp3",
+        ".webm",
+        ".wav",
+        ".m4a",
+        ".avi",
+        ".mov",
+        ".pdf",
+    ]
+    return any(ext in lower for ext in static_exts)
+
+
+def is_static_mime_type(mime_type: str | None) -> bool:
+    if not mime_type:
+        return False
+    lower = mime_type.lower()
+    return (
+        lower.startswith("image/")
+        or lower.startswith("font/")
+        or lower.startswith("audio/")
+        or lower.startswith("video/")
+        or lower == "text/css"
+        or "font-woff" in lower
+        or "font-woff2" in lower
+        or "font-opentype" in lower
+        or "font-ttf" in lower
+        or "font-eot" in lower
+    )
+
+
+def get_header_value(raw: Any, name: str) -> str:
+    if not raw:
+        return ""
+    target = name.lower()
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if str(key).lower() == target:
+                return "" if value is None else str(value)
+        return ""
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                key = item.get("key") or item.get("name")
+                if key and str(key).lower() == target:
+                    return "" if item.get("value") is None else str(item.get("value"))
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                if str(item[0]).lower() == target:
+                    return "" if item[1] is None else str(item[1])
+    return ""
+
+
+def is_api_like_other(entry: dict[str, Any]) -> bool:
+    method = str(entry.get("method") or "").upper()
+    if method and method not in ("GET", "HEAD", "OPTIONS"):
+        return True
+    url = str(entry.get("url") or "").lower()
+    if "/api/" in url or "/graphql" in url:
+        return True
+    content_type = get_header_value(entry.get("request_headers"), "content-type").lower()
+    if (
+        "application/json" in content_type
+        or "application/graphql" in content_type
+        or "application/x-www-form-urlencoded" in content_type
+    ):
+        return True
+    response_mime = str(entry.get("response_mime_type") or "").lower()
+    if "json" in response_mime or "graphql" in response_mime:
+        return True
+    return False
+
+
+def is_eligible_entry(entry: dict[str, Any]) -> bool:
+    url = str(entry.get("url") or "")
+    method = str(entry.get("method") or "")
+    if not url or not method:
+        return False
+    if is_static_asset_url(url) or is_static_mime_type(entry.get("response_mime_type")):
+        return False
+    resource_type = str(entry.get("resource_type") or "").lower()
+    if resource_type in ("xhr", "fetch"):
+        return True
+    if resource_type == "other":
+        return is_api_like_other(entry)
+    if not resource_type:
+        return is_api_like_other(entry)
+    return False
+
+
 def guess_body_mode(
     body: Any, headers: list[dict[str, str]]
 ) -> tuple[str, Any] | None:
@@ -147,7 +262,7 @@ def request_name(entry: dict[str, Any]) -> str:
     url = str(entry.get("url") or "")
     parsed = urlparse(url)
     path = parsed.path or "/"
-    status = entry.get("status")
+    status = entry.get("response_status")
     if status is not None:
         return f"{method} {path} [{status}]"
     return f"{method} {path}"
@@ -159,9 +274,15 @@ def build_item(entry: dict[str, Any]) -> dict[str, Any] | None:
 
     if not url or not method:
         return None
+    if not is_eligible_entry(entry):
+        return None
 
     headers = normalize_headers(entry.get("request_headers"))
-    body_mode = guess_body_mode(entry.get("request_body"), headers)
+    body_mode = None
+    if not entry.get("request_body_unavailable") and not entry.get(
+        "request_body_truncated"
+    ):
+        body_mode = guess_body_mode(entry.get("request_post_data"), headers)
 
     req: dict[str, Any] = {
         "method": method,
@@ -186,9 +307,9 @@ def build_item(entry: dict[str, Any]) -> dict[str, Any] | None:
     for key in [
         "timestamp",
         "request_id",
-        "status",
         "resource_type",
-        "duration_ms",
+        "response_status",
+        "response_status_text",
         "incomplete",
         "finalize_reason",
         "error_text",
@@ -196,15 +317,20 @@ def build_item(entry: dict[str, Any]) -> dict[str, Any] | None:
         "response_body_truncated",
         "request_body_unavailable",
         "response_body_unavailable",
+        "response_body_skipped",
     ]:
         if key in entry:
             description_bits.append(f"{key}: {entry[key]}")
 
     response_headers = normalize_headers(entry.get("response_headers"))
-    response_body = entry.get("response_body")
+    response_body = None
+    if not entry.get("response_body_unavailable") and not entry.get(
+        "response_body_skipped"
+    ):
+        response_body = entry.get("response_body")
     saved_responses: list[dict[str, Any]] = []
 
-    if entry.get("status") is not None or response_headers or response_body not in (
+    if entry.get("response_status") is not None or response_headers or response_body not in (
         None,
         "",
     ):
@@ -214,13 +340,15 @@ def build_item(entry: dict[str, Any]) -> dict[str, Any] | None:
         elif response_body is not None:
             body_text = str(response_body)
 
+        status_text = entry.get("response_status_text")
+        status_text = status_text if status_text else str(entry.get("response_status") or "")
         saved_responses.append(
             {
-                "name": f"Example response {entry.get('status', '')}".strip(),
+                "name": f"Example response {entry.get('response_status', '')}".strip(),
                 "originalRequest": req,
-                "status": str(entry.get("status") or ""),
-                "code": int(entry.get("status") or 0)
-                if str(entry.get("status") or "").isdigit()
+                "status": status_text,
+                "code": int(entry.get("response_status") or 0)
+                if str(entry.get("response_status") or "").isdigit()
                 else 0,
                 "header": response_headers,
                 "body": body_text,
