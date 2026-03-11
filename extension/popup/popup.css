@@ -349,53 +349,100 @@ h2 {
   margin-bottom: 10px;
 }
 
-.launcher-help-panel {
-  margin-top: 10px;
-  padding: 10px;
+.launcher-help-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.help-open .launcher-help-modal {
+  display: flex;
+}
+
+.launcher-help-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.launcher-help-card {
+  position: relative;
+  width: calc(100% - 28px);
+  max-width: 320px;
   border-radius: 14px;
   border: 1px solid var(--border);
-  background: #f8fafc;
-  color: #334155;
-  font-size: 11px;
-  line-height: 1.4;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1;
+  animation: helpModalIn 0.16s ease;
+}
+
+.launcher-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.launcher-help-close {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.launcher-help-content {
   max-height: 280px;
   overflow-y: auto;
-  opacity: 0;
-  transform: translateY(-6px);
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  padding-right: 2px;
 }
 
-.launcher-help-panel .help-title {
+.launcher-help-modal .help-title {
   font-size: 12px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin: 0;
 }
 
-.launcher-help-panel .help-section {
+.launcher-help-modal .help-section {
   margin-bottom: 8px;
 }
 
-.launcher-help-panel .help-heading {
+.launcher-help-modal .help-heading {
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
   margin-bottom: 4px;
 }
 
-.launcher-help-panel ul {
+.launcher-help-modal ul {
   margin: 0 0 0 14px;
   padding: 0;
 }
 
-.launcher-help-panel li {
+.launcher-help-modal li {
   margin: 0 0 2px 0;
 }
 
-.help-open .launcher-help-panel {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
+@keyframes helpModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .launcher-btn {

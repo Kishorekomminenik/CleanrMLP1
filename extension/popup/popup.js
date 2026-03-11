@@ -13,7 +13,8 @@ const helpButton = document.getElementById("help_button");
 const helpModal = document.getElementById("help_modal");
 const helpCloseButton = document.getElementById("help_close");
 const launcherHelpButton = document.getElementById("launcher_help_button");
-const launcherHelpPanel = document.getElementById("repro_help_panel");
+const launcherHelpModal = document.getElementById("launcher_help_modal");
+const launcherHelpClose = document.getElementById("launcher_help_close");
 
 const buttons = {
   screenshot: document.getElementById("btn_take_screenshot"),
@@ -208,8 +209,8 @@ function showToast(message, type = "info") {
 function setLauncherHelpOpen(open) {
   launcherHelpOpen = Boolean(open);
   document.body.classList.toggle("help-open", launcherHelpOpen);
-  if (launcherHelpPanel) {
-    launcherHelpPanel.setAttribute(
+  if (launcherHelpModal) {
+    launcherHelpModal.setAttribute(
       "aria-hidden",
       launcherHelpOpen ? "false" : "true"
     );
@@ -225,6 +226,21 @@ function setLauncherHelpOpen(open) {
 if (launcherHelpButton) {
   launcherHelpButton.addEventListener("click", () => {
     setLauncherHelpOpen(!launcherHelpOpen);
+  });
+}
+
+if (launcherHelpClose) {
+  launcherHelpClose.addEventListener("click", () => {
+    setLauncherHelpOpen(false);
+  });
+}
+
+if (launcherHelpModal) {
+  launcherHelpModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target && target.dataset && target.dataset.helpClose === "true") {
+      setLauncherHelpOpen(false);
+    }
   });
 }
 

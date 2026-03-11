@@ -42,8 +42,25 @@
             Logs
           </button>
         </div>
-        <div id="repro_help_panel" class="launcher-help-panel" aria-hidden="true">
+        <div id="launcher_error" class="launcher-error is-hidden"></div>
+      </div>
+    </div>
+
+    <div id="launcher_help_modal" class="launcher-help-modal" aria-hidden="true">
+      <div class="launcher-help-backdrop" data-help-close="true"></div>
+      <div class="launcher-help-card" role="dialog" aria-modal="true">
+        <div class="launcher-help-header">
           <div class="help-title">How Repro works</div>
+          <button
+            id="launcher_help_close"
+            class="launcher-help-close"
+            type="button"
+            aria-label="Close help"
+          >
+            ×
+          </button>
+        </div>
+        <div class="launcher-help-content">
           <div class="help-section">
             <div class="help-heading">Visual Capture</div>
             <ul>
@@ -84,7 +101,6 @@
             </ul>
           </div>
         </div>
-        <div id="launcher_error" class="launcher-error is-hidden"></div>
       </div>
     </div>
 
