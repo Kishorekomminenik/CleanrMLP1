@@ -395,5 +395,24 @@ resetBtn.addEventListener("click", async () => {
 });
 closeBtn.addEventListener("click", () => window.close());
 
+chrome.runtime.onMessage.addListener((message) => {
+  if (!message || !message.type) {
+    return;
+  }
+  const refreshTypes = new Set([
+    "RECORDING_STATE_CHANGED",
+    "RECORDING_CANONICAL_STATE",
+    "RECORDING_STARTED",
+    "RECORDING_PAUSED",
+    "RECORDING_RESUMED",
+    "RECORDING_STOPPING",
+    "RECORDING_STOPPED",
+    "RECORDING_ERROR",
+  ]);
+  if (refreshTypes.has(message.type)) {
+    refreshStatus();
+  }
+});
+
 refreshStatus();
 setInterval(refreshStatus, 750);

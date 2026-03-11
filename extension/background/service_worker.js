@@ -222,6 +222,22 @@ const recordingOverlayState = {
   totalPausedMs: 0,
   tabId: null,
 };
+const RECORDING_STATE_TRANSITIONS = {
+  idle: new Set(["starting"]),
+  starting: new Set(["recording", "error", "idle"]),
+  recording: new Set(["paused", "stopping", "error"]),
+  paused: new Set(["recording", "stopping", "error"]),
+  stopping: new Set(["stopped", "error"]),
+  stopped: new Set(["idle"]),
+  error: new Set(["idle"]),
+};
+const recordingController = {
+  state: "idle",
+  sessionId: null,
+  targetTabId: null,
+  lastError: null,
+};
+let recordingTransitionLock = Promise.resolve();
 let activeFilters = { ...FILTER_DEFAULTS };
 
 const MODE_LABELS = {
@@ -3335,11 +3351,11 @@ function checkStartMode(mode) {
   if (!session) {
     return { allowed: true };
   }
+  const canonicalRecordingState = recordingController.state || state.recording.status;
   const active =
     session.state === "capturing" ||
     session.state === "paused" ||
-    state.recording.status === "recording" ||
-    state.recording.status === "paused" ||
+    ["starting", "recording", "paused", "stopping"].includes(canonicalRecordingState) ||
     state.network.active;
   if (active) {
     if (session.mode === mode) {
@@ -3567,12 +3583,130 @@ function getStatusSnapshot() {
   };
 }
 
-function syncRecordingState(snapshot) {
+function mapPublicRecordingState(stateName) {
+  return stateName === "stopped" ? "idle" : stateName;
+}
+
+function isRecordingTransitionAllowed(fromState, toState) {
+  if (fromState === toState) {
+    return true;
+  }
+  const allowed = RECORDING_STATE_TRANSITIONS[fromState];
+  return Boolean(allowed && allowed.has(toState));
+}
+
+function logRecordingDiagnostic(action, detail) {
+  const payload = {
+    sessionId: recordingController.sessionId || state.recording.sessionId || null,
+    action,
+    canonicalStateBefore: detail?.stateBefore ?? recordingController.state,
+    canonicalStateAfter: detail?.stateAfter ?? recordingController.state,
+    offscreenReady,
+    streamAcquired: detail?.streamAcquired ?? null,
+    recorderCreated: detail?.recorderCreated ?? null,
+    recorderState: detail?.recorderState ?? null,
+    controlWindowId: recordingPanelWindowId || null,
+    targetTabId: recordingController.targetTabId || recordingPanelTargetTabId || null,
+    errorPhase: detail?.errorPhase ?? null,
+    errorMessage: detail?.errorMessage ?? null,
+    errorStack: detail?.errorStack ?? null,
+    cleanupCompleted: detail?.cleanupCompleted ?? null,
+  };
+  console.log("[RECORDING][DIAG]", payload);
+}
+
+function broadcastRecordingState(reason) {
+  chrome.runtime.sendMessage({
+    type: "RECORDING_CANONICAL_STATE",
+    reason: reason || null,
+    state: {
+      status: state.recording.status,
+      canonicalStatus: recordingController.state,
+      sessionId: recordingController.sessionId || state.recording.sessionId || null,
+      error: recordingController.lastError || state.recording.error || null,
+      hasData: state.recording.hasData,
+    },
+  });
+}
+
+function setRecordingState(nextState, context = {}) {
+  const prevState = recordingController.state;
+  if (!isRecordingTransitionAllowed(prevState, nextState) && !context.force) {
+    logRecordingDiagnostic("invalid_transition", {
+      stateBefore: prevState,
+      stateAfter: nextState,
+      errorPhase: "transition",
+      errorMessage: `Invalid transition ${prevState} -> ${nextState}`,
+    });
+    return false;
+  }
+  if (context.force) {
+    logRecordingDiagnostic("forced_transition", {
+      stateBefore: prevState,
+      stateAfter: nextState,
+    });
+  }
+  recordingController.state = nextState;
+  if (context.sessionId) {
+    recordingController.sessionId = context.sessionId;
+  }
+  if (typeof context.targetTabId === "number") {
+    recordingController.targetTabId = context.targetTabId;
+  }
+  if (context.errorMessage) {
+    recordingController.lastError = context.errorMessage;
+  }
+  state.recording.status = mapPublicRecordingState(nextState);
+  logRecordingDiagnostic("transition", {
+    stateBefore: prevState,
+    stateAfter: nextState,
+  });
+  broadcastRecordingState("transition");
+  return true;
+}
+
+async function withRecordingTransitionLock(label, handler) {
+  const current = recordingTransitionLock;
+  let release;
+  recordingTransitionLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  await current;
+  try {
+    return await handler();
+  } finally {
+    if (typeof release === "function") {
+      release();
+    }
+  }
+}
+
+function syncRecordingState(snapshot, context = {}) {
   if (!snapshot) {
     return;
   }
-  const nextState = snapshot.state || "idle";
-  state.recording.status = nextState;
+  let nextState = snapshot.state || "idle";
+  if (nextState === "idle" && recordingController.state === "stopping") {
+    nextState = "stopped";
+  } else if (
+    nextState === "idle" &&
+    ["starting", "recording", "paused"].includes(recordingController.state)
+  ) {
+    nextState = "error";
+  }
+  const shouldForce =
+    recordingController.state === "idle" &&
+    ["starting", "recording", "paused", "stopping"].includes(nextState);
+  const errorMessage =
+    nextState === "error"
+      ? snapshot.lastError || "Recording ended unexpectedly."
+      : null;
+  setRecordingState(nextState, {
+    sessionId: snapshot.sessionId,
+    targetTabId: context.targetTabId,
+    force: shouldForce,
+    errorMessage,
+  });
   state.recording.hasData = Boolean(snapshot.hasData);
   if (snapshot.sessionId) {
     state.recording.sessionId = snapshot.sessionId;
@@ -3583,15 +3717,16 @@ function syncRecordingState(snapshot) {
   if (snapshot.lastError) {
     state.recording.error = snapshot.lastError;
   }
-  if (nextState === "recording") {
+  const publicState = mapPublicRecordingState(recordingController.state);
+  if (publicState === "recording") {
     if (typeof state.recording.videoStartEpochMs !== "number") {
       state.recording.videoStartEpochMs = Date.now();
     }
     state.recording.videoEndEpochMs = null;
     setSessionState("capturing");
-  } else if (nextState === "paused") {
+  } else if (publicState === "paused") {
     setSessionState("paused");
-  } else if (nextState === "idle" && session && session.mode === "recording") {
+  } else if (publicState === "idle" && session && session.mode === "recording") {
     if (state.recording.hasData && !state.recording.capturedAt) {
       state.recording.capturedAt = nowIso();
     }
@@ -5644,6 +5779,7 @@ function sendMessageToOffscreen(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(message, (response) => {
       if (chrome.runtime.lastError) {
+        offscreenReady = false;
         resolve({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
@@ -5679,20 +5815,44 @@ async function ensureOffscreenReady() {
   if (offscreenReady) {
     return;
   }
-  const response = await sendMessageToOffscreen({ type: "OFFSCREEN_PING" });
+  const pingWithTimeout = async (label) => {
+    const timeoutMs = 1500;
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => resolve({ ok: false, error: "Offscreen ping timeout." }), timeoutMs);
+    });
+    const response = await Promise.race([
+      sendMessageToOffscreen({ type: "OFFSCREEN_PING" }),
+      timeoutPromise,
+    ]);
+    if (!response.ok || response.owner !== "recording_offscreen") {
+      logRecordingDiagnostic("offscreen_ping_failed", {
+        errorPhase: label,
+        errorMessage: response.error || "Offscreen ping failed.",
+      });
+    }
+    return response;
+  };
+  const response = await pingWithTimeout("initial");
   if (!response.ok || response.owner !== "recording_offscreen") {
     try {
       await chrome.offscreen.closeDocument();
     } catch (error) {
       // Ignore close failures and retry creation.
     }
+    offscreenReady = false;
     await ensureOffscreenDocument();
-    const retry = await sendMessageToOffscreen({ type: "OFFSCREEN_PING" });
+    const retry = await pingWithTimeout("retry");
     if (!retry.ok || retry.owner !== "recording_offscreen") {
       throw new Error(retry.error || "Offscreen document not ready.");
     }
+    if (retry.state) {
+      syncRecordingState(retry.state);
+    }
   }
   offscreenReady = true;
+  if (response.state) {
+    syncRecordingState(response.state);
+  }
 }
 
 async function captureScreenshot() {
@@ -6847,96 +7007,143 @@ function applyTextAnnotations(ctx, annotations, dpr) {
 
 async function startRecording(streamId, tabId, mimeType) {
   // V1 STABLE: recording state orchestration (start).
-  const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
-  ensureTabIsCapturable(tab);
-  if (session) {
-    throw new Error("A session already exists. Reset to start a new capture.");
-  }
-
-  try {
-    await ensureOffscreenReady();
-    if (!streamId) {
-      throw new Error("Missing stream id. Start recording from the popup.");
+  return await withRecordingTransitionLock("start", async () => {
+    const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
+    ensureTabIsCapturable(tab);
+    if (session) {
+      throw new Error("A session already exists. Reset to start a new capture.");
     }
-    if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
-      setPanelHiddenForCapture(tab.id, "logs", true);
-      await setPanelOverlayHidden(tab.id, "logs", true);
-    }
-    const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
-    state.recording.sessionId = recordingSessionId;
-    console.log("[REC][sw] routing RECORDING_START to offscreen", {
-      tabId: tab.id,
-    });
-    const response = await sendMessageToOffscreen({
-      type: "RECORDING_START",
-      tabId: tab.id,
-      streamId,
-      mimeType,
-      sessionId: recordingSessionId,
-    });
-
-    if (!response.ok) {
-      const errorMessage = response.error || "Failed to start recording.";
-      setStatusMessage(errorMessage, "error");
-      throw new Error(errorMessage);
+    if (recordingController.state !== "idle") {
+      const message = "Recording is already active.";
+      setStatusMessage(message, "info");
+      logRecordingDiagnostic("start_rejected", {
+        stateBefore: recordingController.state,
+        errorPhase: "preflight",
+        errorMessage: message,
+      });
+      return { ok: false, error: message };
     }
 
-    ensureSessionForMode("recording", tab);
-    setSessionState("capturing");
-    syncRecordingState(response);
-    await updateRecordingSessionRecord(recordingSessionId, { status: "recording" });
-    console.log("[RECORDING][STATE]", {
-      from: "starting",
-      to: "recording",
-      sessionId: recordingSessionId,
-    });
-    state.recording.dataUrl = null;
-    state.recording.capturedAt = null;
-    state.recording.mimeType = null;
+    setRecordingState("starting", { targetTabId: tab.id });
+    recordingController.lastError = null;
     state.recording.error = null;
-    state.recording.hasData = false;
-    state.recording.videoBlobUrl = null;
-    state.recording.videoMime = null;
-    state.recording.videoByteLength = null;
-    if (state.recording.status === "recording") {
-      if (typeof state.recording.videoStartEpochMs !== "number") {
-        state.recording.videoStartEpochMs = Date.now();
+    logRecordingDiagnostic("start_begin", { stateBefore: "idle", stateAfter: "starting" });
+
+    try {
+      await ensureOffscreenReady();
+      if (!streamId) {
+        throw new Error("Missing stream id. Start recording from the popup.");
       }
-      state.recording.videoEndEpochMs = null;
+      if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
+        setPanelHiddenForCapture(tab.id, "logs", true);
+        await setPanelOverlayHidden(tab.id, "logs", true);
+      }
+      const recordingSessionId = await createRecordingSessionRecord(tab.id, mimeType);
+      state.recording.sessionId = recordingSessionId;
+      recordingController.sessionId = recordingSessionId;
+      recordingController.targetTabId = tab.id;
+      console.log("[REC][sw] routing RECORDING_START to offscreen", {
+        tabId: tab.id,
+      });
+      const response = await sendMessageToOffscreen({
+        type: "RECORDING_START",
+        tabId: tab.id,
+        streamId,
+        mimeType,
+        sessionId: recordingSessionId,
+      });
+
+      if (!response.ok) {
+        const errorMessage = response.error || "Failed to start recording.";
+        setStatusMessage(errorMessage, "error");
+        logRecordingDiagnostic("start_failed", {
+          errorPhase: "offscreen_start",
+          errorMessage,
+        });
+        await sendMessageToOffscreen({ type: "RECORDING_RESET" });
+        throw new Error(errorMessage);
+      }
+
+      ensureSessionForMode("recording", tab);
+      setSessionState("capturing");
+      syncRecordingState(response, { targetTabId: tab.id });
+      await updateRecordingSessionRecord(recordingSessionId, { status: "recording" });
+      console.log("[RECORDING][STATE]", {
+        from: "starting",
+        to: "recording",
+        sessionId: recordingSessionId,
+      });
+      state.recording.dataUrl = null;
+      state.recording.capturedAt = null;
+      state.recording.mimeType = null;
+      state.recording.error = null;
+      state.recording.hasData = false;
+      state.recording.videoBlobUrl = null;
+      state.recording.videoMime = null;
+      state.recording.videoByteLength = null;
+      if (state.recording.status === "recording") {
+        if (typeof state.recording.videoStartEpochMs !== "number") {
+          state.recording.videoStartEpochMs = Date.now();
+        }
+        state.recording.videoEndEpochMs = null;
+      }
+      recordingOverlayState.startMs =
+        typeof state.recording.videoStartEpochMs === "number"
+          ? state.recording.videoStartEpochMs
+          : Date.now();
+      recordingOverlayState.paused = false;
+      recordingOverlayState.pauseStartedAt = null;
+      recordingOverlayState.totalPausedMs = 0;
+      recordingOverlayState.tabId = tab.id;
+      await loadTimestampOverlaySetting();
+      if (timestampOverlayEnabled) {
+        await applyRecordingTimestampOverlay();
+      }
+      clearStatusMessage();
+      logRecordingDiagnostic("start_ready", {
+        stateBefore: "starting",
+        stateAfter: recordingController.state,
+      });
+      return response;
+    } catch (error) {
+      const errorMessage = error && error.message ? error.message : "Failed to start recording.";
+      setStatusMessage(errorMessage, "error");
+      addDiagnostic("error", "Recording start failed.", {
+        error: errorMessage,
+      });
+      recordingController.lastError = errorMessage;
+      if (recordingController.state !== "idle") {
+        setRecordingState("error", { errorMessage });
+      }
+      if (tab && tab.id && isPanelHiddenForCapture(tab.id, "logs")) {
+        setPanelHiddenForCapture(tab.id, "logs", false);
+        await setPanelOverlayHidden(tab.id, "logs", false);
+      }
+      logRecordingDiagnostic("start_error", {
+        errorPhase: "start",
+        errorMessage,
+      });
+      if (recordingController.state !== "idle") {
+        setRecordingState("idle", { errorMessage });
+      }
+      throw error;
     }
-    recordingOverlayState.startMs =
-      typeof state.recording.videoStartEpochMs === "number"
-        ? state.recording.videoStartEpochMs
-        : Date.now();
-    recordingOverlayState.paused = false;
-    recordingOverlayState.pauseStartedAt = null;
-    recordingOverlayState.totalPausedMs = 0;
-    recordingOverlayState.tabId = tab.id;
-    await loadTimestampOverlaySetting();
-    if (timestampOverlayEnabled) {
-      await applyRecordingTimestampOverlay();
-    }
-    clearStatusMessage();
-    return response;
-  } catch (error) {
-    setStatusMessage(error.message || "Failed to start recording.", "error");
-    addDiagnostic("error", "Recording start failed.", {
-      error: error.message || String(error),
-    });
-    if (tab && tab.id && isPanelHiddenForCapture(tab.id, "logs")) {
-      setPanelHiddenForCapture(tab.id, "logs", false);
-      await setPanelOverlayHidden(tab.id, "logs", false);
-    }
-    throw error;
-  }
+  });
 }
 
 async function pauseRecording() {
-  if (state.recording.status !== "recording") {
+  if (recordingController.state !== "recording") {
     throw new Error("Recording is not active.");
   }
+  logRecordingDiagnostic("pause_begin", {
+    stateBefore: recordingController.state,
+  });
   const response = await sendMessageToOffscreen({ type: "RECORDING_PAUSE" });
   if (!response.ok) {
+    logRecordingDiagnostic("pause_failed", {
+      errorPhase: "offscreen_pause",
+      errorMessage: response.error || "Failed to pause recording.",
+    });
     throw new Error(response.error || "Failed to pause recording.");
   }
   setNetworkCaptureEnabled(false);
@@ -6966,11 +7173,18 @@ async function pauseRecording() {
 }
 
 async function resumeRecording() {
-  if (state.recording.status !== "paused") {
+  if (recordingController.state !== "paused") {
     throw new Error("Recording is not paused.");
   }
+  logRecordingDiagnostic("resume_begin", {
+    stateBefore: recordingController.state,
+  });
   const response = await sendMessageToOffscreen({ type: "RECORDING_RESUME" });
   if (!response.ok) {
+    logRecordingDiagnostic("resume_failed", {
+      errorPhase: "offscreen_resume",
+      errorMessage: response.error || "Failed to resume recording.",
+    });
     throw new Error(response.error || "Failed to resume recording.");
   }
   setNetworkCaptureEnabled(true);
@@ -7003,119 +7217,163 @@ async function resumeRecording() {
 
 async function stopRecording() {
   // V1 STABLE: stop/finalize flow; changes require retesting normal + fallback.
-  console.log("[REC][sw] STOP_REQUESTED");
-  const recordingTabId = recordingOverlayState.tabId;
-  if (state.recording.sessionId) {
-    console.log("[RECORDING][STATE]", {
-      from: state.recording.status || "unknown",
-      to: "stopping",
-      sessionId: state.recording.sessionId,
+  return await withRecordingTransitionLock("stop", async () => {
+    console.log("[REC][sw] STOP_REQUESTED");
+    const recordingTabId = recordingOverlayState.tabId;
+    if (state.recording.sessionId) {
+      console.log("[RECORDING][STATE]", {
+        from: state.recording.status || "unknown",
+        to: "stopping",
+        sessionId: state.recording.sessionId,
+      });
+    }
+    if (["idle", "error", "stopped"].includes(recordingController.state)) {
+      logRecordingDiagnostic("stop_noop", {
+        stateBefore: recordingController.state,
+        cleanupCompleted: true,
+      });
+      if (recordingOverlayState.tabId) {
+        await removeTimestampOverlay(recordingOverlayState.tabId);
+      }
+      recordingOverlayState.startMs = null;
+      recordingOverlayState.paused = false;
+      recordingOverlayState.pauseStartedAt = null;
+      recordingOverlayState.totalPausedMs = 0;
+      recordingOverlayState.tabId = null;
+      await restorePanelAfterRecording(recordingTabId);
+      await closeRecordingPanelWindow();
+      return { ok: true, alreadyStopped: true };
+    }
+    setRecordingState("stopping", { targetTabId: recordingTabId });
+    logRecordingDiagnostic("stop_begin", {
+      stateBefore: "recording",
+      stateAfter: "stopping",
     });
-  }
-  const timeoutPromise = new Promise((resolve) => {
-    setTimeout(
-      () =>
-        resolve({
-          ok: false,
-          error: "Recording stop timed out.",
-          code: "RECORDING_STOP_TIMEOUT",
-        }),
-      RECORDING_STOP_TIMEOUT_MS
-    );
-  });
-  let response = await Promise.race([
-    sendMessageToOffscreen({ type: "RECORDING_STOP" }),
-    timeoutPromise,
-  ]);
-  if (!response.ok) {
-    if (response.code === "RECORDING_STOP_TIMEOUT") {
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(
+        () =>
+          resolve({
+            ok: false,
+            error: "Recording stop timed out.",
+            code: "RECORDING_STOP_TIMEOUT",
+          }),
+        RECORDING_STOP_TIMEOUT_MS
+      );
+    });
+    let response = await Promise.race([
+      sendMessageToOffscreen({ type: "RECORDING_STOP" }),
+      timeoutPromise,
+    ]);
+    if (!response.ok) {
+      if (response.code === "RECORDING_STOP_TIMEOUT") {
+        try {
+          const fallbackState = await sendMessageToOffscreen({
+            type: "RECORDING_GET_STATE",
+          });
+          if (fallbackState && fallbackState.ok && fallbackState.hasData) {
+            response = {
+              ok: true,
+              fallback: true,
+              message: "Recording stopped and saved from available data.",
+              code: "RECORDING_STOP_TIMEOUT_FALLBACK",
+              ...fallbackState,
+            };
+          }
+        } catch (error) {
+          // continue to error path
+        }
+      }
+    }
+    if (!response.ok) {
+      const errorMessage = response.error || "Failed to stop recording.";
+      addDiagnostic("error", "Recording stop failed.", {
+        error: errorMessage,
+      });
+      setRecordingState("error", { errorMessage });
+      logRecordingDiagnostic("stop_failed", {
+        errorPhase: "offscreen_stop",
+        errorMessage,
+      });
+      await restorePanelAfterRecording(recordingTabId);
+      await closeRecordingPanelWindow();
+      setRecordingState("idle", { errorMessage });
+      throw new Error(errorMessage);
+    }
+    syncRecordingState(response);
+    if (recordingController.state !== "stopped") {
+      setRecordingState("stopped", { force: true });
+    }
+    if (state.recording.sessionId) {
+      await updateRecordingSessionRecord(state.recording.sessionId, {
+        status: "finalizing",
+        stoppedAt: Date.now(),
+        durationMs:
+          typeof response.elapsedMs === "number" ? response.elapsedMs : null,
+      });
+      console.log("[RECORDING][STATE]", {
+        from: "stopping",
+        to: "finalizing",
+        sessionId: state.recording.sessionId,
+      });
+    }
+    if (response.fallback) {
+      setStatusMessage(
+        response.message || "Recording saved from available data.",
+        "success"
+      );
+    }
+    if (state.recording.status === "idle") {
+      markSessionStopped();
+    }
+    if (recordingOverlayState.tabId) {
+      await removeTimestampOverlay(recordingOverlayState.tabId);
+    }
+    recordingOverlayState.startMs = null;
+    recordingOverlayState.paused = false;
+    recordingOverlayState.pauseStartedAt = null;
+    recordingOverlayState.totalPausedMs = 0;
+    recordingOverlayState.tabId = null;
+    if (state.recording.hasData && !state.recording.videoBlobUrl) {
       try {
-        const fallbackState = await sendMessageToOffscreen({
-          type: "RECORDING_GET_STATE",
+        await ensureOffscreenReady();
+        const exportResponse = await sendMessageToOffscreen({
+          type: "RECORDING_EXPORT_WEBM",
         });
-        if (fallbackState && fallbackState.ok && fallbackState.hasData) {
-          response = {
-            ok: true,
-            fallback: true,
-            message: "Recording stopped and saved from available data.",
-            code: "RECORDING_STOP_TIMEOUT_FALLBACK",
-            ...fallbackState,
-          };
+        if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
+          state.recording.videoBlobUrl = exportResponse.blobUrl;
+          state.recording.videoMime = exportResponse.mimeType || null;
+          state.recording.videoByteLength =
+            typeof exportResponse.size === "number" ? exportResponse.size : null;
+          if (state.recording.sessionId) {
+            const isPartial = Boolean(response.fallback);
+            await updateRecordingSessionRecord(state.recording.sessionId, {
+              status: isPartial ? "partial_complete" : "complete",
+              isPartial,
+              failureReason: isPartial ? "stop_timeout" : null,
+            });
+            console.log("[RECORDING][FINALIZE]", {
+              sessionId: state.recording.sessionId,
+              status: isPartial ? "partial_complete" : "complete",
+              artifactSize: exportResponse.size || null,
+              isPartial,
+            });
+          }
         }
       } catch (error) {
-        // continue to error path
+        console.warn("Failed to cache recording export reference:", error);
       }
     }
-  }
-  if (!response.ok) {
-    addDiagnostic("error", "Recording stop failed.", {
-      error: response.error || "Failed to stop recording.",
-    });
+    clearStatusMessage();
     await restorePanelAfterRecording(recordingTabId);
-    throw new Error(response.error || "Failed to stop recording.");
-  }
-  syncRecordingState(response);
-  if (state.recording.sessionId) {
-    await updateRecordingSessionRecord(state.recording.sessionId, {
-      status: "finalizing",
-      stoppedAt: Date.now(),
-      durationMs:
-        typeof response.elapsedMs === "number" ? response.elapsedMs : null,
+    await closeRecordingPanelWindow();
+    setRecordingState("idle");
+    logRecordingDiagnostic("stop_complete", {
+      stateBefore: "stopped",
+      stateAfter: "idle",
+      cleanupCompleted: true,
     });
-    console.log("[RECORDING][STATE]", {
-      from: "stopping",
-      to: "finalizing",
-      sessionId: state.recording.sessionId,
-    });
-  }
-  if (response.fallback) {
-    setStatusMessage(response.message || "Recording saved from available data.", "success");
-  }
-  if (state.recording.status === "idle") {
-    markSessionStopped();
-  }
-  if (recordingOverlayState.tabId) {
-    await removeTimestampOverlay(recordingOverlayState.tabId);
-  }
-  recordingOverlayState.startMs = null;
-  recordingOverlayState.paused = false;
-  recordingOverlayState.pauseStartedAt = null;
-  recordingOverlayState.totalPausedMs = 0;
-  recordingOverlayState.tabId = null;
-  if (state.recording.hasData && !state.recording.videoBlobUrl) {
-    try {
-      await ensureOffscreenReady();
-      const exportResponse = await sendMessageToOffscreen({
-        type: "RECORDING_EXPORT_WEBM",
-      });
-      if (exportResponse && exportResponse.ok && exportResponse.blobUrl) {
-        state.recording.videoBlobUrl = exportResponse.blobUrl;
-        state.recording.videoMime = exportResponse.mimeType || null;
-        state.recording.videoByteLength =
-          typeof exportResponse.size === "number" ? exportResponse.size : null;
-        if (state.recording.sessionId) {
-          const isPartial = Boolean(response.fallback);
-          await updateRecordingSessionRecord(state.recording.sessionId, {
-            status: isPartial ? "partial_complete" : "complete",
-            isPartial,
-            failureReason: isPartial ? "stop_timeout" : null,
-          });
-          console.log("[RECORDING][FINALIZE]", {
-            sessionId: state.recording.sessionId,
-            status: isPartial ? "partial_complete" : "complete",
-            artifactSize: exportResponse.size || null,
-            isPartial,
-          });
-        }
-      }
-    } catch (error) {
-      console.warn("Failed to cache recording export reference:", error);
-    }
-  }
-  clearStatusMessage();
-  await restorePanelAfterRecording(recordingTabId);
-  await closeRecordingPanelWindow();
-  return response;
+    return response;
+  });
 }
 
 async function startNetworkCapture(filters) {
@@ -8428,6 +8686,10 @@ async function handleMessage(message, sender) {
       break;
     case "OFFSCREEN_READY":
       offscreenReady = true;
+      logRecordingDiagnostic("offscreen_ready", {
+        stateBefore: recordingController.state,
+        stateAfter: recordingController.state,
+      });
       result = { ok: true };
       break;
     case "GET_STATUS":
@@ -8720,6 +8982,10 @@ async function handleMessage(message, sender) {
         state.recording.videoBlobUrl = null;
         state.recording.videoMime = null;
         state.recording.videoByteLength = null;
+        recordingController.sessionId = null;
+        recordingController.targetTabId = null;
+        recordingController.lastError = null;
+        setRecordingState("idle");
         if (session && session.mode === "recording") {
           session = null;
         }
@@ -8971,6 +9237,20 @@ async function handleMessage(message, sender) {
       }
       result = { ok: true };
       break;
+    case "RECORDING_STARTED":
+    case "RECORDING_PAUSED":
+    case "RECORDING_RESUMED":
+    case "RECORDING_STOPPING":
+    case "RECORDING_STOPPED":
+      if (message && message.state) {
+        syncRecordingState(message.state);
+      }
+      logRecordingDiagnostic("offscreen_event", {
+        stateBefore: recordingController.state,
+        stateAfter: recordingController.state,
+      });
+      result = { ok: true };
+      break;
     case "RECORDING_TRACK_ENDED": {
       const sessionId =
         message && message.sessionId ? message.sessionId : state.recording.sessionId;
@@ -9016,6 +9296,7 @@ async function handleMessage(message, sender) {
           });
           await restorePanelAfterRecording(recordingTabId);
           await closeRecordingPanelWindow();
+          setRecordingState("idle", { errorMessage: "Track ended." });
           result = { ok: true, partial: true };
           break;
         }
@@ -9024,12 +9305,19 @@ async function handleMessage(message, sender) {
       }
       await restorePanelAfterRecording(recordingTabId);
       await closeRecordingPanelWindow();
+      setRecordingState("idle", { errorMessage: "Track ended." });
       result = { ok: true, partial: false };
       break;
     }
     case "RECORDING_ERROR":
-      state.recording.status = "idle";
-      state.recording.error = message.error || "Recording failed.";
+      {
+        const errorMessage = message.error || "Recording failed.";
+        recordingController.lastError = errorMessage;
+        if (recordingController.state !== "idle") {
+          setRecordingState("error", { errorMessage });
+        }
+        state.recording.error = errorMessage;
+      }
       state.recording.hasData = Boolean(state.recording.dataUrl);
       addDiagnostic("error", "Recording failed.", {
         error: message.error || "Recording failed.",
@@ -9040,6 +9328,11 @@ async function handleMessage(message, sender) {
         await restorePanelAfterRecording(recordingTabId);
       }
       await closeRecordingPanelWindow();
+      if (recordingController.state !== "idle") {
+        setRecordingState("idle", {
+          errorMessage: message.error || "Recording failed.",
+        });
+      }
       result = { ok: true };
       break;
     case "NETWORK_RESET":

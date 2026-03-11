@@ -31,6 +31,8 @@ let recordingChunkBufferDropped = false;
 let recordingStopFallbackUsed = false;
 let recordingSessionMeta = null;
 let recordingChunkFlushPromise = Promise.resolve();
+let recordingSessionToken = 0;
+let recordingOpLock = Promise.resolve();
 const RECORDING_CHUNK_BUFFER_LIMIT = 8;
 const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
@@ -736,9 +738,59 @@ function isPolicyError(message) {
 
 function stopStreamTracks() {
   if (currentStream) {
+    currentStream.getTracks().forEach((track) => {
+      track.onended = null;
+    });
     currentStream.getTracks().forEach((track) => track.stop());
     currentStream = null;
   }
+}
+
+function clearRecorderHandlers(recorder) {
+  if (!recorder) {
+    return;
+  }
+  recorder.onstart = null;
+  recorder.onpause = null;
+  recorder.onresume = null;
+  recorder.ondataavailable = null;
+  recorder.onerror = null;
+  recorder.onstop = null;
+}
+
+async function cleanupRecorderAndStream(reason) {
+  if (mediaRecorder) {
+    const recorder = mediaRecorder;
+    clearRecorderHandlers(recorder);
+    try {
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+    } catch (error) {
+      // ignore cleanup stop errors
+    }
+    mediaRecorder = null;
+  }
+  stopStreamTracks();
+}
+
+function withRecordingLock(handler) {
+  const current = recordingOpLock;
+  let release;
+  recordingOpLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  return current
+    .then(() => handler())
+    .finally(() => {
+      if (typeof release === "function") {
+        release();
+      }
+    });
+}
+
+function isActiveSession(token) {
+  return token === recordingSessionToken;
 }
 
 function revokeRecordingUrl() {
@@ -870,22 +922,39 @@ async function captureTabStream(streamId) {
   }
 }
 
-function attachRecorderHandlers(recorder) {
+function attachRecorderHandlers(recorder, sessionToken) {
   recorder.onstart = () => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     if (!recordingStartedAt) {
       recordingStartedAt = nowMs();
     }
     recordingState = "recording";
     console.log("[REC][offscreen] onstart");
     notifyStateChanged("start");
+    chrome.runtime.sendMessage({
+      type: "RECORDING_STARTED",
+      state: getRecordingStateSnapshot(),
+    });
   };
   recorder.onpause = () => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     recordingPausedAt = nowMs();
     recordingState = "paused";
     console.log("[REC][offscreen] onpause");
     notifyStateChanged("pause");
+    chrome.runtime.sendMessage({
+      type: "RECORDING_PAUSED",
+      state: getRecordingStateSnapshot(),
+    });
   };
   recorder.onresume = () => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     if (recordingPausedAt) {
       recordingTotalPausedMs += nowMs() - recordingPausedAt;
       recordingPausedAt = null;
@@ -893,8 +962,15 @@ function attachRecorderHandlers(recorder) {
     recordingState = "recording";
     console.log("[REC][offscreen] onresume");
     notifyStateChanged("resume");
+    chrome.runtime.sendMessage({
+      type: "RECORDING_RESUMED",
+      state: getRecordingStateSnapshot(),
+    });
   };
   recorder.ondataavailable = (event) => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     if (event.data && event.data.size > 0) {
       // V1 STABLE: chunk persistence + bounded buffer for long recordings.
       const chunk = event.data;
@@ -938,6 +1014,9 @@ function attachRecorderHandlers(recorder) {
     }
   };
   recorder.onerror = (event) => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     const errorMessage =
       event.error && event.error.message ? event.error.message : "Recording failed.";
     recordingLastError = errorMessage;
@@ -945,8 +1024,12 @@ function attachRecorderHandlers(recorder) {
     notifyStateChanged("error");
   };
   recorder.onstop = async () => {
+    if (!isActiveSession(sessionToken)) {
+      return;
+    }
     if (recordingStopReason === "pause") {
       recordingStopReason = null;
+      clearRecorderHandlers(recorder);
       resolveStopPromise({ ok: true, paused: true });
       return;
     }
@@ -964,6 +1047,10 @@ function attachRecorderHandlers(recorder) {
     mediaRecorder = null;
     stopStreamTracks();
     notifyStateChanged("stop");
+    chrome.runtime.sendMessage({
+      type: "RECORDING_STOPPED",
+      state: getRecordingStateSnapshot(),
+    });
     await updateRecordingSessionRecord({
       status: recordingStopFallbackUsed ? "partial_complete" : "stopped",
       stoppedAt: Date.now(),
@@ -973,132 +1060,146 @@ function attachRecorderHandlers(recorder) {
       chunkCount: recordingChunkCount,
       bytesWritten: recordingBytesWritten,
     });
+    clearRecorderHandlers(recorder);
     resolveStopPromise({ ok: true });
   };
 }
 
 async function startRecording(streamId, tabId, requestedMime, sessionId) {
-  if (recordingState === "recording" || recordingState === "paused") {
-    return { ok: true, alreadyRecording: true, ...getRecordingStateSnapshot() };
-  }
-  mediaRecorder = null;
-  stopStreamTracks();
-  resetRecordingState();
-  revokeRecordingUrl();
-  recordingSessionId = sessionId || `rec_${Date.now()}`;
-  recordingTabId = tabId || null;
-  recordingChunkIndex = 0;
-  recordingChunkCount = 0;
-  recordingBytesWritten = 0;
-  recordingChunkBufferDropped = false;
-  recordingStopFallbackUsed = false;
-  recordingSessionMeta = {
-    sessionId: recordingSessionId,
-    tabId: recordingTabId,
-    status: "starting",
-    startedAt: Date.now(),
-    stoppedAt: null,
-    mimeType: requestedMime || null,
-    durationMs: null,
-    chunkCount: 0,
-    bytesWritten: 0,
-    finalBlobKey: null,
-    isPartial: false,
-    failureReason: null,
-  };
-  try {
-    await putOne("recording_sessions", recordingSessionMeta);
-  } catch (error) {
-    // Ignore IDB session creation failures.
-  }
-  console.log("[REC][offscreen] start ->", { tabId });
-  try {
-    currentStream = await captureTabStream(streamId);
-    console.log("[REC][offscreen] getUserMedia ok");
-  } catch (error) {
-    recordingLastError =
-      "getUserMedia failed: " + (error && error.message ? error.message : String(error));
-    recordingState = "idle";
-    recordingStartedAt = null;
-    recordingPausedAt = null;
-    recordingTotalPausedMs = 0;
-    return { ok: false, error: recordingLastError };
-  }
-  currentStream.getTracks().forEach((track) => {
-    track.onended = () => {
-      recordingLastError = "Track ended";
-      recordingState = "idle";
-      mediaRecorder = null;
-      stopStreamTracks();
-      notifyStateChanged("ended");
-      recordingDurationMsSnapshot = computeElapsedMs();
-      recordingStopFallbackUsed = true;
-      console.log("[RECORDING][TRACK_ENDED]", {
-        sessionId: recordingSessionId,
-        reason: "track_ended",
-      });
-      updateRecordingSessionRecord({
-        status: "partial_complete",
-        stoppedAt: Date.now(),
-        durationMs: computeElapsedMs(),
-        isPartial: true,
-        failureReason: "track_ended",
-        chunkCount: recordingChunkCount,
-        bytesWritten: recordingBytesWritten,
-      });
-      chrome.runtime.sendMessage({
-        type: "RECORDING_TRACK_ENDED",
-        sessionId: recordingSessionId,
-      });
-      resolveStopPromise({ ok: false, reason: "ended" });
+  return await withRecordingLock(async () => {
+    if (recordingState === "starting" || recordingState === "stopping") {
+      return { ok: false, error: "Recording is busy. Try again." };
+    }
+    if (recordingState === "recording" || recordingState === "paused") {
+      return { ok: true, alreadyRecording: true, ...getRecordingStateSnapshot() };
+    }
+    recordingState = "starting";
+    recordingLastError = null;
+    const sessionToken = (recordingSessionToken += 1);
+    await cleanupRecorderAndStream("start");
+    resetRecordingState();
+    revokeRecordingUrl();
+    recordingSessionId = sessionId || `rec_${Date.now()}`;
+    recordingTabId = tabId || null;
+    recordingChunkIndex = 0;
+    recordingChunkCount = 0;
+    recordingBytesWritten = 0;
+    recordingChunkBufferDropped = false;
+    recordingStopFallbackUsed = false;
+    recordingSessionMeta = {
+      sessionId: recordingSessionId,
+      tabId: recordingTabId,
+      status: "starting",
+      startedAt: Date.now(),
+      stoppedAt: null,
+      mimeType: requestedMime || null,
+      durationMs: null,
+      chunkCount: 0,
+      bytesWritten: 0,
+      finalBlobKey: null,
+      isPartial: false,
+      failureReason: null,
     };
-  });
+    try {
+      await putOne("recording_sessions", recordingSessionMeta);
+    } catch (error) {
+      // Ignore IDB session creation failures.
+    }
+    console.log("[REC][offscreen] start ->", { tabId });
+    try {
+      currentStream = await captureTabStream(streamId);
+      console.log("[REC][offscreen] getUserMedia ok");
+    } catch (error) {
+      recordingLastError =
+        "getUserMedia failed: " +
+        (error && error.message ? error.message : String(error));
+      recordingState = "idle";
+      recordingStartedAt = null;
+      recordingPausedAt = null;
+      recordingTotalPausedMs = 0;
+      await cleanupRecorderAndStream("getUserMedia_failed");
+      return { ok: false, error: recordingLastError };
+    }
+    if (!isActiveSession(sessionToken)) {
+      stopStreamTracks();
+      return { ok: false, error: "Recording start superseded." };
+    }
+    currentStream.getTracks().forEach((track) => {
+      track.onended = () => {
+        if (!isActiveSession(sessionToken)) {
+          return;
+        }
+        recordingLastError = "Track ended";
+        recordingState = "idle";
+        clearRecorderHandlers(mediaRecorder);
+        mediaRecorder = null;
+        stopStreamTracks();
+        notifyStateChanged("ended");
+        recordingDurationMsSnapshot = computeElapsedMs();
+        recordingStopFallbackUsed = true;
+        console.log("[RECORDING][TRACK_ENDED]", {
+          sessionId: recordingSessionId,
+          reason: "track_ended",
+        });
+        updateRecordingSessionRecord({
+          status: "partial_complete",
+          stoppedAt: Date.now(),
+          durationMs: computeElapsedMs(),
+          isPartial: true,
+          failureReason: "track_ended",
+          chunkCount: recordingChunkCount,
+          bytesWritten: recordingBytesWritten,
+        });
+        chrome.runtime.sendMessage({
+          type: "RECORDING_TRACK_ENDED",
+          sessionId: recordingSessionId,
+        });
+        resolveStopPromise({ ok: false, reason: "ended" });
+      };
+    });
 
-  const options = {};
-  const mimeType = pickRecordingMimeType(requestedMime);
-  if (mimeType) {
-    options.mimeType = mimeType;
-  }
-  try {
-    mediaRecorder = new MediaRecorder(currentStream, options);
-  } catch (error) {
-    recordingLastError =
-      "MediaRecorder init failed: " +
-      (error && error.message ? error.message : String(error));
-    stopStreamTracks();
-    currentStream = null;
-    mediaRecorder = null;
-    recordingState = "idle";
-    return { ok: false, error: recordingLastError };
-  }
-  recordingMimeType = mimeType || mediaRecorder.mimeType || "video/webm";
-  console.log("[REC][offscreen] mimeType chosen=", recordingMimeType);
-  await updateRecordingSessionRecord({
-    status: "recording",
-    mimeType: recordingMimeType,
-  });
-  attachRecorderHandlers(mediaRecorder);
-  recordingStartedAt = nowMs();
-  recordingPausedAt = null;
-  recordingTotalPausedMs = 0;
-  recordingState = "recording";
-  try {
-    mediaRecorder.start(250);
-  } catch (error) {
-    recordingLastError =
-      "Recorder start failed: " +
-      (error && error.message ? error.message : String(error));
-    recordingState = "idle";
-    recordingStartedAt = null;
+    const options = {};
+    const mimeType = pickRecordingMimeType(requestedMime);
+    if (mimeType) {
+      options.mimeType = mimeType;
+    }
+    try {
+      mediaRecorder = new MediaRecorder(currentStream, options);
+    } catch (error) {
+      recordingLastError =
+        "MediaRecorder init failed: " +
+        (error && error.message ? error.message : String(error));
+      recordingState = "idle";
+      await cleanupRecorderAndStream("recorder_init_failed");
+      return { ok: false, error: recordingLastError };
+    }
+    recordingMimeType = mimeType || mediaRecorder.mimeType || "video/webm";
+    console.log("[REC][offscreen] mimeType chosen=", recordingMimeType);
+    await updateRecordingSessionRecord({
+      status: "recording",
+      mimeType: recordingMimeType,
+    });
+    attachRecorderHandlers(mediaRecorder, sessionToken);
+    recordingStartedAt = nowMs();
     recordingPausedAt = null;
     recordingTotalPausedMs = 0;
-    stopStreamTracks();
-    currentStream = null;
-    mediaRecorder = null;
-    return { ok: false, error: recordingLastError };
-  }
-  notifyStateChanged("start");
-  return { ok: true, ...getRecordingStateSnapshot() };
+    recordingState = "recording";
+    try {
+      mediaRecorder.start(250);
+    } catch (error) {
+      recordingLastError =
+        "Recorder start failed: " +
+        (error && error.message ? error.message : String(error));
+      recordingState = "idle";
+      recordingStartedAt = null;
+      recordingPausedAt = null;
+      recordingTotalPausedMs = 0;
+      await cleanupRecorderAndStream("recorder_start_failed");
+      return { ok: false, error: recordingLastError };
+    }
+    notifyStateChanged("start");
+    return { ok: true, ...getRecordingStateSnapshot() };
+  });
 }
 
 async function pauseRecording() {
@@ -1147,118 +1248,134 @@ async function resumeRecording() {
 }
 
 async function stopRecording() {
-  console.log("[REC][offscreen] STOP_REQUESTED");
-  if (recordingState === "idle" || !mediaRecorder) {
-    return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
-  }
-  if (mediaRecorder.state === "inactive") {
-    recordingState = "idle";
-    recordingPausedAt = null;
-    mediaRecorder = null;
-    stopStreamTracks();
-    return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
-  }
-  if (recordingState === "stopping") {
-    return { ok: true, ...getRecordingStateSnapshot() };
-  }
-  recordingStopReason = "stop";
-  recordingState = "stopping";
-  recordingFinalChunkLogged = false;
-  const stopPromise = createStopPromise();
-  const timeoutPromise = new Promise((resolve) => {
-    setTimeout(
-      () => resolve({ ok: false, reason: "timeout" }),
-      RECORDING_STOP_TIMEOUT_MS
-    );
-  });
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    if (typeof mediaRecorder.requestData === "function") {
-      try {
-        mediaRecorder.requestData();
-      } catch (error) {
-        console.log(
-          "[REC][offscreen] requestData failed",
-          error && error.message ? error.message : String(error)
-        );
-      }
+  return await withRecordingLock(async () => {
+    console.log("[REC][offscreen] STOP_REQUESTED");
+    if (recordingState === "idle" || !mediaRecorder) {
+      return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
     }
-    try {
-      mediaRecorder.stop();
-      console.log("[REC][offscreen] RECORDER_STOP_CALLED");
-    } catch (error) {
-      const message = error && error.message ? error.message : String(error);
-      recordingLastError = `Stop failed: ${message}`;
+    if (mediaRecorder.state === "inactive") {
       recordingState = "idle";
-      stopStreamTracks();
-      notifyStateChanged("error");
-      resolveStopPromise({ ok: false, reason: "stop_failed" });
-      return { ok: false, error: "Failed to stop recording." };
-    }
-  }
-  notifyStateChanged("stopping");
-  const result = await Promise.race([stopPromise, timeoutPromise]);
-  if (result && result.ok === false && result.reason === "timeout") {
-    if (recordingChunkCount > 0 || recordedChunks.length > 0) {
-      // V1 STABLE: stop-timeout fallback must preserve usable chunks.
-      recordingLastError = null;
-      recordingState = "idle";
+      recordingPausedAt = null;
       mediaRecorder = null;
       stopStreamTracks();
-      notifyStateChanged("stop");
-      recordingDurationMsSnapshot = computeElapsedMs();
-      recordingStopFallbackUsed = true;
-      const fallback = {
-        ok: true,
-        fallback: true,
-        message: "Recording stopped and saved from available data.",
-        code: "RECORDING_STOP_TIMEOUT_FALLBACK",
+      return { ok: true, ...getRecordingStateSnapshot(), alreadyStopped: true };
+    }
+    if (recordingState === "stopping") {
+      return { ok: true, ...getRecordingStateSnapshot() };
+    }
+    recordingStopReason = "stop";
+    recordingState = "stopping";
+    recordingFinalChunkLogged = false;
+    chrome.runtime.sendMessage({
+      type: "RECORDING_STOPPING",
+      state: getRecordingStateSnapshot(),
+    });
+    const stopPromise = createStopPromise();
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(
+        () => resolve({ ok: false, reason: "timeout" }),
+        RECORDING_STOP_TIMEOUT_MS
+      );
+    });
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      if (typeof mediaRecorder.requestData === "function") {
+        try {
+          mediaRecorder.requestData();
+        } catch (error) {
+          console.log(
+            "[REC][offscreen] requestData failed",
+            error && error.message ? error.message : String(error)
+          );
+        }
+      }
+      try {
+        mediaRecorder.stop();
+        console.log("[REC][offscreen] RECORDER_STOP_CALLED");
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        recordingLastError = `Stop failed: ${message}`;
+        recordingState = "idle";
+      clearRecorderHandlers(mediaRecorder);
+      mediaRecorder = null;
+        stopStreamTracks();
+        notifyStateChanged("error");
+        resolveStopPromise({ ok: false, reason: "stop_failed" });
+        return { ok: false, error: "Failed to stop recording." };
+      }
+    }
+    notifyStateChanged("stopping");
+    const result = await Promise.race([stopPromise, timeoutPromise]);
+    if (result && result.ok === false && result.reason === "timeout") {
+      if (recordingChunkCount > 0 || recordedChunks.length > 0) {
+        // V1 STABLE: stop-timeout fallback must preserve usable chunks.
+        recordingLastError = null;
+        recordingState = "idle";
+        clearRecorderHandlers(mediaRecorder);
+        mediaRecorder = null;
+        stopStreamTracks();
+        notifyStateChanged("stop");
+        chrome.runtime.sendMessage({
+          type: "RECORDING_STOPPED",
+          state: getRecordingStateSnapshot(),
+        });
+        recordingDurationMsSnapshot = computeElapsedMs();
+        recordingStopFallbackUsed = true;
+        const fallback = {
+          ok: true,
+          fallback: true,
+          message: "Recording stopped and saved from available data.",
+          code: "RECORDING_STOP_TIMEOUT_FALLBACK",
+          ...getRecordingStateSnapshot(),
+        };
+        console.log("[RECORDING][STOP_TIMEOUT_FALLBACK]", {
+          sessionId: recordingSessionId,
+          chunkCount: recordingChunkCount,
+          bytesWritten: recordingBytesWritten,
+        });
+        console.log("[REC][offscreen] STOP_TIMEOUT_FALLBACK", {
+          chunks: recordedChunks.length,
+        });
+        updateRecordingSessionRecord({
+          status: "partial_complete",
+          stoppedAt: Date.now(),
+          durationMs: computeElapsedMs(),
+          isPartial: true,
+          failureReason: "stop_timeout",
+          chunkCount: recordingChunkCount,
+          bytesWritten: recordingBytesWritten,
+        });
+        resolveStopPromise(fallback);
+        return fallback;
+      }
+      recordingLastError = "Recording stop timed out.";
+      recordingState = "idle";
+      clearRecorderHandlers(mediaRecorder);
+      mediaRecorder = null;
+      stopStreamTracks();
+      notifyStateChanged("error");
+      resolveStopPromise(result);
+      return {
+        ok: false,
+        error: "Recording stop timed out.",
+        code: "RECORDING_STOP_TIMEOUT",
         ...getRecordingStateSnapshot(),
       };
-      console.log("[RECORDING][STOP_TIMEOUT_FALLBACK]", {
-        sessionId: recordingSessionId,
-        chunkCount: recordingChunkCount,
-        bytesWritten: recordingBytesWritten,
-      });
-      console.log("[REC][offscreen] STOP_TIMEOUT_FALLBACK", {
-        chunks: recordedChunks.length,
-      });
-      updateRecordingSessionRecord({
-        status: "partial_complete",
-        stoppedAt: Date.now(),
-        durationMs: computeElapsedMs(),
-        isPartial: true,
-        failureReason: "stop_timeout",
-        chunkCount: recordingChunkCount,
-        bytesWritten: recordingBytesWritten,
-      });
-      resolveStopPromise(fallback);
-      return fallback;
     }
-    recordingLastError = "Recording stop timed out.";
-    recordingState = "idle";
-    mediaRecorder = null;
-    stopStreamTracks();
-    notifyStateChanged("error");
-    resolveStopPromise(result);
-    return {
-      ok: false,
-      error: "Recording stop timed out.",
-      code: "RECORDING_STOP_TIMEOUT",
-      ...getRecordingStateSnapshot(),
-    };
-  }
-  if (!recordingHasData || recordedChunks.length === 0) {
-    recordingLastError = "No recording data captured.";
-    recordingState = "idle";
-    stopStreamTracks();
-    notifyStateChanged("error");
-    return {
-      ok: false,
-      error: "No recording data captured.",
-      ...getRecordingStateSnapshot(),
-    };
-  }
-  return { ok: true, ...getRecordingStateSnapshot() };
+    if (!recordingHasData || recordedChunks.length === 0) {
+      recordingLastError = "No recording data captured.";
+      recordingState = "idle";
+      clearRecorderHandlers(mediaRecorder);
+      mediaRecorder = null;
+      stopStreamTracks();
+      notifyStateChanged("error");
+      return {
+        ok: false,
+        error: "No recording data captured.",
+        ...getRecordingStateSnapshot(),
+      };
+    }
+    return { ok: true, ...getRecordingStateSnapshot() };
+  });
 }
 
 async function exportRecordingWebm() {
@@ -1401,8 +1518,10 @@ async function exportRecordingWebm() {
 }
 
 function resetRecording() {
+  recordingSessionToken += 1;
   try {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      clearRecorderHandlers(mediaRecorder);
       mediaRecorder.stop();
     }
   } catch (error) {
@@ -1456,7 +1575,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       switch (message.type) {
         case "OFFSCREEN_PING":
-          result = { ok: true, ready: true, owner: "recording_offscreen" };
+          result = {
+            ok: true,
+            ready: true,
+            owner: "recording_offscreen",
+            state: getRecordingStateSnapshot(),
+          };
           break;
         case "RECORDING_GET_STATE":
           result = { ok: true, ...getRecordingStateSnapshot() };
