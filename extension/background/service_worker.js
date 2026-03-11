@@ -6426,6 +6426,13 @@ async function captureFullPageScreenshot(requestedTabId) {
       let dataUrl = null;
       try {
         dataUrl = await captureVisibleTabThrottled(windowId);
+        if (i === 0 && totalTiles > 1) {
+          try {
+            await callFullpageCapture(tabId, "suppressFixedStickyElements");
+          } catch (error) {
+            console.warn("[FULLPAGE] Failed to suppress sticky elements", error);
+          }
+        }
       } catch (error) {
         const err = new Error(
           error && error.message

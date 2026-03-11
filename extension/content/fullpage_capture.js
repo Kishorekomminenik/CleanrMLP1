@@ -49,7 +49,7 @@
     window[STATE_KEY] = buildBaseState();
   }
 
-  function hideFixedSticky() {
+  function collectFixedStickyElements() {
     const hidden = [];
     const elements = document.querySelectorAll("*");
     elements.forEach((el) => {
@@ -60,11 +60,24 @@
           visibility: el.style.visibility,
           opacity: el.style.opacity,
         });
-        el.style.visibility = "hidden";
-        el.style.opacity = "0";
       }
     });
     return hidden;
+  }
+
+  function suppressFixedStickyElements() {
+    const state = getState();
+    if (!state.hiddenElements || !state.hiddenElements.length) {
+      return { ok: true, count: 0 };
+    }
+    state.hiddenElements.forEach((entry) => {
+      if (!entry || !entry.el) {
+        return;
+      }
+      entry.el.style.visibility = "hidden";
+      entry.el.style.opacity = "0";
+    });
+    return { ok: true, count: state.hiddenElements.length };
   }
 
   function freezeNestedScrollContainers(selectedKey) {
@@ -320,7 +333,7 @@
       body.style.scrollBehavior = "auto";
     }
     ensureStyleTag();
-    state.hiddenElements = hideFixedSticky();
+    state.hiddenElements = collectFixedStickyElements();
     state.applied = true;
     state.captureRunId = captureRunId || state.captureRunId || String(Date.now());
     const selection = await selectWorkingScrollTarget(0);
@@ -559,6 +572,7 @@
     sampleFullpageMetrics,
     getScrollableCandidates,
     scrollToFullpagePosition,
+    suppressFixedStickyElements,
     restoreFullpagePageState,
     resetFullpageCaptureState,
   };
