@@ -3131,6 +3131,10 @@ async function openRecordingPanelWindow(targetTabId) {
           ? `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
           : "popup/recording_panel.html"
       );
+      console.log("[REC][sw] openRecordingPanelWindow create", {
+        panelUrl: url,
+        targetTabId: recordingPanelTargetTabId || null,
+      });
       chrome.windows.create(
         {
           url,
@@ -3150,6 +3154,10 @@ async function openRecordingPanelWindow(targetTabId) {
             );
             return;
           }
+          console.log("[REC][sw] recording panel window created", {
+            windowId: windowInfo.id || null,
+            tabId: windowInfo.tabs && windowInfo.tabs[0] ? windowInfo.tabs[0].id : null,
+          });
           resolve(windowInfo);
         }
       );
@@ -3157,6 +3165,9 @@ async function openRecordingPanelWindow(targetTabId) {
   if (recordingPanelWindowId) {
     const updated = await updateFocus(recordingPanelWindowId);
     if (updated) {
+      console.log("[REC][sw] recording panel focused", {
+        windowId: recordingPanelWindowId,
+      });
       if (
         recordingPanelTargetTabId &&
         recordingPanelWindowTabId &&
@@ -8875,12 +8886,27 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "OPEN_RECORDING_PANEL":
-      recordingPanelTargetTabId =
-        typeof normalizedMessage.tabId === "number"
-          ? normalizedMessage.tabId
-          : recordingPanelTargetTabId;
-      await openRecordingPanelWindow(recordingPanelTargetTabId);
-      result = { ok: true };
+      try {
+        recordingPanelTargetTabId =
+          typeof normalizedMessage.tabId === "number"
+            ? normalizedMessage.tabId
+            : recordingPanelTargetTabId;
+        console.log("[REC][sw] OPEN_RECORDING_PANEL", {
+          tabId: recordingPanelTargetTabId || null,
+          currentRecordingState: recordingController.state || state.recording.status,
+        });
+        await openRecordingPanelWindow(recordingPanelTargetTabId);
+        result = { ok: true };
+      } catch (error) {
+        console.warn("[REC][sw] OPEN_RECORDING_PANEL failed", {
+          error: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+        result = {
+          ok: false,
+          error: error?.message || "Failed to open recording panel.",
+        };
+      }
       break;
     case "OPEN_LOGS_PANEL":
       await openLogsPanelOverlay(
@@ -9439,6 +9465,14 @@ async function handleMessage(message, sender) {
       if (message && message.state) {
         syncRecordingState(message.state);
       }
+      result = { ok: true };
+      break;
+    case "RECORDING_PANEL_READY":
+      console.log("[REC][sw] recording panel ready", {
+        tabId: message && typeof message.targetTabId === "number" ? message.targetTabId : null,
+        panelUrl: message && message.panelUrl ? message.panelUrl : null,
+        windowId: recordingPanelWindowId || null,
+      });
       result = { ok: true };
       break;
     case "RECORDING_STARTED":

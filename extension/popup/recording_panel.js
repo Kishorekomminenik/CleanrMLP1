@@ -28,6 +28,15 @@ async function send(type, payload = {}) {
   }
 }
 
+console.log("[REC][panel] init", {
+  targetTabId,
+  url: window.location.href,
+});
+send("RECORDING_PANEL_READY", {
+  targetTabId,
+  panelUrl: window.location.href,
+});
+
 function formatElapsedWithPauses(session) {
   if (!session || !session.created_at) {
     return "00:00";

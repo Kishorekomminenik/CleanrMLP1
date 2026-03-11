@@ -2950,10 +2950,23 @@ function setLauncherError(message) {
 
 async function handleOpenRecordingPanel() {
   setLauncherError(null);
-  const tab = await getActiveTab();
-  const response = await send("OPEN_RECORDING_PANEL", {
-    tabId: tab && tab.id ? tab.id : null,
+  console.log("[REC][popup] open recording panel request", {
+    currentMode,
+    recordingState,
   });
+  const tab = await getActiveTab();
+  let response = null;
+  try {
+    response = await send("OPEN_RECORDING_PANEL", {
+      tabId: tab && tab.id ? tab.id : null,
+    });
+  } catch (error) {
+    console.warn("[REC][popup] OPEN_RECORDING_PANEL send failed", {
+      error: error?.message || String(error),
+    });
+    response = { ok: false, error: error?.message || "Send failed." };
+  }
+  console.log("[REC][popup] open recording panel response", response);
   await refreshStatus();
   if (response && response.ok) {
     window.close();
@@ -3017,6 +3030,11 @@ function routeAction(action, el) {
       handleLauncherCapture("full");
       break;
     case "launcher:record":
+      console.log("[REC][popup] launcher record click", {
+        action,
+        currentMode,
+        recordingState,
+      });
       handleOpenRecordingPanel();
       break;
     case "launcher:logs":
