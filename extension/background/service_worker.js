@@ -6501,13 +6501,29 @@ async function captureFullPageScreenshot(requestedTabId) {
           FULL_CAPTURE_CONFIG.postScrollDelayMs,
         ]);
         if (DEBUG_FULLPAGE) {
+          const diagnostics = scrollRes ? scrollRes.diagnostics : null;
           console.log("[FULLPAGE][SCROLL_STABILITY]", {
             tileIndex: i + 1,
             attempt,
-            targetScrollTop: Math.round(clampedScrollTop),
+            targetScrollY_css: Math.round(clampedScrollTop),
+            actualScrollY_after_scroll_css:
+              diagnostics && typeof diagnostics.after === "number"
+                ? Math.round(diagnostics.after)
+                : null,
+            actualScrollY_after_raf1_css:
+              diagnostics && typeof diagnostics.afterRaf1 === "number"
+                ? Math.round(diagnostics.afterRaf1)
+                : null,
+            actualScrollY_after_raf2_css:
+              diagnostics && typeof diagnostics.afterRaf2 === "number"
+                ? Math.round(diagnostics.afterRaf2)
+                : null,
+            viewportWidth_css: Math.round(viewportWidth),
+            viewportHeight_css: Math.round(viewportHeight),
+            documentHeight_css: Math.round(scrollHeight),
+            devicePixelRatio,
             ok: scrollRes ? scrollRes.ok : false,
             scrollY: scrollRes ? Math.round(scrollRes.scrollY || 0) : null,
-            diagnostics: scrollRes ? scrollRes.diagnostics : null,
             stability: scrollRes ? scrollRes.stability : null,
           });
         }
@@ -6704,10 +6720,10 @@ async function captureFullPageScreenshot(requestedTabId) {
         const captureDims = readPngDimensionsFromDataUrl(dataUrl);
         console.log("[FULLPAGE][CAPTURE_IMAGE]", {
           tileIndex: i + 1,
-          width: captureDims ? captureDims.width : null,
-          height: captureDims ? captureDims.height : null,
-          expectedWidth: Math.ceil(viewportWidth * devicePixelRatio),
-          expectedHeight: Math.ceil(
+          capturedImageWidth_device: captureDims ? captureDims.width : null,
+          capturedImageHeight_device: captureDims ? captureDims.height : null,
+          expectedWidth_device: Math.ceil(viewportWidth * devicePixelRatio),
+          expectedHeight_device: Math.ceil(
             (tileClientHeight || viewportHeight) * devicePixelRatio
           ),
           dataUrlBytes: dataUrl.length,

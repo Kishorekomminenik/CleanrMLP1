@@ -283,6 +283,13 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
   const lastTile = tiles && tiles.length ? tiles[tiles.length - 1] : null;
   let prevBottom = null;
   let accumulatedDestY = 0;
+  if (debug) {
+    console.log("[FULLPAGE][STITCH][CANVAS]", {
+      width: ctx.canvas.width,
+      height: ctx.canvas.height,
+      tileCount: tiles ? tiles.length : 0,
+    });
+  }
   for (const tile of tiles) {
     if (!tile.blobKey) {
       throw new Error("Tile missing blobKey.");
@@ -306,7 +313,10 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
     // matching source/dest heights to prevent visible seams.
     const frameWidth = tile.widthPx || ctx.canvas.width;
     const srcY = Math.max(0, tile.clipTopPx);
-    let destY = accumulatedDestY;
+    const hasActualOffset =
+      Number.isFinite(tile.yPx) && Number.isFinite(tile.clipTopPx);
+    const actualDestY = hasActualOffset ? tile.yPx + tile.clipTopPx : null;
+    let destY = Number.isFinite(actualDestY) ? Math.max(0, actualDestY) : accumulatedDestY;
     let destHeight = Math.min(tile.clipHeightPx, ctx.canvas.height - destY);
     let sourceHeight = Math.min(destHeight, bmp.height - srcY);
     if (sourceHeight <= 0 || destHeight <= 0) {
@@ -319,6 +329,10 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       tileIndex: tile.tileIndex,
       sourceHeight,
       destY,
+      destYUsed: hasActualOffset ? "actual_scroll" : "accumulated",
+      actualDestY: Number.isFinite(actualDestY) ? actualDestY : null,
+      yPx: Number.isFinite(tile.yPx) ? tile.yPx : null,
+      clipTopPx: Number.isFinite(tile.clipTopPx) ? tile.clipTopPx : null,
       destHeight,
       accumulatedDestY,
     });
