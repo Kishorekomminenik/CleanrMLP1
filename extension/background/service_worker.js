@@ -6164,9 +6164,14 @@ function getFullpageUserMessage(error) {
     return rawMessage || "captureVisibleTab failed.";
   }
   if (code === "FULLPAGE_ERR_TILE_INVALID") {
+    const reason =
+      error && error.details && error.details.reason
+        ? ` Reason: ${error.details.reason.replace(/_/g, " ")}.`
+        : "";
     return (
-      "Full page capture failed due to invalid tile data. " +
-      "Media-heavy pages may block full-page capture. Try again or use Snap."
+      "Full page capture failed due to invalid tile data." +
+      reason +
+      " Media-heavy pages may block full-page capture. Try again or use Snap."
     );
   }
   if (code === "FULLPAGE_ERR_STITCH") {
@@ -6240,6 +6245,8 @@ async function handlePopupCaptureRequest(request) {
       console.warn("[CAPTURE][SW][FULL_FAILED]", {
         message,
         stage: error && error.stage ? error.stage : "unknown",
+        code: error && error.code ? error.code : null,
+        details: error && error.details ? error.details : null,
       });
       try {
         await chrome.storage.session.set({ lastFullpageError: message });
@@ -6811,8 +6818,15 @@ async function captureFullPageScreenshot(requestedTabId) {
           } else {
             clipHeightPx = rawClipHeightPx;
           }
+          let reason = null;
+          if (!dimensionValidation.ok) {
+            reason = dimensionValidation.reason || "dimension_mismatch";
+          } else if (!cropValidation.ok) {
+            reason = cropValidation.reason || "crop_invalid";
+          }
           tileValidationResult = {
             ok: dimensionValidation.ok && cropValidation.ok,
+            reason,
             dimension: dimensionValidation,
             crop: cropValidation,
           };
@@ -6829,6 +6843,8 @@ async function captureFullPageScreenshot(requestedTabId) {
             };
             if (gapPx > FULLPAGE_SEAM_TOLERANCE_PX) {
               tileValidationResult.ok = false;
+              tileValidationResult.reason = "seam_gap";
+              tileValidationResult.seamGap = seamGapResult;
             }
           }
           if (tileValidationResult.ok) {
