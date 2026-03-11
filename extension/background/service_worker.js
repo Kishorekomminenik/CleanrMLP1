@@ -162,6 +162,8 @@ const POPUP_CAPTURE_DELAY_MS = 200;
 const FULLPAGE_STABILIZE_SETTLE_MS = 150;
 const FULLPAGE_STABILIZE_MAX_RETRIES = 2;
 const FULLPAGE_TILE_STABILITY_RETRIES = 2;
+const FULLPAGE_TILE_CAPTURE_RETRIES = 1;
+const FULLPAGE_TILE_DIMENSION_TOLERANCE_PX = 2;
 const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
@@ -443,6 +445,37 @@ function readPngDimensionsFromDataUrl(dataUrl) {
   } catch (error) {
     return null;
   }
+}
+
+function validateCapturedTileDimensions({
+  captureDims,
+  expectedWidthPx,
+  expectedHeightPx,
+  clipTopPx,
+}) {
+  if (!captureDims || !captureDims.width || !captureDims.height) {
+    return { ok: false, reason: "missing_dimensions" };
+  }
+  const widthDelta = Math.abs(captureDims.width - expectedWidthPx);
+  const heightDelta = Math.abs(captureDims.height - expectedHeightPx);
+  if (widthDelta > FULLPAGE_TILE_DIMENSION_TOLERANCE_PX) {
+    return {
+      ok: false,
+      reason: "width_mismatch",
+      widthDelta,
+    };
+  }
+  if (heightDelta > FULLPAGE_TILE_DIMENSION_TOLERANCE_PX) {
+    return {
+      ok: false,
+      reason: "height_mismatch",
+      heightDelta,
+    };
+  }
+  if (typeof clipTopPx === "number" && clipTopPx >= captureDims.height) {
+    return { ok: false, reason: "clip_exceeds_height" };
+  }
+  return { ok: true };
 }
 
 async function blobToDataUrl(blob) {
@@ -6090,6 +6123,9 @@ function getFullpageUserMessage(error) {
   if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
     return rawMessage || "captureVisibleTab failed.";
   }
+  if (code === "FULLPAGE_ERR_TILE_INVALID") {
+    return "Full page capture failed due to invalid tile data. Try again.";
+  }
   if (code === "FULLPAGE_ERR_STITCH") {
     return rawMessage || "Full page capture failed during stitching.";
   }
@@ -6667,11 +6703,9 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       currentScroll = actualY;
       plannedScrollTop = clampedScrollTop;
+      let nestedBefore = null;
       if (DEBUG_FULLPAGE) {
-        const nestedBefore = await callFullpageCapture(
-          tabId,
-          "getNestedScrollDiagnostics"
-        );
+        nestedBefore = await callFullpageCapture(tabId, "getNestedScrollDiagnostics");
         console.log("[FULLPAGE][NESTED_SCROLL_DIAG]", {
           tileIndex: i + 1,
           phase: "before",
@@ -6682,9 +6716,53 @@ async function captureFullPageScreenshot(requestedTabId) {
           enabled: i > 0 && totalTiles > 1,
         });
       }
+      const effectiveViewportHeight = tileClientHeight || viewportHeight;
+      const effectiveScrollTop =
+        typeof reportedScrollTop === "number" ? reportedScrollTop : plannedScrollTop;
+      let clipTop = 0;
+      if (prevY !== null) {
+        const overlap = prevY + effectiveViewportHeight - effectiveScrollTop;
+        if (overlap > 0) {
+          clipTop = overlap;
+        }
+      }
+      const remainingHeight = tileScrollHeight - effectiveScrollTop;
+      const baseCropHeight = Math.min(effectiveViewportHeight, remainingHeight);
+      const clipHeight = Math.max(0, baseCropHeight - clipTop);
+      const expectedWidthPx = Math.ceil(viewportWidth * devicePixelRatio);
+      const expectedHeightPx = Math.ceil(effectiveViewportHeight * devicePixelRatio);
       let dataUrl = null;
+      let captureDims = null;
+      let tileValidationResult = null;
       try {
-        dataUrl = await captureVisibleTabThrottled(windowId);
+        for (let attempt = 0; attempt <= FULLPAGE_TILE_CAPTURE_RETRIES; attempt += 1) {
+          dataUrl = await captureVisibleTabThrottled(windowId);
+          if (!dataUrl || !dataUrl.startsWith("data:image/png")) {
+            continue;
+          }
+          captureDims = readPngDimensionsFromDataUrl(dataUrl);
+          tileValidationResult = validateCapturedTileDimensions({
+            captureDims,
+            expectedWidthPx,
+            expectedHeightPx,
+          });
+          if (tileValidationResult.ok) {
+            break;
+          }
+          if (DEBUG_FULLPAGE) {
+            console.log("[FULLPAGE][TILE_VALIDATION]", {
+              tileIndex: i + 1,
+              attempt,
+              expectedWidthPx,
+              expectedHeightPx,
+              captureDims,
+              result: tileValidationResult,
+            });
+          }
+          if (attempt < FULLPAGE_TILE_CAPTURE_RETRIES) {
+            await delay(80);
+          }
+        }
         if (i === 0 && totalTiles > 1) {
           try {
             const suppressRes = await callFullpageCapture(
@@ -6716,17 +6794,21 @@ async function captureFullPageScreenshot(requestedTabId) {
         err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
         throw err;
       }
+      if (!tileValidationResult || tileValidationResult.ok !== true) {
+        const err = new Error("Captured tile dimensions invalid.");
+        err.code = "FULLPAGE_ERR_TILE_INVALID";
+        err.details = tileValidationResult;
+        throw err;
+      }
       if (DEBUG_FULLPAGE) {
-        const captureDims = readPngDimensionsFromDataUrl(dataUrl);
         console.log("[FULLPAGE][CAPTURE_IMAGE]", {
           tileIndex: i + 1,
           capturedImageWidth_device: captureDims ? captureDims.width : null,
           capturedImageHeight_device: captureDims ? captureDims.height : null,
-          expectedWidth_device: Math.ceil(viewportWidth * devicePixelRatio),
-          expectedHeight_device: Math.ceil(
-            (tileClientHeight || viewportHeight) * devicePixelRatio
-          ),
+          expectedWidth_device: expectedWidthPx,
+          expectedHeight_device: expectedHeightPx,
           dataUrlBytes: dataUrl.length,
+          tileValidationResult,
         });
         const nestedAfter = await callFullpageCapture(
           tabId,
@@ -6738,20 +6820,18 @@ async function captureFullPageScreenshot(requestedTabId) {
           diagnostics: nestedAfter || null,
         });
       }
-      const effectiveViewportHeight = tileClientHeight || viewportHeight;
-      const effectiveScrollTop =
-        typeof reportedScrollTop === "number" ? reportedScrollTop : plannedScrollTop;
-      let clipTop = 0;
-      if (prevY !== null) {
-        const overlap =
-          prevY + effectiveViewportHeight - effectiveScrollTop;
-        if (overlap > 0) {
-          clipTop = overlap;
+      const clipTopPx = Math.round(clipTop * devicePixelRatio);
+      let clipHeightPx = Math.round(clipHeight * devicePixelRatio);
+      if (captureDims && Number.isFinite(captureDims.height)) {
+        const maxClipHeight = Math.max(0, captureDims.height - clipTopPx);
+        clipHeightPx = Math.min(clipHeightPx, maxClipHeight);
+        if (clipTopPx >= captureDims.height) {
+          const err = new Error("Captured tile crop exceeds image bounds.");
+          err.code = "FULLPAGE_ERR_TILE_INVALID";
+          err.details = { reason: "clip_exceeds_height" };
+          throw err;
         }
       }
-      const remainingHeight = tileScrollHeight - effectiveScrollTop;
-      const baseCropHeight = Math.min(effectiveViewportHeight, remainingHeight);
-      const clipHeight = Math.max(0, baseCropHeight - clipTop);
       console.log("[FULLPAGE][CROP_RECALC]", {
         tileIndex: i + 1,
         scrollHeight: Math.round(tileScrollHeight),
@@ -6759,6 +6839,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         actualScrollTop: Math.round(effectiveScrollTop),
         remainingHeight: Math.round(remainingHeight),
         cropHeight: Math.round(clipHeight),
+        cropHeightPx: clipHeightPx,
       });
       console.log("[FULLPAGE][TILE]", {
         tileIndex: i + 1,
@@ -6772,6 +6853,17 @@ async function captureFullPageScreenshot(requestedTabId) {
         scrollHeight: Math.round(tileScrollHeight),
         cropHeight: Math.round(clipHeight),
         remainingHeight: Math.round(remainingHeight),
+        drawY_used_for_stitch: Math.round(
+          Math.round(effectiveScrollTop * devicePixelRatio) + clipTopPx
+        ),
+        cropSourceY_device: clipTopPx,
+        cropHeight_device: clipHeightPx,
+        nestedScrollerCount: nestedBefore && typeof nestedBefore.count === "number"
+          ? nestedBefore.count
+          : 0,
+        nestedScrollerOffsetsSummary:
+          nestedBefore && nestedBefore.samples ? nestedBefore.samples : null,
+        tileValidationResult,
       });
       if (remainingHeight <= 0) {
         if (treatedAsBottom) {
@@ -6798,10 +6890,10 @@ async function captureFullPageScreenshot(requestedTabId) {
       const tileMeta = {
         scrollY: Math.round(effectiveScrollTop),
         y: Math.round(effectiveScrollTop * devicePixelRatio),
-        width: Math.ceil(viewportWidth * devicePixelRatio),
-        height: Math.ceil(effectiveViewportHeight * devicePixelRatio),
-        clipTop: Math.round(clipTop * devicePixelRatio),
-        clipHeight: Math.round(clipHeight * devicePixelRatio),
+        width: captureDims && captureDims.width ? captureDims.width : expectedWidthPx,
+        height: captureDims && captureDims.height ? captureDims.height : expectedHeightPx,
+        clipTop: clipTopPx,
+        clipHeight: clipHeightPx,
       };
       const tileIndex = i + 1;
       const blob = dataUrlToBlob(dataUrl);
