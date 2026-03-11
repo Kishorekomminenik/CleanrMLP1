@@ -1562,6 +1562,7 @@ function resetRecording() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handledTypes = new Set([
     "OFFSCREEN_PING",
+    "RECORDING_CANONICAL_STATE",
     "RECORDING_GET_STATE",
     "RECORDING_START",
     "RECORDING_PAUSE",
@@ -1595,6 +1596,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             owner: "recording_offscreen",
             state: getRecordingStateSnapshot(),
           };
+          break;
+        case "RECORDING_CANONICAL_STATE":
+          result = { ok: true, ignored: true };
           break;
         case "RECORDING_GET_STATE":
           result = { ok: true, ...getRecordingStateSnapshot() };
