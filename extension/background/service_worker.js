@@ -259,6 +259,7 @@ let offscreenCreating = null;
 let recordingPanelWindowId = null;
 let recordingPanelWindowTabId = null;
 let recordingPanelTargetTabId = null;
+let recordingPanelReadyWaiter = null;
 let logsPanelTabId = null;
 const panelOverlayState = {
   recording: {
@@ -3219,6 +3220,29 @@ async function openRecordingPanelWindow(targetTabId) {
   recordingPanelWindowTabId =
     windowInfo.tabs && windowInfo.tabs[0] ? windowInfo.tabs[0].id : null;
   return windowInfo;
+}
+
+function waitForRecordingPanelReady(timeoutMs = 1500) {
+  if (recordingPanelReadyWaiter && recordingPanelReadyWaiter.promise) {
+    return recordingPanelReadyWaiter.promise;
+  }
+  let resolveFn;
+  const promise = new Promise((resolve) => {
+    resolveFn = resolve;
+  });
+  const timer = setTimeout(() => {
+    resolveFn({ ok: false, timeout: true });
+  }, timeoutMs);
+  recordingPanelReadyWaiter = {
+    promise,
+    resolve: (payload) => {
+      clearTimeout(timer);
+      resolveFn(payload);
+    },
+  };
+  return promise.finally(() => {
+    recordingPanelReadyWaiter = null;
+  });
 }
 
 function closeRecordingPanelWindow() {
@@ -9032,8 +9056,17 @@ async function handleMessage(message, sender) {
           tabId: recordingPanelTargetTabId || null,
           currentRecordingState: recordingController.state || state.recording.status,
         });
+        const readyPromise = waitForRecordingPanelReady();
         await openRecordingPanelWindow(recordingPanelTargetTabId);
-        result = { ok: true };
+        const ready = await readyPromise;
+        if (ready && ready.ok) {
+          result = { ok: true };
+        } else {
+          result = {
+            ok: false,
+            error: "Recording panel failed to initialize. Try again.",
+          };
+        }
       } catch (error) {
         console.warn("[REC][sw] OPEN_RECORDING_PANEL failed", {
           error: error?.message || String(error),
@@ -9610,6 +9643,9 @@ async function handleMessage(message, sender) {
         panelUrl: message && message.panelUrl ? message.panelUrl : null,
         windowId: recordingPanelWindowId || null,
       });
+      if (recordingPanelReadyWaiter && typeof recordingPanelReadyWaiter.resolve === "function") {
+        recordingPanelReadyWaiter.resolve({ ok: true });
+      }
       result = { ok: true };
       break;
     case "RECORDING_STARTED":
