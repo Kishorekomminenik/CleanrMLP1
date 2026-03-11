@@ -164,6 +164,7 @@ const FULLPAGE_STABILIZE_MAX_RETRIES = 2;
 const FULLPAGE_TILE_STABILITY_RETRIES = 2;
 const FULLPAGE_TILE_CAPTURE_RETRIES = 1;
 const FULLPAGE_TILE_DIMENSION_TOLERANCE_PX = 2;
+const FULLPAGE_TILE_CROP_TOLERANCE_PX = 2;
 const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
@@ -451,7 +452,6 @@ function validateCapturedTileDimensions({
   captureDims,
   expectedWidthPx,
   expectedHeightPx,
-  clipTopPx,
 }) {
   if (!captureDims || !captureDims.width || !captureDims.height) {
     return { ok: false, reason: "missing_dimensions" };
@@ -472,8 +472,35 @@ function validateCapturedTileDimensions({
       heightDelta,
     };
   }
-  if (typeof clipTopPx === "number" && clipTopPx >= captureDims.height) {
+  return { ok: true };
+}
+
+function validateTileCropBounds({
+  captureDims,
+  clipTopPx,
+  clipHeightPx,
+  tolerancePx = FULLPAGE_TILE_CROP_TOLERANCE_PX,
+}) {
+  if (!captureDims || !captureDims.height) {
+    return { ok: false, reason: "missing_dimensions" };
+  }
+  if (clipTopPx < 0 || clipTopPx >= captureDims.height) {
     return { ok: false, reason: "clip_exceeds_height" };
+  }
+  if (clipHeightPx < 0) {
+    return { ok: false, reason: "negative_clip_height" };
+  }
+  const overshoot = clipTopPx + clipHeightPx - captureDims.height;
+  if (overshoot > 0) {
+    if (overshoot <= tolerancePx) {
+      return {
+        ok: true,
+        adjusted: true,
+        adjustedHeightPx: Math.max(0, captureDims.height - clipTopPx),
+        overshoot,
+      };
+    }
+    return { ok: false, reason: "crop_exceeds_height", overshoot };
   }
   return { ok: true };
 }
@@ -6742,9 +6769,12 @@ async function captureFullPageScreenshot(requestedTabId) {
       const clipHeight = Math.max(0, baseCropHeight - clipTop);
       const expectedWidthPx = Math.ceil(viewportWidth * devicePixelRatio);
       const expectedHeightPx = Math.ceil(effectiveViewportHeight * devicePixelRatio);
+      const rawClipTopPx = Math.round(clipTop * devicePixelRatio);
+      const rawClipHeightPx = Math.round(clipHeight * devicePixelRatio);
       let dataUrl = null;
       let captureDims = null;
       let tileValidationResult = null;
+      let clipHeightPx = rawClipHeightPx;
       try {
         for (let attempt = 0; attempt <= FULLPAGE_TILE_CAPTURE_RETRIES; attempt += 1) {
           dataUrl = await captureVisibleTabThrottled(windowId);
@@ -6752,11 +6782,26 @@ async function captureFullPageScreenshot(requestedTabId) {
             continue;
           }
           captureDims = readPngDimensionsFromDataUrl(dataUrl);
-          tileValidationResult = validateCapturedTileDimensions({
+          const dimensionValidation = validateCapturedTileDimensions({
             captureDims,
             expectedWidthPx,
             expectedHeightPx,
           });
+          const cropValidation = validateTileCropBounds({
+            captureDims,
+            clipTopPx: rawClipTopPx,
+            clipHeightPx: rawClipHeightPx,
+          });
+          if (cropValidation.ok && cropValidation.adjusted) {
+            clipHeightPx = cropValidation.adjustedHeightPx;
+          } else {
+            clipHeightPx = rawClipHeightPx;
+          }
+          tileValidationResult = {
+            ok: dimensionValidation.ok && cropValidation.ok,
+            dimension: dimensionValidation,
+            crop: cropValidation,
+          };
           if (tileValidationResult.ok) {
             break;
           }
@@ -6831,18 +6876,7 @@ async function captureFullPageScreenshot(requestedTabId) {
           diagnostics: nestedAfter || null,
         });
       }
-      const clipTopPx = Math.round(clipTop * devicePixelRatio);
-      let clipHeightPx = Math.round(clipHeight * devicePixelRatio);
-      if (captureDims && Number.isFinite(captureDims.height)) {
-        const maxClipHeight = Math.max(0, captureDims.height - clipTopPx);
-        clipHeightPx = Math.min(clipHeightPx, maxClipHeight);
-        if (clipTopPx >= captureDims.height) {
-          const err = new Error("Captured tile crop exceeds image bounds.");
-          err.code = "FULLPAGE_ERR_TILE_INVALID";
-          err.details = { reason: "clip_exceeds_height" };
-          throw err;
-        }
-      }
+      const clipTopPx = rawClipTopPx;
       console.log("[FULLPAGE][CROP_RECALC]", {
         tileIndex: i + 1,
         scrollHeight: Math.round(tileScrollHeight),

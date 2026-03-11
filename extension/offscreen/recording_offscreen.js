@@ -38,6 +38,7 @@ const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
 const FULLPAGE_PART_HEIGHT = 12000;
 const FULLPAGE_DB_NAME = "repro_evidence_db";
+const FULLPAGE_SEAM_TOLERANCE_PX = 2;
 let fullpageDbPromise = null;
 
 chrome.runtime.sendMessage({ type: "OFFSCREEN_READY" });
@@ -317,8 +318,34 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       Number.isFinite(tile.yPx) && Number.isFinite(tile.clipTopPx);
     const actualDestY = hasActualOffset ? tile.yPx + tile.clipTopPx : null;
     let destY = Number.isFinite(actualDestY) ? Math.max(0, actualDestY) : accumulatedDestY;
+    let gapPx = null;
+    if (prevBottom !== null) {
+      gapPx = destY - prevBottom;
+      console.log("[FULLPAGE][STITCH][SEAM_GAP]", {
+        tileIndex: tile.tileIndex,
+        prevBottom,
+        destY,
+        gapPx,
+      });
+      if (Math.abs(gapPx) <= FULLPAGE_SEAM_TOLERANCE_PX) {
+        destY = prevBottom;
+        gapPx = 0;
+      }
+    }
+    if (srcY >= bmp.height) {
+      throw new Error("FULLPAGE_ERR_TILE_INVALID: crop_out_of_bounds");
+    }
+    if (destY < -FULLPAGE_SEAM_TOLERANCE_PX || destY > ctx.canvas.height) {
+      throw new Error("FULLPAGE_ERR_TILE_INVALID: draw_out_of_bounds");
+    }
     let destHeight = Math.min(tile.clipHeightPx, ctx.canvas.height - destY);
     let sourceHeight = Math.min(destHeight, bmp.height - srcY);
+    if (srcY + sourceHeight > bmp.height + FULLPAGE_SEAM_TOLERANCE_PX) {
+      throw new Error("FULLPAGE_ERR_TILE_INVALID: crop_exceeds_height");
+    }
+    if (destY + destHeight > ctx.canvas.height + FULLPAGE_SEAM_TOLERANCE_PX) {
+      throw new Error("FULLPAGE_ERR_TILE_INVALID: draw_exceeds_canvas");
+    }
     if (sourceHeight <= 0 || destHeight <= 0) {
       continue;
     }
@@ -533,10 +560,15 @@ async function composeFullpageArtifact(captureRunId, isFinal) {
       byteLength: blob.size,
     };
   } catch (error) {
+    const messageText = error?.message || "Compose failed.";
+    const code =
+      typeof messageText === "string" && messageText.includes("FULLPAGE_ERR_TILE_INVALID")
+        ? "FULLPAGE_ERR_TILE_INVALID"
+        : "FULLPAGE_ERR_STITCH";
     return {
       ok: false,
-      code: "FULLPAGE_ERR_STITCH",
-      message: error?.message || "Compose failed.",
+      code,
+      message: messageText,
     };
   }
 }
