@@ -1802,6 +1802,13 @@ function applyStatusMessage(state) {
   const type =
     level === "error" ? "error" : level === "success" ? "success" : "default";
   setStatus(statusElements.message, state.statusMessage.message, type);
+  if (launcherError) {
+    if (level === "error") {
+      setLauncherError(state.statusMessage.message);
+    } else if (level === "success" || level === "info") {
+      setLauncherError(null);
+    }
+  }
   if (controlsStatus) {
     controlsStatus.textContent = state.statusMessage.message;
     controlsStatus.classList.remove("is-hidden");
@@ -3566,6 +3573,16 @@ async function initPopup() {
   await loadCaptureSettings();
   await loadFiltersSettings();
   await initCapabilities();
+  try {
+    const sessionData = await chrome.storage.session.get({
+      lastFullpageError: null,
+    });
+    if (sessionData && sessionData.lastFullpageError) {
+      setLauncherError(sessionData.lastFullpageError);
+    }
+  } catch (error) {
+    // Ignore session storage failures.
+  }
   await refreshStatus();
   setInterval(refreshStatus, 1000);
   if (versionBadge) {

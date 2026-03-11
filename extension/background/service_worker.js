@@ -6217,6 +6217,11 @@ async function handlePopupCaptureRequest(request) {
             : 0,
       });
       if (artifactKey) {
+        try {
+          await chrome.storage.session.remove(["lastFullpageError"]);
+        } catch (error) {
+          // Ignore session storage cleanup failures.
+        }
         const viewerUrl = new URL(
           chrome.runtime.getURL("popup/screenshot_viewer.html")
         );
@@ -6235,11 +6240,11 @@ async function handlePopupCaptureRequest(request) {
         message,
         stage: error && error.stage ? error.stage : "unknown",
       });
-      const viewerUrl = new URL(
-        chrome.runtime.getURL("popup/screenshot_viewer.html")
-      );
-      viewerUrl.searchParams.set("error", message);
-      await chrome.tabs.create({ url: viewerUrl.toString() });
+      try {
+        await chrome.storage.session.set({ lastFullpageError: message });
+      } catch (storageError) {
+        // Ignore session storage failures.
+      }
     }
   }
 }
