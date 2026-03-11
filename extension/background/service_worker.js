@@ -468,9 +468,10 @@ function validateCapturedTileDimensions({
   }
   if (heightDelta > FULLPAGE_TILE_DIMENSION_TOLERANCE_PX) {
     return {
-      ok: false,
+      ok: true,
       reason: "height_mismatch",
       heightDelta,
+      warning: true,
     };
   }
   return { ok: true };
@@ -6554,13 +6555,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = "FULLPAGE_ERR_OFFSCREEN";
       throw err;
     }
-    if (windowId && tab.active === false) {
-      try {
-        await chrome.windows.update(windowId, { focused: true });
-      } catch (error) {
-        // Ignore focus failures.
-      }
-    }
+    // Avoid forcing window focus; capture should not jump windows.
     console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
     sendFullPageProgress("capture", 0, totalTiles);
     let prevY = null;
