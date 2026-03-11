@@ -6235,6 +6235,11 @@ async function handlePopupCaptureRequest(request) {
         message,
         stage: error && error.stage ? error.stage : "unknown",
       });
+      const viewerUrl = new URL(
+        chrome.runtime.getURL("popup/screenshot_viewer.html")
+      );
+      viewerUrl.searchParams.set("error", message);
+      await chrome.tabs.create({ url: viewerUrl.toString() });
     }
   }
 }

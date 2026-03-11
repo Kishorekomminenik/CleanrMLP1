@@ -1230,6 +1230,12 @@ async function loadScreenshot() {
   isImageLoaded = false;
   console.log("[EDITOR][INIT]", { isImageLoaded: false });
   const params = new URLSearchParams(window.location.search);
+  const errorMessage = params.get("error");
+  if (errorMessage) {
+    setStatus(errorMessage, "error");
+    showBootError(errorMessage, null);
+    return;
+  }
   const artifactKey = params.get("artifactKey");
   if (artifactKey) {
     console.log("[FULLPAGE][VIEWER][LOAD_REQUEST]", { artifactKey });
