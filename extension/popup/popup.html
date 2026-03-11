@@ -15,7 +15,18 @@
             <div class="launcher-title">Repro</div>
             <div class="launcher-subtitle">QA capture</div>
           </div>
-          <div class="launcher-badge">Local only</div>
+          <div class="launcher-meta">
+            <div class="launcher-badge">Local only</div>
+            <button
+              id="launcher_help_button"
+              class="launcher-help-button"
+              type="button"
+              aria-label="Help"
+              title="Help"
+            >
+              ⓘ
+            </button>
+          </div>
         </div>
         <div class="launcher-actions">
           <button class="launcher-btn primary" type="button" data-action="launcher:snap">
@@ -30,6 +41,48 @@
           <button class="launcher-btn" type="button" data-action="launcher:logs">
             Logs
           </button>
+        </div>
+        <div id="repro_help_panel" class="launcher-help-panel" aria-hidden="true">
+          <div class="help-title">How Repro works</div>
+          <div class="help-section">
+            <div class="help-heading">Visual Capture</div>
+            <ul>
+              <li>Snap — Capture visible screen.</li>
+              <li>Full — Capture entire scrollable page.</li>
+              <li>Annotate, copy, or download.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Session Recording</div>
+            <ul>
+              <li>Record tab video (WebM).</li>
+              <li>Start, Pause, Stop anytime.</li>
+              <li>Video stored locally.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">QA-Grade Logs</div>
+            <ul>
+              <li>Capture Network (XHR/Fetch).</li>
+              <li>Capture Console errors.</li>
+              <li>Readable JSON export.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Automation Bridge</div>
+            <ul>
+              <li>Export API calls as Postman Collection.</li>
+              <li>Structured evidence ZIP.</li>
+              <li>Designed for defect acceleration.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Privacy</div>
+            <ul>
+              <li>All data stored locally.</li>
+              <li>No external transmission.</li>
+            </ul>
+          </div>
         </div>
         <div id="launcher_error" class="launcher-error is-hidden"></div>
       </div>

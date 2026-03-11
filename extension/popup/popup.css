@@ -293,6 +293,12 @@ h2 {
   margin-bottom: 12px;
 }
 
+.launcher-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .launcher-title {
   font-size: 16px;
   font-weight: 600;
@@ -314,11 +320,82 @@ h2 {
   color: var(--muted);
 }
 
+.launcher-help-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launcher-help-button:hover {
+  background: #f8fafc;
+}
+
+.launcher-help-button:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+}
+
 .launcher-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.launcher-help-panel {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 280px;
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.launcher-help-panel .help-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.launcher-help-panel .help-section {
+  margin-bottom: 8px;
+}
+
+.launcher-help-panel .help-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.launcher-help-panel ul {
+  margin: 0 0 0 14px;
+  padding: 0;
+}
+
+.launcher-help-panel li {
+  margin: 0 0 2px 0;
+}
+
+.help-open .launcher-help-panel {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .launcher-btn {

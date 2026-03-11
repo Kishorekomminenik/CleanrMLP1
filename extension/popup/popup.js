@@ -12,6 +12,8 @@ const appIconEl = document.getElementById("app_icon");
 const helpButton = document.getElementById("help_button");
 const helpModal = document.getElementById("help_modal");
 const helpCloseButton = document.getElementById("help_close");
+const launcherHelpButton = document.getElementById("launcher_help_button");
+const launcherHelpPanel = document.getElementById("repro_help_panel");
 
 const buttons = {
   screenshot: document.getElementById("btn_take_screenshot"),
@@ -171,6 +173,7 @@ let captureFilters = {
 };
 let filtersLocked = false;
 let fullPageInProgress = false;
+let launcherHelpOpen = false;
 
 function setStatus(element, message, type = "default") {
   element.textContent = message;
@@ -201,6 +204,35 @@ function showToast(message, type = "info") {
     toastEl.style.background = "#0f172a";
   }
 }
+
+function setLauncherHelpOpen(open) {
+  launcherHelpOpen = Boolean(open);
+  document.body.classList.toggle("help-open", launcherHelpOpen);
+  if (launcherHelpPanel) {
+    launcherHelpPanel.setAttribute(
+      "aria-hidden",
+      launcherHelpOpen ? "false" : "true"
+    );
+  }
+  if (launcherHelpButton) {
+    launcherHelpButton.setAttribute(
+      "aria-expanded",
+      launcherHelpOpen ? "true" : "false"
+    );
+  }
+}
+
+if (launcherHelpButton) {
+  launcherHelpButton.addEventListener("click", () => {
+    setLauncherHelpOpen(!launcherHelpOpen);
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && launcherHelpOpen) {
+    setLauncherHelpOpen(false);
+  }
+});
 
 function applyCaptureSettingsToUI() {
   if (autoDownloadToggle) {
