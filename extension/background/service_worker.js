@@ -6307,7 +6307,7 @@ async function stabilizeFullpageCapture(tabId) {
   return previous;
 }
 
-async function captureFullPageScreenshot(requestedTabId) {
+async function captureFullPageScreenshotOnce(requestedTabId, attemptIndex = 0) {
   const sessionActive =
     session && (session.state === "capturing" || session.state === "paused");
   const triggerTimestampIso = nowIso();
@@ -6568,7 +6568,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       throw err;
     }
     // Avoid forcing window focus; capture should not jump windows.
-    console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
+    console.log("[FULLPAGE_CAPTURE]", { total: totalTiles, attempt: attemptIndex });
     sendFullPageProgress("capture", 0, totalTiles);
     let prevY = null;
     let prevBottomPx = null;
@@ -7309,6 +7309,34 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
     }
   }
+}
+
+async function captureFullPageScreenshot(requestedTabId) {
+  const maxAttempts = 2;
+  let lastError = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      if (attempt > 0) {
+        setStatusMessage("Retrying full page capture…", "info");
+      }
+      return await captureFullPageScreenshotOnce(requestedTabId, attempt);
+    } catch (error) {
+      lastError = error;
+      if (
+        error &&
+        error.code === "FULLPAGE_ERR_VIEWPORT_CHANGED" &&
+        attempt < maxAttempts - 1
+      ) {
+        console.warn("[FULLPAGE][RETRY_VIEWPORT_CHANGED]", {
+          attempt,
+          message: error.message,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError || new Error("Full page capture failed.");
 }
 
 function applyTextAnnotations(ctx, annotations, dpr) {
