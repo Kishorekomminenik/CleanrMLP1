@@ -62,10 +62,25 @@ function isRestrictedUrl(url) {
 }
 
 function getActiveTab() {
-  return chrome.tabs
-    .query({ active: true, currentWindow: true })
-    .then((tabs) => (Array.isArray(tabs) ? tabs[0] : null))
-    .catch(() => null);
+  return new Promise((resolve) => {
+    chrome.windows.getLastFocused(
+      { populate: true, windowTypes: ["normal"] },
+      (windowInfo) => {
+        if (chrome.runtime.lastError || !windowInfo) {
+          chrome.tabs
+            .query({ active: true, lastFocusedWindow: true })
+            .then((tabs) => resolve(Array.isArray(tabs) ? tabs[0] : null))
+            .catch(() => resolve(null));
+          return;
+        }
+        const activeTab =
+          windowInfo.tabs && Array.isArray(windowInfo.tabs)
+            ? windowInfo.tabs.find((tab) => tab.active)
+            : null;
+        resolve(activeTab || null);
+      }
+    );
+  });
 }
 
 function getMediaStreamId(tabId) {
