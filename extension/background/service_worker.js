@@ -6171,6 +6171,9 @@ function getFullpageUserMessage(error) {
   if (code === "FULLPAGE_ERR_STITCH") {
     return rawMessage || "Full page capture failed during stitching.";
   }
+  if (code === "FULLPAGE_ERR_INCOMPLETE") {
+    return "Full page capture incomplete. Missing tile coverage. Try again.";
+  }
   if (code === "FULLPAGE_ERR_OFFSCREEN") {
     return "Full page capture failed. Try Snap instead.";
   }

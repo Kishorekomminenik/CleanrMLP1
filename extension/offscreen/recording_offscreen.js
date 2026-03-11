@@ -284,6 +284,7 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
   const lastTile = tiles && tiles.length ? tiles[tiles.length - 1] : null;
   let prevBottom = null;
   let accumulatedDestY = 0;
+  let maxDrawnBottom = 0;
   if (debug) {
     console.log("[FULLPAGE][STITCH][CANVAS]", {
       width: ctx.canvas.width,
@@ -388,6 +389,7 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       frameWidth,
       destHeight
     );
+    maxDrawnBottom = Math.max(maxDrawnBottom, drawTop + destHeight);
     if (lastTile && tile.tileIndex === lastTile.tileIndex) {
       console.log("[FULLPAGE][STITCH][LAST_TILE]", {
         tileIndex: tile.tileIndex,
@@ -403,7 +405,7 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       await delay();
     }
   }
-  return drawn;
+  return { drawn, maxDrawnBottom };
 }
 
 async function normalizeToBlob(input) {
@@ -505,11 +507,33 @@ async function composeFullpageArtifact(captureRunId, isFinal) {
         message: "Could not acquire 2D context.",
       };
     }
-    const drawn = await drawBlobTilesToCanvas({
+    const drawResult = await drawBlobTilesToCanvas({
       ctx,
       tiles: committed,
       debug: false,
     });
+    const drawn = typeof drawResult === "number" ? drawResult : drawResult.drawn;
+    const maxDrawnBottom =
+      drawResult && typeof drawResult.maxDrawnBottom === "number"
+        ? drawResult.maxDrawnBottom
+        : null;
+    const coverageGap =
+      typeof maxDrawnBottom === "number"
+        ? Math.max(0, ctx.canvas.height - maxDrawnBottom)
+        : null;
+    const coverageOk =
+      typeof maxDrawnBottom === "number"
+        ? maxDrawnBottom >= ctx.canvas.height - FULLPAGE_SEAM_TOLERANCE_PX
+        : true;
+    if (!coverageOk) {
+      return {
+        ok: false,
+        code: "FULLPAGE_ERR_INCOMPLETE",
+        message: "Full page capture incomplete. Missing tile coverage.",
+        maxDrawnBottom,
+        canvasHeight: ctx.canvas.height,
+      };
+    }
     if (drawn === 0) {
       return {
         ok: false,
@@ -556,6 +580,9 @@ async function composeFullpageArtifact(captureRunId, isFinal) {
       artifactKey,
       byteLength: blob.size,
       coveragePercent,
+      maxDrawnBottom,
+      canvasHeight: ctx.canvas.height,
+      coverageGap,
     });
     return {
       ok: true,
