@@ -238,7 +238,11 @@ if (launcherHelpClose) {
 if (launcherHelpModal) {
   launcherHelpModal.addEventListener("click", (event) => {
     const target = event.target;
-    if (target && target.dataset && target.dataset.helpClose === "true") {
+    const closeTarget =
+      target && typeof target.closest === "function"
+        ? target.closest("[data-help-close='true']")
+        : null;
+    if (closeTarget) {
       setLauncherHelpOpen(false);
     }
   });
