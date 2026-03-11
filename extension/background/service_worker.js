@@ -234,7 +234,8 @@ let session = null;
 let statusMessage = null;
 let offscreenReady = false;
 let offscreenCreating = null;
-let recordingPanelTabId = null;
+let recordingPanelWindowId = null;
+let recordingPanelWindowTabId = null;
 let logsPanelTabId = null;
 const panelOverlayState = {
   recording: {
@@ -2939,11 +2940,6 @@ async function restorePanelAfterRecording(tabId) {
   if (!tabId) {
     return;
   }
-  setPanelHiddenForCapture(tabId, "recording", false);
-  await setPanelOverlayHidden(tabId, "recording", false);
-  if (!isPanelClosed(tabId, "recording")) {
-    await showPanelOverlay(tabId, "recording");
-  }
   setPanelHiddenForCapture(tabId, "logs", false);
   await setPanelOverlayHidden(tabId, "logs", false);
   if (state.network.active && !isPanelClosed(tabId, "logs")) {
@@ -2971,6 +2967,73 @@ async function hidePanelOverlay(tabId, panel) {
   }
 }
 
+async function openRecordingPanelWindow() {
+  const updateFocus = (windowId) =>
+    new Promise((resolve) => {
+      chrome.windows.update(windowId, { focused: true }, (windowInfo) => {
+        if (chrome.runtime.lastError || !windowInfo) {
+          resolve(null);
+          return;
+        }
+        resolve(windowInfo);
+      });
+    });
+  const createWindow = () =>
+    new Promise((resolve, reject) => {
+      const url = chrome.runtime.getURL("popup/recording_panel.html");
+      chrome.windows.create(
+        {
+          url,
+          type: "popup",
+          width: 360,
+          height: 420,
+          focused: true,
+        },
+        (windowInfo) => {
+          if (chrome.runtime.lastError || !windowInfo) {
+            reject(
+              new Error(
+                chrome.runtime.lastError
+                  ? chrome.runtime.lastError.message
+                  : "Failed to open recording panel window."
+              )
+            );
+            return;
+          }
+          resolve(windowInfo);
+        }
+      );
+    });
+  if (recordingPanelWindowId) {
+    const updated = await updateFocus(recordingPanelWindowId);
+    if (updated) {
+      return updated;
+    }
+    recordingPanelWindowId = null;
+    recordingPanelWindowTabId = null;
+  }
+  const windowInfo = await createWindow();
+  recordingPanelWindowId = windowInfo.id || null;
+  recordingPanelWindowTabId =
+    windowInfo.tabs && windowInfo.tabs[0] ? windowInfo.tabs[0].id : null;
+  return windowInfo;
+}
+
+function closeRecordingPanelWindow() {
+  return new Promise((resolve) => {
+    if (!recordingPanelWindowId) {
+      resolve(false);
+      return;
+    }
+    const windowId = recordingPanelWindowId;
+    recordingPanelWindowId = null;
+    recordingPanelWindowTabId = null;
+    chrome.windows.remove(windowId, () => {
+      resolve(true);
+    });
+  });
+}
+
 async function openRecordingPanelOverlay(tabId) {
   const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -2982,7 +3045,6 @@ async function openRecordingPanelOverlay(tabId) {
     if (!ok) {
       throw new Error("Recording panel failed to open.");
     }
-    recordingPanelTabId = tab.id;
   } catch (error) {
     const classified = classifyOverlayError(error);
     console.warn("[PANEL][OVERLAY][RECORDING_OPEN_FAILED]", {
@@ -6677,13 +6739,6 @@ async function startRecording(streamId, tabId, mimeType) {
     if (!streamId) {
       throw new Error("Missing stream id. Start recording from the popup.");
     }
-    if (
-      recordingPanelTabId === tab.id &&
-      !isPanelClosed(tab.id, "recording")
-    ) {
-      setPanelHiddenForCapture(tab.id, "recording", true);
-      await setPanelOverlayHidden(tab.id, "recording", true);
-    }
     if (logsPanelTabId === tab.id && !isPanelClosed(tab.id, "logs")) {
       setPanelHiddenForCapture(tab.id, "logs", true);
       await setPanelOverlayHidden(tab.id, "logs", true);
@@ -6749,10 +6804,6 @@ async function startRecording(streamId, tabId, mimeType) {
     addDiagnostic("error", "Recording start failed.", {
       error: error.message || String(error),
     });
-    if (tab && tab.id && isPanelHiddenForCapture(tab.id, "recording")) {
-      setPanelHiddenForCapture(tab.id, "recording", false);
-      await setPanelOverlayHidden(tab.id, "recording", false);
-    }
     if (tab && tab.id && isPanelHiddenForCapture(tab.id, "logs")) {
       setPanelHiddenForCapture(tab.id, "logs", false);
       await setPanelOverlayHidden(tab.id, "logs", false);
@@ -6944,6 +6995,7 @@ async function stopRecording() {
   }
   clearStatusMessage();
   await restorePanelAfterRecording(recordingTabId);
+  await closeRecordingPanelWindow();
   return response;
 }
 
@@ -7454,15 +7506,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     recordingOverlayState.tabId === tabId &&
     (state.recording.status === "recording" || state.recording.status === "paused")
   ) {
-    if (!isPanelClosed(tabId, "recording")) {
-      if (isPanelHiddenForCapture(tabId, "recording")) {
-        void mountPanelOverlay(tabId, "recording");
-        void setPanelOverlayHidden(tabId, "recording", true);
-      } else {
-        void setPanelOverlayHidden(tabId, "recording", false);
-        void showPanelOverlay(tabId, "recording");
-      }
-    }
     if (state.network.active && !isPanelClosed(tabId, "logs")) {
       if (isPanelHiddenForCapture(tabId, "logs")) {
         void mountPanelOverlay(tabId, "logs");
@@ -7558,6 +7601,7 @@ async function resetSession() {
   } catch (error) {
     console.warn("Failed to reset recording on reset:", error);
   }
+  await closeRecordingPanelWindow();
 
   state.screenshot.dataUrl = null;
   state.screenshot.capturedAt = null;
@@ -8250,9 +8294,7 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "OPEN_RECORDING_PANEL":
-      await openRecordingPanelOverlay(
-        typeof normalizedMessage.tabId === "number" ? normalizedMessage.tabId : null
-      );
+      await openRecordingPanelWindow();
       result = { ok: true };
       break;
     case "OPEN_LOGS_PANEL":
@@ -8851,6 +8893,7 @@ async function handleMessage(message, sender) {
             isPartial: true,
           });
           await restorePanelAfterRecording(recordingTabId);
+          await closeRecordingPanelWindow();
           result = { ok: true, partial: true };
           break;
         }
@@ -8858,6 +8901,7 @@ async function handleMessage(message, sender) {
         console.warn("[RECORDING][TRACK_ENDED_EXPORT_FAILED]", error);
       }
       await restorePanelAfterRecording(recordingTabId);
+      await closeRecordingPanelWindow();
       result = { ok: true, partial: false };
       break;
     }
@@ -8873,6 +8917,7 @@ async function handleMessage(message, sender) {
         recordingOverlayState.tabId = null;
         await restorePanelAfterRecording(recordingTabId);
       }
+      await closeRecordingPanelWindow();
       result = { ok: true };
       break;
     case "NETWORK_RESET":
@@ -8906,6 +8951,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   })();
   return true;
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (recordingPanelWindowId && windowId === recordingPanelWindowId) {
+    recordingPanelWindowId = null;
+    recordingPanelWindowTabId = null;
+  }
 });
 
 chrome.runtime.onConnect.addListener((port) => {
