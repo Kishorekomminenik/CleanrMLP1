@@ -161,6 +161,7 @@ const POPUP_CAPTURE_PORT_NAME = "capture-request";
 const POPUP_CAPTURE_DELAY_MS = 200;
 const FULLPAGE_STABILIZE_SETTLE_MS = 150;
 const FULLPAGE_STABILIZE_MAX_RETRIES = 2;
+const FULLPAGE_TILE_STABILITY_RETRIES = 2;
 const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
@@ -408,6 +409,40 @@ function dataUrlToBlob(dataUrl) {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mimeType });
+}
+
+function readPngDimensionsFromDataUrl(dataUrl) {
+  if (
+    !dataUrl ||
+    typeof dataUrl !== "string" ||
+    !dataUrl.startsWith("data:image/png")
+  ) {
+    return null;
+  }
+  try {
+    const commaIndex = dataUrl.indexOf(",");
+    if (commaIndex === -1) {
+      return null;
+    }
+    const sample = dataUrl.slice(commaIndex + 1, commaIndex + 1 + 96);
+    const binary = atob(sample);
+    if (!binary || binary.length < 24) {
+      return null;
+    }
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const view = new DataView(bytes.buffer);
+    const width = view.getUint32(16, false);
+    const height = view.getUint32(20, false);
+    if (!width || !height) {
+      return null;
+    }
+    return { width, height };
+  } catch (error) {
+    return null;
+  }
 }
 
 async function blobToDataUrl(blob) {
@@ -6252,6 +6287,13 @@ async function captureFullPageScreenshot(requestedTabId) {
     }
     restoreNeeded = true;
     console.log("[FULLPAGE_PREPARE]", { captureRunId });
+    if (DEBUG_FULLPAGE) {
+      const nestedInit = await callFullpageCapture(
+        tabId,
+        "getNestedScrollDiagnostics"
+      );
+      console.log("[FULLPAGE][NESTED_SCROLL_INIT]", nestedInit || null);
+    }
     const candidatesRes = await callFullpageCapture(
       tabId,
       "getScrollableCandidates"
@@ -6452,14 +6494,31 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       const preMaxScrollTop = Math.max(0, preScrollHeight - preClientHeight);
       const clampedScrollTop = Math.min(plannedScrollTop, preMaxScrollTop);
-      const scrollRes = await callFullpageCapture(
-        tabId,
-        "scrollToFullpagePosition",
-        [clampedScrollTop]
-      );
-      if (scrollRes && scrollRes.ok === false) {
-        const err = new Error(scrollRes.error || "Scroll mismatch.");
-        err.code = scrollRes.code || "FULLPAGE_ERR_SCROLL_MISMATCH";
+      let scrollRes = null;
+      for (let attempt = 0; attempt <= FULLPAGE_TILE_STABILITY_RETRIES; attempt += 1) {
+        scrollRes = await callFullpageCapture(tabId, "captureTileWithStability", [
+          clampedScrollTop,
+          FULL_CAPTURE_CONFIG.postScrollDelayMs,
+        ]);
+        if (DEBUG_FULLPAGE) {
+          console.log("[FULLPAGE][SCROLL_STABILITY]", {
+            tileIndex: i + 1,
+            attempt,
+            targetScrollTop: Math.round(clampedScrollTop),
+            ok: scrollRes ? scrollRes.ok : false,
+            scrollY: scrollRes ? Math.round(scrollRes.scrollY || 0) : null,
+            diagnostics: scrollRes ? scrollRes.diagnostics : null,
+            stability: scrollRes ? scrollRes.stability : null,
+          });
+        }
+        if (scrollRes && scrollRes.ok) {
+          break;
+        }
+        await delay(40);
+      }
+      if (!scrollRes || scrollRes.ok === false) {
+        const err = new Error(scrollRes?.error || "Scroll mismatch.");
+        err.code = scrollRes?.code || "FULLPAGE_ERR_SCROLL_MISMATCH";
         throw err;
       }
       let actualY =
@@ -6535,9 +6594,19 @@ async function captureFullPageScreenshot(requestedTabId) {
         const retryTarget = Math.min(clampedScrollTop, maxScrollTopNow);
         const retry = await callFullpageCapture(
           tabId,
-          "scrollToFullpagePosition",
-          [retryTarget]
+          "captureTileWithStability",
+          [retryTarget, FULL_CAPTURE_CONFIG.postScrollDelayMs]
         );
+        if (DEBUG_FULLPAGE) {
+          console.log("[FULLPAGE][SCROLL_STABILITY][RETRY]", {
+            tileIndex: i + 1,
+            targetScrollTop: Math.round(retryTarget),
+            ok: retry ? retry.ok : false,
+            scrollY: retry ? Math.round(retry.scrollY || 0) : null,
+            diagnostics: retry ? retry.diagnostics : null,
+            stability: retry ? retry.stability : null,
+          });
+        }
         const retryY =
           retry && typeof retry.scrollY === "number" ? retry.scrollY : null;
         const retryState = await callFullpageCapture(
@@ -6582,31 +6651,36 @@ async function captureFullPageScreenshot(requestedTabId) {
       }
       currentScroll = actualY;
       plannedScrollTop = clampedScrollTop;
-      await delay(FULL_CAPTURE_CONFIG.postScrollDelayMs);
-      let nestedStable = true;
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const lockRes = await callFullpageCapture(
+      if (DEBUG_FULLPAGE) {
+        const nestedBefore = await callFullpageCapture(
           tabId,
-          "enforceNestedScrollLocks"
+          "getNestedScrollDiagnostics"
         );
-        nestedStable = lockRes && lockRes.ok === true;
-        console.log("[FULLPAGE][NESTED_SCROLL_LOCK]", {
+        console.log("[FULLPAGE][NESTED_SCROLL_DIAG]", {
           tileIndex: i + 1,
-          attempt,
-          stable: nestedStable,
-          count: lockRes ? lockRes.count : 0,
+          phase: "before",
+          diagnostics: nestedBefore || null,
         });
-        if (nestedStable) {
-          break;
-        }
-        await delay(40);
+        console.log("[FULLPAGE][STICKY_SUPPRESS_STATE]", {
+          tileIndex: i + 1,
+          enabled: i > 0 && totalTiles > 1,
+        });
       }
       let dataUrl = null;
       try {
         dataUrl = await captureVisibleTabThrottled(windowId);
         if (i === 0 && totalTiles > 1) {
           try {
-            await callFullpageCapture(tabId, "suppressFixedStickyElements");
+            const suppressRes = await callFullpageCapture(
+              tabId,
+              "suppressFixedStickyElements"
+            );
+            if (DEBUG_FULLPAGE) {
+              console.log("[FULLPAGE][STICKY_SUPPRESS]", {
+                tileIndex: i + 1,
+                count: suppressRes ? suppressRes.count : 0,
+              });
+            }
           } catch (error) {
             console.warn("[FULLPAGE] Failed to suppress sticky elements", error);
           }
@@ -6625,6 +6699,28 @@ async function captureFullPageScreenshot(requestedTabId) {
         const err = new Error("captureVisibleTab returned invalid data.");
         err.code = "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB";
         throw err;
+      }
+      if (DEBUG_FULLPAGE) {
+        const captureDims = readPngDimensionsFromDataUrl(dataUrl);
+        console.log("[FULLPAGE][CAPTURE_IMAGE]", {
+          tileIndex: i + 1,
+          width: captureDims ? captureDims.width : null,
+          height: captureDims ? captureDims.height : null,
+          expectedWidth: Math.ceil(viewportWidth * devicePixelRatio),
+          expectedHeight: Math.ceil(
+            (tileClientHeight || viewportHeight) * devicePixelRatio
+          ),
+          dataUrlBytes: dataUrl.length,
+        });
+        const nestedAfter = await callFullpageCapture(
+          tabId,
+          "getNestedScrollDiagnostics"
+        );
+        console.log("[FULLPAGE][NESTED_SCROLL_DIAG]", {
+          tileIndex: i + 1,
+          phase: "after",
+          diagnostics: nestedAfter || null,
+        });
       }
       const effectiveViewportHeight = tileClientHeight || viewportHeight;
       const effectiveScrollTop =
