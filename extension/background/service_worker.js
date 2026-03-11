@@ -6423,6 +6423,24 @@ async function captureFullPageScreenshot(requestedTabId) {
       currentScroll = actualY;
       plannedScrollTop = clampedScrollTop;
       await delay(FULL_CAPTURE_CONFIG.postScrollDelayMs);
+      let nestedStable = true;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const lockRes = await callFullpageCapture(
+          tabId,
+          "enforceNestedScrollLocks"
+        );
+        nestedStable = lockRes && lockRes.ok === true;
+        console.log("[FULLPAGE][NESTED_SCROLL_LOCK]", {
+          tileIndex: i + 1,
+          attempt,
+          stable: nestedStable,
+          count: lockRes ? lockRes.count : 0,
+        });
+        if (nestedStable) {
+          break;
+        }
+        await delay(40);
+      }
       let dataUrl = null;
       try {
         dataUrl = await captureVisibleTabThrottled(windowId);

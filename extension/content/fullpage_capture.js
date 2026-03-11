@@ -11,6 +11,7 @@
   const SCROLL_TOLERANCE_PX = 4;
   const SETTLE_DELAY_MS = 180;
   const MIN_SCROLLABLE_HEIGHT = 200;
+  const MIN_NESTED_SCROLL_SIZE = 120;
   const SINGLE_FRAME_DELTA = 8;
 
   function sleep(ms) {
@@ -24,7 +25,7 @@
       originalHtmlScrollBehavior: null,
       originalBodyScrollBehavior: null,
       hiddenElements: [],
-      nestedScrollOverrides: [],
+      nestedScrollLocks: [],
       styleTagId: STYLE_ID,
       captureRunId: null,
       lastMetrics: null,
@@ -78,6 +79,106 @@
       entry.el.style.opacity = "0";
     });
     return { ok: true, count: state.hiddenElements.length };
+  }
+
+  function discoverNestedScrollContainers(selectedKey) {
+    const state = getState();
+    const candidates = state.scrollEngine.candidates || [];
+    const selected = candidates.find((item) => item.key === selectedKey) || null;
+    const locks = [];
+    const nodes = Array.from(document.querySelectorAll("*"));
+    nodes.forEach((el) => {
+      if (!isVisibleElement(el)) {
+        return;
+      }
+      if (
+        el === document.documentElement ||
+        el === document.body ||
+        el === document.scrollingElement
+      ) {
+        return;
+      }
+      if (selected && selected.element === el) {
+        return;
+      }
+      const style = window.getComputedStyle(el);
+      if (style.position === "fixed") {
+        return;
+      }
+      const overflowY = style.overflowY;
+      const overflowX = style.overflowX;
+      const scrollableY =
+        ["auto", "scroll", "overlay"].includes(overflowY) &&
+        el.scrollHeight > el.clientHeight + SINGLE_FRAME_DELTA;
+      const scrollableX =
+        ["auto", "scroll", "overlay"].includes(overflowX) &&
+        el.scrollWidth > el.clientWidth + SINGLE_FRAME_DELTA;
+      if (!scrollableY && !scrollableX) {
+        return;
+      }
+      if (
+        el.clientHeight < MIN_SCROLLABLE_HEIGHT ||
+        el.clientWidth < MIN_NESTED_SCROLL_SIZE
+      ) {
+        return;
+      }
+      locks.push({
+        el,
+        scrollTop: el.scrollTop,
+        scrollLeft: el.scrollLeft,
+      });
+    });
+    state.nestedScrollLocks = locks;
+    return locks.length;
+  }
+
+  function lockNestedScrollPositions() {
+    const state = getState();
+    const locks = state.nestedScrollLocks || [];
+    locks.forEach((entry) => {
+      if (!entry || !entry.el) {
+        return;
+      }
+      entry.el.scrollTop = entry.scrollTop;
+      entry.el.scrollLeft = entry.scrollLeft;
+    });
+    return locks.length;
+  }
+
+  function verifyNestedScrollPositions(tolerancePx = SCROLL_TOLERANCE_PX) {
+    const state = getState();
+    const locks = state.nestedScrollLocks || [];
+    const mismatches = [];
+    locks.forEach((entry) => {
+      if (!entry || !entry.el) {
+        return;
+      }
+      const topDelta = Math.abs(entry.el.scrollTop - entry.scrollTop);
+      const leftDelta = Math.abs(entry.el.scrollLeft - entry.scrollLeft);
+      if (topDelta > tolerancePx || leftDelta > tolerancePx) {
+        mismatches.push({
+          topDelta: Math.round(topDelta),
+          leftDelta: Math.round(leftDelta),
+        });
+      }
+    });
+    return { ok: mismatches.length === 0, mismatches };
+  }
+
+  async function enforceNestedScrollLocks() {
+    const count = lockNestedScrollPositions();
+    if (count === 0) {
+      return { ok: true, count: 0, stable: true, mismatches: [] };
+    }
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const verify = verifyNestedScrollPositions();
+    return {
+      ok: verify.ok,
+      count,
+      stable: verify.ok,
+      mismatches: verify.mismatches,
+    };
   }
 
   function freezeNestedScrollContainers(selectedKey) {
@@ -346,7 +447,7 @@
       };
     }
     if (selection && selection.candidate) {
-      freezeNestedScrollContainers(selection.candidate.key);
+      discoverNestedScrollContainers(selection.candidate.key);
     }
     return { ok: true, captureRunId: state.captureRunId };
   }
@@ -514,18 +615,16 @@
         entry.el.style.opacity = entry.opacity || "";
       });
     }
-    if (state.nestedScrollOverrides && state.nestedScrollOverrides.length) {
-      state.nestedScrollOverrides.forEach((entry) => {
+    if (state.nestedScrollLocks && state.nestedScrollLocks.length) {
+      state.nestedScrollLocks.forEach((entry) => {
         if (!entry || !entry.el) {
           return;
         }
-        entry.el.style.overflow = entry.overflow || "";
-        entry.el.style.overflowY = entry.overflowY || "";
-        entry.el.style.overflowX = entry.overflowX || "";
-        entry.el.style.maxHeight = entry.maxHeight || "";
-        entry.el.style.height = entry.height || "";
         if (typeof entry.scrollTop === "number") {
           entry.el.scrollTop = entry.scrollTop;
+        }
+        if (typeof entry.scrollLeft === "number") {
+          entry.el.scrollLeft = entry.scrollLeft;
         }
       });
     }
@@ -572,6 +671,8 @@
     sampleFullpageMetrics,
     getScrollableCandidates,
     scrollToFullpagePosition,
+    discoverNestedScrollContainers,
+    enforceNestedScrollLocks,
     suppressFixedStickyElements,
     restoreFullpagePageState,
     resetFullpageCaptureState,
