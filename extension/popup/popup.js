@@ -3244,7 +3244,11 @@ async function loadLastSelectedMode() {
 }
 
 document.addEventListener("click", (event) => {
-  const actionEl = event.target.closest("[data-action]");
+  const target = event.target;
+  const actionEl =
+    target && typeof target.closest === "function"
+      ? target.closest("[data-action]")
+      : null;
   if (!actionEl) {
     if (CLICK_DEBUG) {
       const top = document.elementsFromPoint(event.clientX, event.clientY)[0];
@@ -3262,6 +3266,26 @@ document.addEventListener("click", (event) => {
   }
   routeAction(actionEl.dataset.action, actionEl);
 });
+
+function bindLauncherActions() {
+  const launcherButtons = Array.from(
+    document.querySelectorAll(".launcher-actions [data-action]")
+  );
+  if (!launcherButtons.length) {
+    return;
+  }
+  launcherButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const action = button.dataset.action;
+      console.log("[UI] launcher button click", {
+        action,
+        id: button.id || null,
+      });
+      routeAction(action, button);
+    });
+  });
+}
 
 document.addEventListener("change", (event) => {
   const actionEl = event.target.closest("[data-action]");
@@ -3555,6 +3579,7 @@ async function initPopup() {
       }
     });
   }
+  bindLauncherActions();
 }
 
 initPopup();
