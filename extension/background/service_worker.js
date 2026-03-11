@@ -166,6 +166,7 @@ const FULLPAGE_TILE_CAPTURE_RETRIES = 1;
 const FULLPAGE_TILE_DIMENSION_TOLERANCE_PX = 2;
 const FULLPAGE_TILE_CROP_TOLERANCE_PX = 2;
 const FULLPAGE_SEAM_TOLERANCE_PX = 2;
+const FULLPAGE_VIEWPORT_TOLERANCE_PX = 2;
 const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
@@ -6163,6 +6164,9 @@ function getFullpageUserMessage(error) {
   if (code === "FULLPAGE_ERR_CAPTURE_VISIBLE_TAB") {
     return rawMessage || "captureVisibleTab failed.";
   }
+  if (code === "FULLPAGE_ERR_VIEWPORT_CHANGED") {
+    return "Viewport height changed during capture. Try again.";
+  }
   if (code === "FULLPAGE_ERR_TILE_INVALID") {
     const reason =
       error && error.details && error.details.reason
@@ -6487,6 +6491,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       totalHeightPx,
       tileCountExpected: totalTiles,
     });
+    const frozenViewportHeight = viewportHeight;
     if (totalTiles > FULLPAGE_LIMITS.maxTiles) {
       const err = new Error("Page too tall for full capture.");
       err.code = "FULLPAGE_ERR_TOO_TALL";
@@ -6585,6 +6590,11 @@ async function captureFullPageScreenshot(requestedTabId) {
           clientHeight: state.clientHeight,
           scrollTop: state.scrollTop,
         });
+      }
+      if (Math.abs(preClientHeight - frozenViewportHeight) > FULLPAGE_VIEWPORT_TOLERANCE_PX) {
+        const err = new Error("Viewport height changed during capture.");
+        err.code = "FULLPAGE_ERR_VIEWPORT_CHANGED";
+        throw err;
       }
       const preMaxScrollTop = Math.max(0, preScrollHeight - preClientHeight);
       const clampedScrollTop = Math.min(plannedScrollTop, preMaxScrollTop);
@@ -6774,7 +6784,7 @@ async function captureFullPageScreenshot(requestedTabId) {
           enabled: i > 0 && totalTiles > 1,
         });
       }
-      const effectiveViewportHeight = tileClientHeight || viewportHeight;
+      const effectiveViewportHeight = frozenViewportHeight;
       const effectiveScrollTop =
         typeof reportedScrollTop === "number" ? reportedScrollTop : plannedScrollTop;
       let clipTop = 0;
