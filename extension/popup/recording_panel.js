@@ -10,6 +10,8 @@ const resetBtn = document.getElementById("panel_reset");
 const closeBtn = document.getElementById("closePanel");
 
 const query = new URLSearchParams(window.location.search);
+const targetTabIdParam = query.get("targetTabId");
+const targetTabId = targetTabIdParam ? Number(targetTabIdParam) : null;
 if (query.get("embedded") === "1") {
   document.body.dataset.embedded = "true";
 }
@@ -263,7 +265,17 @@ async function refreshStatus() {
 
 startBtn.addEventListener("click", async () => {
   messageEl.textContent = "Starting recording...";
-  const tab = await getActiveTab();
+  let tab = null;
+  if (Number.isFinite(targetTabId)) {
+    try {
+      tab = await chrome.tabs.get(targetTabId);
+    } catch (error) {
+      tab = null;
+    }
+  }
+  if (!tab) {
+    tab = await getActiveTab();
+  }
   if (!tab || !tab.id) {
     messageEl.textContent = "No active tab.";
     return;

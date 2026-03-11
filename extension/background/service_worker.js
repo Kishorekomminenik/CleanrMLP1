@@ -236,6 +236,7 @@ let offscreenReady = false;
 let offscreenCreating = null;
 let recordingPanelWindowId = null;
 let recordingPanelWindowTabId = null;
+let recordingPanelTargetTabId = null;
 let logsPanelTabId = null;
 const panelOverlayState = {
   recording: {
@@ -974,6 +975,51 @@ async function captureVisibleTabAsync(windowId) {
       }
     );
   });
+}
+
+const SCROLLBAR_HIDE_CSS = `
+  html, body {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+  }
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+  }
+`;
+
+async function hideScrollbarsForCapture(tabId) {
+  if (!chrome.scripting || !chrome.scripting.insertCSS) {
+    return false;
+  }
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      css: SCROLLBAR_HIDE_CSS,
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function restoreScrollbarsAfterCapture(tabId) {
+  if (!chrome.scripting || !chrome.scripting.removeCSS) {
+    return;
+  }
+  try {
+    await chrome.scripting.removeCSS({
+      target: { tabId },
+      css: SCROLLBAR_HIDE_CSS,
+    });
+  } catch (error) {
+    // Ignore restoration failures.
+  }
 }
 
 async function captureVisibleTabThrottled(windowId) {
@@ -2983,7 +3029,7 @@ async function hidePanelOverlay(tabId, panel) {
   }
 }
 
-async function openRecordingPanelWindow() {
+async function openRecordingPanelWindow(targetTabId) {
   const updateFocus = (windowId) =>
     new Promise((resolve) => {
       chrome.windows.update(windowId, { focused: true }, (windowInfo) => {
@@ -2996,7 +3042,11 @@ async function openRecordingPanelWindow() {
     });
   const createWindow = () =>
     new Promise((resolve, reject) => {
-      const url = chrome.runtime.getURL("popup/recording_panel.html");
+      const url = chrome.runtime.getURL(
+        recordingPanelTargetTabId
+          ? `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
+          : "popup/recording_panel.html"
+      );
       chrome.windows.create(
         {
           url,
@@ -3023,6 +3073,17 @@ async function openRecordingPanelWindow() {
   if (recordingPanelWindowId) {
     const updated = await updateFocus(recordingPanelWindowId);
     if (updated) {
+      if (
+        recordingPanelTargetTabId &&
+        recordingPanelWindowTabId &&
+        typeof recordingPanelTargetTabId === "number"
+      ) {
+        chrome.tabs.update(recordingPanelWindowTabId, {
+          url: chrome.runtime.getURL(
+            `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
+          ),
+        });
+      }
       return updated;
     }
     recordingPanelWindowId = null;
@@ -3044,6 +3105,7 @@ function closeRecordingPanelWindow() {
     const windowId = recordingPanelWindowId;
     recordingPanelWindowId = null;
     recordingPanelWindowTabId = null;
+    recordingPanelTargetTabId = null;
     chrome.windows.remove(windowId, () => {
       resolve(true);
     });
@@ -5636,7 +5698,11 @@ async function ensureOffscreenReady() {
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
+  let scrollbarsHidden = false;
   try {
+    if (tab && tab.id) {
+      scrollbarsHidden = await hideScrollbarsForCapture(tab.id);
+    }
     let dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
     const timestampIso = nowIso();
     await loadTimestampOverlaySetting();
@@ -5705,6 +5771,10 @@ async function captureScreenshot() {
       error: error.message || String(error),
     });
     throw error;
+  } finally {
+    if (scrollbarsHidden && tab && tab.id) {
+      await restoreScrollbarsAfterCapture(tab.id);
+    }
   }
 }
 
@@ -5988,6 +6058,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     throw error;
   }
   let restoreNeeded = false;
+  let scrollbarsHidden = false;
   let metrics = null;
   let windowId = tab.windowId || null;
   let scriptLoaded = false;
@@ -6009,6 +6080,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       err.code = "FULLPAGE_ERR_INJECT";
       throw err;
     }
+    scrollbarsHidden = await hideScrollbarsForCapture(tabId);
     failureStage = "prepare";
     const applyRes = await callFullpageCapture(tabId, "prepareFullpageCapture", [
       captureRunId,
@@ -6696,6 +6768,9 @@ async function captureFullPageScreenshot(requestedTabId) {
     setStatusMessage(getFullpageUserMessage(error), "error");
     throw error;
   } finally {
+    if (scrollbarsHidden) {
+      await restoreScrollbarsAfterCapture(tabId);
+    }
     if (restoreNeeded) {
       try {
         await callFullpageCapture(tabId, "restoreFullpagePageState");
@@ -8313,7 +8388,11 @@ async function handleMessage(message, sender) {
       result = { ok: true };
       break;
     case "OPEN_RECORDING_PANEL":
-      await openRecordingPanelWindow();
+      recordingPanelTargetTabId =
+        typeof normalizedMessage.tabId === "number"
+          ? normalizedMessage.tabId
+          : recordingPanelTargetTabId;
+      await openRecordingPanelWindow(recordingPanelTargetTabId);
       result = { ok: true };
       break;
     case "OPEN_LOGS_PANEL":
@@ -8539,7 +8618,6 @@ async function handleMessage(message, sender) {
         if (session) {
           session.state = "capturing";
         }
-        await openRecordingPanelOverlay(message.tabId);
         result = response || { ok: true };
       } catch (error) {
         if (session) {
@@ -8976,6 +9054,7 @@ chrome.windows.onRemoved.addListener((windowId) => {
   if (recordingPanelWindowId && windowId === recordingPanelWindowId) {
     recordingPanelWindowId = null;
     recordingPanelWindowTabId = null;
+    recordingPanelTargetTabId = null;
   }
 });
 
