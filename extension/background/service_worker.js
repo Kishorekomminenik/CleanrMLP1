@@ -4813,10 +4813,22 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/network.json",
         getData: async () => {
-          const entries =
-            data.networkLogs && Array.isArray(data.networkLogs.entries)
-              ? data.networkLogs.entries
-              : [];
+          let entries = [];
+          if (exportSessionId && isIdbAvailable()) {
+            entries = await loadLimitedEntriesFromIdb({
+              storeName: "network_entries",
+              indexName: "sessionId",
+              keyRange: IDBKeyRange.only(exportSessionId),
+              limit: data.exportLimits
+                ? data.exportLimits.maxRequests
+                : EXPORT_LIMITS.maxRequests,
+            });
+          } else {
+            entries =
+              data.networkLogs && Array.isArray(data.networkLogs.entries)
+                ? data.networkLogs.entries
+                : [];
+          }
           const redactedEntries = redactNetworkEntry
             ? entries.map((entry) => redactNetworkEntry(entry))
             : entries;
