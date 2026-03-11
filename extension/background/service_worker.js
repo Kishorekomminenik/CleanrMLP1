@@ -165,6 +165,7 @@ const FULLPAGE_TILE_STABILITY_RETRIES = 2;
 const FULLPAGE_TILE_CAPTURE_RETRIES = 1;
 const FULLPAGE_TILE_DIMENSION_TOLERANCE_PX = 2;
 const FULLPAGE_TILE_CROP_TOLERANCE_PX = 2;
+const FULLPAGE_SEAM_TOLERANCE_PX = 2;
 const RECORDING_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 
 const captureState = {
@@ -6547,6 +6548,7 @@ async function captureFullPageScreenshot(requestedTabId) {
     console.log("[FULLPAGE_CAPTURE]", { total: totalTiles });
     sendFullPageProgress("capture", 0, totalTiles);
     let prevY = null;
+    let prevBottomPx = null;
     let currentScroll = scrollTop;
     failureStage = "capture_tiles";
     for (let i = 0; i < positions.length; i += 1) {
@@ -6774,6 +6776,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       let dataUrl = null;
       let captureDims = null;
       let tileValidationResult = null;
+      let seamGapResult = null;
       let clipHeightPx = rawClipHeightPx;
       try {
         for (let attempt = 0; attempt <= FULLPAGE_TILE_CAPTURE_RETRIES; attempt += 1) {
@@ -6802,6 +6805,21 @@ async function captureFullPageScreenshot(requestedTabId) {
             dimension: dimensionValidation,
             crop: cropValidation,
           };
+          const destYpx =
+            Math.round(effectiveScrollTop * devicePixelRatio) + rawClipTopPx;
+          seamGapResult = null;
+          if (typeof prevBottomPx === "number") {
+            const gapPx = Math.round(destYpx - prevBottomPx);
+            seamGapResult = {
+              ok: gapPx <= FULLPAGE_SEAM_TOLERANCE_PX,
+              prevBottom: Math.round(prevBottomPx),
+              destY: Math.round(destYpx),
+              gapPx,
+            };
+            if (gapPx > FULLPAGE_SEAM_TOLERANCE_PX) {
+              tileValidationResult.ok = false;
+            }
+          }
           if (tileValidationResult.ok) {
             break;
           }
@@ -6813,6 +6831,7 @@ async function captureFullPageScreenshot(requestedTabId) {
               expectedHeightPx,
               captureDims,
               result: tileValidationResult,
+              seamGapResult,
             });
           }
           if (attempt < FULLPAGE_TILE_CAPTURE_RETRIES) {
@@ -6865,6 +6884,7 @@ async function captureFullPageScreenshot(requestedTabId) {
           expectedHeight_device: expectedHeightPx,
           dataUrlBytes: dataUrl.length,
           tileValidationResult,
+          seamGapResult,
         });
         const nestedAfter = await callFullpageCapture(
           tabId,
@@ -6909,6 +6929,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         nestedScrollerOffsetsSummary:
           nestedBefore && nestedBefore.samples ? nestedBefore.samples : null,
         tileValidationResult,
+        seamGapResult,
       });
       if (remainingHeight <= 0) {
         if (treatedAsBottom) {
@@ -6948,6 +6969,8 @@ async function captureFullPageScreenshot(requestedTabId) {
         tile: tileMeta,
         blob,
       });
+      prevBottomPx =
+        Math.round(effectiveScrollTop * devicePixelRatio) + clipTopPx + clipHeightPx;
       tileCountCaptured += 1;
       tileCountCommitted += 1;
       console.log("[FULLPAGE][CAPTURE][TILE_SUCCESS]", {

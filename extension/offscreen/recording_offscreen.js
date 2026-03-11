@@ -331,6 +331,9 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
         destY = prevBottom;
         gapPx = 0;
       }
+      if (gapPx > FULLPAGE_SEAM_TOLERANCE_PX) {
+        throw new Error("FULLPAGE_ERR_TILE_INVALID: seam_gap");
+      }
     }
     if (srcY >= bmp.height) {
       throw new Error("FULLPAGE_ERR_TILE_INVALID: crop_out_of_bounds");
@@ -362,6 +365,9 @@ async function drawBlobTilesToCanvas({ ctx, tiles, debug = false }) {
       clipTopPx: Number.isFinite(tile.clipTopPx) ? tile.clipTopPx : null,
       destHeight,
       accumulatedDestY,
+      expectedTileHeight: Number.isFinite(tile.heightPx) ? tile.heightPx : null,
+      capturedImageHeight: bmp.height,
+      destDrawHeight: drawHeight,
     });
     if (prevBottom !== null) {
       console.log("[FULLPAGE][STITCH][SEAM_CHECK]", {
