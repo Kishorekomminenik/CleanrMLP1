@@ -46,21 +46,29 @@
       </div>
     </div>
 
-    <div id="launcher_help_modal" class="launcher-help-modal" aria-hidden="true">
-      <div class="launcher-help-backdrop" data-help-close="true"></div>
-      <div class="launcher-help-card" role="dialog" aria-modal="true">
-        <div class="launcher-help-header">
-          <div class="help-title">How Repro works</div>
+    <div
+      id="launcher_help_modal"
+      class="launcher-help-modal help-modal"
+      aria-hidden="true"
+    >
+      <div class="launcher-help-backdrop help-backdrop" data-help-close="true"></div>
+      <div
+        class="launcher-help-card help-modal-card"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="launcher-help-header help-modal-header">
+          <div class="help-title">How Repro Works</div>
           <button
             id="launcher_help_close"
-            class="launcher-help-close"
+            class="launcher-help-close help-close-btn"
             type="button"
             aria-label="Close help"
           >
             ×
           </button>
         </div>
-        <div class="launcher-help-content">
+        <div class="launcher-help-content help-modal-body">
           <div class="help-section">
             <div class="help-heading">Visual Capture</div>
             <ul>
