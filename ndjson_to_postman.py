@@ -55,30 +55,39 @@ def normalize_headers(raw: Any) -> list[dict[str, str]]:
     - list[{"name": "...", "value": "..."}]
     - list[["Header", "Value"]]
     """
-    output: list[dict[str, str]] = []
+    entries: list[tuple[str, str]] = []
 
     if raw is None:
-        return output
+        return []
 
     if isinstance(raw, dict):
         for k, v in raw.items():
-            output.append({"key": str(k), "value": "" if v is None else str(v)})
-        return output
-
-    if isinstance(raw, list):
+            entries.append((str(k), "" if v is None else str(v)))
+    elif isinstance(raw, list):
         for item in raw:
             if isinstance(item, dict):
                 name = item.get("name") or item.get("key")
                 value = item.get("value")
                 if name is not None:
-                    output.append(
-                        {"key": str(name), "value": "" if value is None else str(value)}
-                    )
+                    entries.append((str(name), "" if value is None else str(value)))
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                output.append(
-                    {"key": str(item[0]), "value": "" if item[1] is None else str(item[1])}
-                )
-        return output
+                entries.append((str(item[0]), "" if item[1] is None else str(item[1])))
+
+    if not entries:
+        return []
+
+    seen = set()
+    output: list[dict[str, str]] = []
+    for key, value in entries:
+        if not key:
+            continue
+        if key.startswith(":"):
+            continue
+        lower = key.lower()
+        if lower in seen:
+            continue
+        seen.add(lower)
+        output.append({"key": key, "value": value})
 
     return output
 

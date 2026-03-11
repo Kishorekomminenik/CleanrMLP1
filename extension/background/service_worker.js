@@ -2304,30 +2304,46 @@ function normalizePostmanHeaders(raw) {
   if (!raw) {
     return [];
   }
+  const entries = [];
   if (Array.isArray(raw)) {
-    return raw
-      .map((item) => {
-        if (item && typeof item === "object") {
-          const key = item.key || item.name;
-          if (!key) {
-            return null;
-          }
-          return { key: String(key), value: String(item.value ?? "") };
+    raw.forEach((item) => {
+      if (item && typeof item === "object") {
+        const key = item.key || item.name;
+        if (!key) {
+          return;
         }
-        if (Array.isArray(item) && item.length >= 2) {
-          return { key: String(item[0]), value: String(item[1] ?? "") };
-        }
-        return null;
-      })
-      .filter(Boolean);
+        entries.push([String(key), String(item.value ?? "")]);
+        return;
+      }
+      if (Array.isArray(item) && item.length >= 2) {
+        entries.push([String(item[0]), String(item[1] ?? "")]);
+      }
+    });
+  } else if (typeof raw === "object") {
+    Object.entries(raw).forEach(([key, value]) => {
+      entries.push([String(key), String(value ?? "")]);
+    });
   }
-  if (typeof raw === "object") {
-    return Object.entries(raw).map(([key, value]) => ({
-      key: String(key),
-      value: String(value ?? ""),
-    }));
+  if (entries.length === 0) {
+    return [];
   }
-  return [];
+  const seen = new Set();
+  const normalized = [];
+  entries.forEach(([key, value]) => {
+    if (!key) {
+      return;
+    }
+    if (key.startsWith(":")) {
+      return;
+    }
+    const lower = key.toLowerCase();
+    if (seen.has(lower)) {
+      return;
+    }
+    seen.add(lower);
+    normalized.push({ key, value });
+  });
+  return normalized;
 }
 
 function buildPostmanUrl(url) {
