@@ -4535,6 +4535,30 @@ async function runEvidenceZipExport(context) {
       (session && session.session_id) ||
       (data.session && data.session.session_id) ||
       null;
+    const buildPostmanAutomationItem = (entries, sourceName, filters) => {
+      let postmanEntries = redactNetworkEntry
+        ? entries.map((entry) => redactNetworkEntry(entry))
+        : entries;
+      if (filters) {
+        postmanEntries = postmanEntries.filter((entry) =>
+          matchesExportNetworkEntry(entry, filters)
+        );
+      }
+      postmanEntries = postmanEntries.filter((entry) =>
+        isPostmanEligibleEntry(entry)
+      );
+      if (postmanEntries.length === 0) {
+        return null;
+      }
+      return {
+        path: "automation/postman_collection.json",
+        data: toJsonWithSize(
+          buildPostmanCollection(postmanEntries, sourceName),
+          "postman_collection"
+        ),
+        options: { date: zipDate },
+      };
+    };
     if (usePartExport && data.partId) {
       const networkTotal =
         data.partInfo && typeof data.partInfo.requestCount === "number"
@@ -4688,40 +4712,29 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      automationItems.push({
-        path: "automation/postman_collection.json",
-        getData: async () => {
-          const entries = await loadLimitedEntriesFromIdb({
-            storeName: "network_entries",
-            indexName: "partId",
-            keyRange: IDBKeyRange.only(data.partId),
-            limit: data.exportLimits
-              ? data.exportLimits.maxRequests
-              : EXPORT_LIMITS.maxRequests,
-          });
-          let postmanEntries = redactNetworkEntry
-            ? entries.map((entry) => redactNetworkEntry(entry))
-            : entries;
-          if (exportFilters) {
-            postmanEntries = postmanEntries.filter((entry) =>
-              matchesExportNetworkEntry(entry, exportFilters)
-            );
-          }
-          postmanEntries = postmanEntries.filter((entry) =>
-            isPostmanEligibleEntry(entry)
-          );
-          const sourceName =
-            data.partId ||
-            (data.session && data.session.session_id
-              ? data.session.session_id
-              : "session");
-          return toJsonWithSize(
-            buildPostmanCollection(postmanEntries, sourceName),
-            "postman_collection"
-          );
-        },
-        options: { date: zipDate },
-      });
+      if (!metadataOnly) {
+        const entries = await loadLimitedEntriesFromIdb({
+          storeName: "network_entries",
+          indexName: "partId",
+          keyRange: IDBKeyRange.only(data.partId),
+          limit: data.exportLimits
+            ? data.exportLimits.maxRequests
+            : EXPORT_LIMITS.maxRequests,
+        });
+        const sourceName =
+          data.partId ||
+          (data.session && data.session.session_id
+            ? data.session.session_id
+            : "session");
+        const postmanItem = buildPostmanAutomationItem(
+          entries,
+          sourceName,
+          exportFilters
+        );
+        if (postmanItem) {
+          automationItems.push(postmanItem);
+        }
+      }
       logItems.push({
         path: "logs/console.json",
         getData: async () => {
@@ -4887,43 +4900,33 @@ async function runEvidenceZipExport(context) {
         },
         options: { date: zipDate },
       });
-      automationItems.push({
-        path: "automation/postman_collection.json",
-        getData: async () => {
-          let entries = [];
-          if (exportSessionId && isIdbAvailable()) {
-            entries = await loadLimitedEntriesFromIdb({
-              storeName: "network_entries",
-              indexName: "sessionId",
-              keyRange: IDBKeyRange.only(exportSessionId),
-              limit: data.exportLimits
-                ? data.exportLimits.maxRequests
-                : EXPORT_LIMITS.maxRequests,
-            });
-          } else {
-            entries =
-              data.networkLogs && Array.isArray(data.networkLogs.entries)
-                ? data.networkLogs.entries
-                : [];
-          }
-          let postmanEntries = redactNetworkEntry
-            ? entries.map((entry) => redactNetworkEntry(entry))
-            : entries;
-          postmanEntries = postmanEntries.filter((entry) =>
-            isPostmanEligibleEntry(entry)
-          );
-          const sourceName =
-            data.partId ||
-            (data.session && data.session.session_id
-              ? data.session.session_id
-              : "session");
-          return toJsonWithSize(
-            buildPostmanCollection(postmanEntries, sourceName),
-            "postman_collection"
-          );
-        },
-        options: { date: zipDate },
-      });
+      if (!metadataOnly) {
+        let entries = [];
+        if (exportSessionId && isIdbAvailable()) {
+          entries = await loadLimitedEntriesFromIdb({
+            storeName: "network_entries",
+            indexName: "sessionId",
+            keyRange: IDBKeyRange.only(exportSessionId),
+            limit: data.exportLimits
+              ? data.exportLimits.maxRequests
+              : EXPORT_LIMITS.maxRequests,
+          });
+        } else {
+          entries =
+            data.networkLogs && Array.isArray(data.networkLogs.entries)
+              ? data.networkLogs.entries
+              : [];
+        }
+        const sourceName =
+          data.partId ||
+          (data.session && data.session.session_id
+            ? data.session.session_id
+            : "session");
+        const postmanItem = buildPostmanAutomationItem(entries, sourceName, null);
+        if (postmanItem) {
+          automationItems.push(postmanItem);
+        }
+      }
       logItems.push({
         path: "logs/console.ndjson",
         getData: async () => {
@@ -5207,18 +5210,6 @@ async function runEvidenceZipExport(context) {
         ...data.exportMetadata.report,
         ...reportMeta,
       };
-    }
-    if (automationItems.length === 0) {
-      const fallbackSource =
-        data.partId ||
-        (data.session && data.session.session_id
-          ? data.session.session_id
-          : "session");
-      automationItems.push({
-        path: "automation/postman_collection.json",
-        data: JSON.stringify(buildPostmanCollection([], fallbackSource), null, 2),
-        options: { date: zipDate },
-      });
     }
     baseItems = [
       ...logItems,
