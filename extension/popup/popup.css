@@ -363,7 +363,7 @@ h2 {
   display: flex;
 }
 
-.help-backdrop {
+.launcher-help-backdrop {
   position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, 0.25);
