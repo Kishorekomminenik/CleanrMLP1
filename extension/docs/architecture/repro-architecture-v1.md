@@ -7,8 +7,8 @@ status: frozen-core
 # Repro V1 Architecture
 
 Repro is a local-only MV3 Chrome extension for QA capture and automation handoff.
-It provides Snap and Full-page screenshots, tab recording, network/console logs,
-and structured evidence export including a Postman collection.
+It supports Snap and Full-page screenshots, detached-window tab recording,
+network/console logs, structured evidence export, and Postman collection export.
 
 This document contains multiple diagrams for engineering discussion and onboarding.
 
@@ -17,13 +17,15 @@ This document contains multiple diagrams for engineering discussion and onboardi
 ```mermaid
 graph TD
   User[User] --> Popup[Repro Popup UI]
-  User --> RecWin[Recording Control Window]
+  User --> RecWin[Detached Recording Window]
   User --> Viewer[Screenshot Viewer/Editor]
+  User --> LogsUI[Logs Control UI]
 
   subgraph Chrome Extension (MV3)
     Popup --> SW[Service Worker]
     RecWin --> SW
     Viewer --> SW
+    LogsUI --> SW
     SW --> Offscreen[Offscreen Document]
     SW --> ContentScripts[Content Scripts]
     SW --> IDB[(IndexedDB)]
@@ -53,15 +55,15 @@ graph LR
   subgraph UI Surfaces
     PopupUI[Main Popup]
     RecUI[Recording Window]
-    LogsUI[Logs UI]
+    LogsUI[Logs Control UI]
     ViewerUI[Screenshot Viewer/Editor]
   end
 
   subgraph Core Runtime
     SW[Service Worker]
     Offscreen[Recording Offscreen]
-    CSFull[Full-page Capture Script]
-    CSLogs[Logs Overlay Script]
+    CSFull[Full-page Capture Helper]
+    CSLogs[Logs Overlay Script (logs only)]
   end
 
   subgraph Storage
@@ -92,7 +94,7 @@ sequenceDiagram
   participant User
   participant Popup
   participant SW as Service Worker
-  participant CS as Full-page Script
+  participant CS as Full-page Helper
   participant Tab
   participant IDB
   participant Viewer
@@ -105,10 +107,11 @@ sequenceDiagram
     SW->>IDB: store screenshot metadata
     SW->>Viewer: open viewer with data URL
   else Full
-    SW->>CS: inject fullpage_capture.js
+    SW->>CS: inject helper if needed
     SW->>CS: prepare, metrics, scroll, capture tiles
     SW->>Tab: captureVisibleTab per tile (no scrollbar)
-    SW->>IDB: persist tiles + compose final image
+    SW->>IDB: persist tiles
+    SW->>SW: compose full-page image in extension runtime
     SW->>Viewer: open viewer with full-page image
   end
 ```
@@ -131,7 +134,8 @@ sequenceDiagram
   SW->>RecWin: Open or focus detached window
 
   User->>RecWin: Start
-  RecWin->>SW: RECORDING_START (tabId + streamId)
+  RecWin->>SW: RECORDING_START (tabId)
+  SW->>SW: obtain tab capture stream id
   SW->>Offscreen: RECORDING_START
   Offscreen->>Tab: getUserMedia(tab stream)
   Offscreen->>IDB: persist chunks
@@ -159,7 +163,7 @@ sequenceDiagram
 
   User->>Popup: Start Logs
   Popup->>SW: NETWORK_START
-  SW->>Tab: attach debugger
+  SW->>Tab: activate logs capture session
   SW->>IDB: persist network/console entries
 
   User->>Popup: Export ZIP
@@ -183,8 +187,8 @@ flowchart TD
   Chunks --> IDB
   IDB --> FinalWebM[Final WebM]
 
-  Logs[Network + Console] --> NetEntries[NDJSON Entries]
-  Logs --> ConsoleEntries[NDJSON Entries]
+  Logs[Network + Console] --> NetEntries[Network Entries]
+  Logs --> ConsoleEntries[Console Entries]
   NetEntries --> IDB
   ConsoleEntries --> IDB
 
@@ -203,6 +207,8 @@ flowchart TD
 graph TD
   ZIP[Evidence ZIP]
   ZIP --> Meta[meta/session.json]
+  ZIP --> Env[meta/environment.json (if present)]
+  ZIP --> ExportMeta[meta/export_metadata.json (if present)]
   ZIP --> LogsND[logs/network.ndjson]
   ZIP --> LogsJSON[logs/network.json]
   ZIP --> ConsoleND[logs/console.ndjson]
@@ -210,18 +216,18 @@ graph TD
   ZIP --> SummaryErrors[summary/errors.json]
   ZIP --> SummaryFailed[summary/failed_requests.json]
   ZIP --> SummarySession[summary/session_summary.json]
+  ZIP --> SummaryTrunc[summary/truncation_report.json (if present)]
   ZIP --> Automation[automation/postman_collection.json]
 
-  LogsND --> Postman
-  LogsJSON --> Postman
+  LogsND --> Automation
 ```
 
 ## Architecture Assumptions
 
 - Recording controls are detached into a dedicated popup window and are not
   injected into the captured tab DOM.
-- Full-page capture uses a content script to scroll and compute tiles, but
-  the final image is composed and exported in the service worker.
+- Full-page capture uses a content script to scroll and compute tiles; the final
+  image is composed in the extension runtime and then opened in the viewer/export path.
 - Logs export uses IndexedDB as the durable source of truth; network.ndjson is
   the raw canonical log, while network.json is the readable structured view.
 - The download broker mediates ZIP and WebM file downloads using local blobs.
@@ -236,5 +242,6 @@ graph TD
 ## Export / Automation Bridge Extensions
 
 - Postman collection export (automation/postman_collection.json) is derived
-  from network logs and is an export-only bridge, not a capture system.
+  from captured network entries (raw log data) and is an export-only bridge,
+  not a capture system.
 - Summary files are derived from logs and do not affect capture pipelines.
