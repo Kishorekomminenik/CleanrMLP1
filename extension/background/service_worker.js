@@ -7135,8 +7135,13 @@ async function captureFullPageScreenshot(requestedTabId) {
       error.stage = failureStage;
     }
     const hasPartial = tileCountCommitted > 0;
-    let artifactKey = lastArtifactKey;
-    if (hasPartial && !artifactKey) {
+    const code = error && error.code ? error.code : null;
+    const allowPartial =
+      hasPartial &&
+      code !== "FULLPAGE_ERR_TILE_INVALID" &&
+      code !== "FULLPAGE_ERR_INCOMPLETE";
+    let artifactKey = allowPartial ? lastArtifactKey : null;
+    if (allowPartial && !artifactKey) {
       try {
         failureStage = "compose_partial";
         const partial = await composeFullpageArtifact(captureRunId, false);
@@ -7170,7 +7175,7 @@ async function captureFullPageScreenshot(requestedTabId) {
         });
       }
     }
-    if (hasPartial) {
+    if (allowPartial) {
       await updateCaptureRun(captureRunId, {
         status: "partial_complete",
         isPartial: true,
@@ -7232,7 +7237,7 @@ async function captureFullPageScreenshot(requestedTabId) {
       };
     }
     await updateCaptureRun(captureRunId, {
-      status: "failed_before_first_tile",
+      status: hasPartial ? "failed_incomplete" : "failed_before_first_tile",
       isPartial: false,
       failureReason: error && error.message ? error.message : "Capture failed.",
       tileCountFailed,
