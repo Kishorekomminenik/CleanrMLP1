@@ -5118,6 +5118,18 @@ async function runEvidenceZipExport(context) {
         ...reportMeta,
       };
     }
+    if (automationItems.length === 0) {
+      const fallbackSource =
+        data.partId ||
+        (data.session && data.session.session_id
+          ? data.session.session_id
+          : "session");
+      automationItems.push({
+        path: "automation/postman_collection.json",
+        data: JSON.stringify(buildPostmanCollection([], fallbackSource), null, 2),
+        options: { date: zipDate },
+      });
+    }
     baseItems = [
       ...logItems,
       ...metaItems,
