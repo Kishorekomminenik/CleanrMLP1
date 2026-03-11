@@ -101,6 +101,19 @@ function getMediaStreamId(tabId) {
   });
 }
 
+function focusTargetTab(tab) {
+  if (!tab || !tab.id || !tab.windowId) {
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    chrome.windows.update(tab.windowId, { focused: true }, () => {
+      chrome.tabs.update(tab.id, { active: true }, () => {
+        resolve(true);
+      });
+    });
+  });
+}
+
 function pickRecordingMimeType() {
   if (!window.MediaRecorder || typeof MediaRecorder.isTypeSupported !== "function") {
     return "";
@@ -288,6 +301,7 @@ startBtn.addEventListener("click", async () => {
     messageEl.textContent = "tabCapture.getMediaStreamId unavailable.";
     return;
   }
+  await focusTargetTab(tab);
   const prep = await send("RECORDING_GET_STATE");
   if (!prep || !prep.ok) {
     messageEl.textContent = prep?.error

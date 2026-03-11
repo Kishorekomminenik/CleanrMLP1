@@ -24,6 +24,7 @@
       originalHtmlScrollBehavior: null,
       originalBodyScrollBehavior: null,
       hiddenElements: [],
+      nestedScrollOverrides: [],
       styleTagId: STYLE_ID,
       captureRunId: null,
       lastMetrics: null,
@@ -64,6 +65,41 @@
       }
     });
     return hidden;
+  }
+
+  function freezeNestedScrollContainers(selectedKey) {
+    const state = getState();
+    const overrides = [];
+    const candidates = state.scrollEngine.candidates || [];
+    const selected = candidates.find((item) => item.key === selectedKey) || null;
+    candidates.forEach((candidate) => {
+      if (!candidate || candidate.type !== "element") {
+        return;
+      }
+      const el = candidate.element;
+      if (!el || !isVisibleElement(el)) {
+        return;
+      }
+      if (selected && selected.element === el) {
+        return;
+      }
+      overrides.push({
+        el,
+        overflow: el.style.overflow,
+        overflowY: el.style.overflowY,
+        overflowX: el.style.overflowX,
+        maxHeight: el.style.maxHeight,
+        height: el.style.height,
+        scrollTop: el.scrollTop,
+      });
+      el.style.overflow = "visible";
+      el.style.overflowY = "visible";
+      el.style.overflowX = "visible";
+      el.style.maxHeight = "none";
+      el.style.height = "auto";
+    });
+    state.nestedScrollOverrides = overrides;
+    return overrides.length;
   }
 
   function ensureStyleTag() {
@@ -296,6 +332,9 @@
         details: selection.details,
       };
     }
+    if (selection && selection.candidate) {
+      freezeNestedScrollContainers(selection.candidate.key);
+    }
     return { ok: true, captureRunId: state.captureRunId };
   }
 
@@ -462,6 +501,21 @@
         entry.el.style.opacity = entry.opacity || "";
       });
     }
+    if (state.nestedScrollOverrides && state.nestedScrollOverrides.length) {
+      state.nestedScrollOverrides.forEach((entry) => {
+        if (!entry || !entry.el) {
+          return;
+        }
+        entry.el.style.overflow = entry.overflow || "";
+        entry.el.style.overflowY = entry.overflowY || "";
+        entry.el.style.overflowX = entry.overflowX || "";
+        entry.el.style.maxHeight = entry.maxHeight || "";
+        entry.el.style.height = entry.height || "";
+        if (typeof entry.scrollTop === "number") {
+          entry.el.scrollTop = entry.scrollTop;
+        }
+      });
+    }
     doc.style.scrollBehavior = state.originalHtmlScrollBehavior || "";
     if (body) {
       body.style.scrollBehavior = state.originalBodyScrollBehavior || "";
@@ -488,6 +542,10 @@
     const styleEl = document.getElementById(STYLE_ID);
     if (styleEl) {
       styleEl.remove();
+    }
+    const state = getState();
+    if (state.applied) {
+      restoreFullpagePageState();
     }
     resetState();
     return { ok: true };
