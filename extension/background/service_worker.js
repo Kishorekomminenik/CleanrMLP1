@@ -7170,7 +7170,8 @@ async function captureFullPageScreenshot(requestedTabId) {
     const allowPartial =
       hasPartial &&
       code !== "FULLPAGE_ERR_TILE_INVALID" &&
-      code !== "FULLPAGE_ERR_INCOMPLETE";
+      code !== "FULLPAGE_ERR_INCOMPLETE" &&
+      code !== "FULLPAGE_ERR_VIEWPORT_CHANGED";
     let artifactKey = allowPartial ? lastArtifactKey : null;
     if (allowPartial && !artifactKey) {
       try {
