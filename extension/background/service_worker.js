@@ -6163,7 +6163,10 @@ function getFullpageUserMessage(error) {
     return rawMessage || "captureVisibleTab failed.";
   }
   if (code === "FULLPAGE_ERR_TILE_INVALID") {
-    return "Full page capture failed due to invalid tile data. Try again.";
+    return (
+      "Full page capture failed due to invalid tile data. " +
+      "Media-heavy pages may block full-page capture. Try again or use Snap."
+    );
   }
   if (code === "FULLPAGE_ERR_STITCH") {
     return rawMessage || "Full page capture failed during stitching.";
@@ -6833,6 +6836,15 @@ async function captureFullPageScreenshot(requestedTabId) {
               result: tileValidationResult,
               seamGapResult,
             });
+            if (seamGapResult && !seamGapResult.ok) {
+              console.log("[FULLPAGE][SEAM_GAP_RETRY]", {
+                tileIndex: i + 1,
+                retryAttempt: attempt,
+                prevBottom: seamGapResult.prevBottom,
+                destY: seamGapResult.destY,
+                gapPx: seamGapResult.gapPx,
+              });
+            }
           }
           if (attempt < FULLPAGE_TILE_CAPTURE_RETRIES) {
             await delay(80);
