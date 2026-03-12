@@ -973,10 +973,25 @@ function isRestrictedUrl(url) {
 }
 
 function getActiveTab() {
-  return chrome.tabs
-    .query({ active: true, currentWindow: true })
-    .then((tabs) => (Array.isArray(tabs) ? tabs[0] : null))
-    .catch(() => null);
+  return new Promise((resolve) => {
+    chrome.windows.getLastFocused(
+      { populate: true, windowTypes: ["normal"] },
+      (windowInfo) => {
+        if (chrome.runtime.lastError || !windowInfo) {
+          chrome.tabs
+            .query({ active: true, lastFocusedWindow: true })
+            .then((tabs) => resolve(Array.isArray(tabs) ? tabs[0] : null))
+            .catch(() => resolve(null));
+          return;
+        }
+        const activeTab =
+          windowInfo.tabs && Array.isArray(windowInfo.tabs)
+            ? windowInfo.tabs.find((tab) => tab.active)
+            : null;
+        resolve(activeTab || null);
+      }
+    );
+  });
 }
 
 function getMediaStreamId(tabId) {
@@ -2955,6 +2970,40 @@ function setLauncherError(message) {
   launcherError.classList.remove("is-hidden");
 }
 
+function openRecordingPanelWindow(tabId) {
+  return new Promise((resolve, reject) => {
+    if (!chrome?.windows?.create) {
+      reject(new Error("Windows API unavailable."));
+      return;
+    }
+    const url = chrome.runtime.getURL(
+      tabId ? `popup/recording_panel.html?targetTabId=${tabId}` : "popup/recording_panel.html"
+    );
+    chrome.windows.create(
+      {
+        url,
+        type: "popup",
+        width: 360,
+        height: 420,
+        focused: true,
+      },
+      (windowInfo) => {
+        if (chrome.runtime.lastError || !windowInfo) {
+          reject(
+            new Error(
+              chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : "Failed to open recording panel window."
+            )
+          );
+          return;
+        }
+        resolve(windowInfo);
+      }
+    );
+  });
+}
+
 async function handleOpenRecordingPanel() {
   setLauncherError(null);
   console.log("[REC][popup] open recording panel request", {
@@ -2962,10 +3011,25 @@ async function handleOpenRecordingPanel() {
     recordingState,
   });
   const tab = await getActiveTab();
+  const tabId = tab && typeof tab.id === "number" ? tab.id : null;
+  let windowInfo = null;
+  try {
+    windowInfo = await openRecordingPanelWindow(tabId);
+  } catch (error) {
+    console.warn("[REC][popup] open recording panel window failed", {
+      error: error?.message || String(error),
+    });
+  }
   let response = null;
   try {
     response = await send("OPEN_RECORDING_PANEL", {
-      tabId: tab && tab.id ? tab.id : null,
+      tabId,
+      openWindow: !windowInfo,
+      panelWindowId: windowInfo && typeof windowInfo.id === "number" ? windowInfo.id : null,
+      panelTabId:
+        windowInfo && windowInfo.tabs && windowInfo.tabs[0]
+          ? windowInfo.tabs[0].id
+          : null,
     });
   } catch (error) {
     console.warn("[REC][popup] OPEN_RECORDING_PANEL send failed", {
@@ -2975,7 +3039,7 @@ async function handleOpenRecordingPanel() {
   }
   console.log("[REC][popup] open recording panel response", response);
   await refreshStatus();
-  if (response && response.ok) {
+  if ((response && response.ok) || windowInfo) {
     window.close();
     return;
   }

@@ -9048,25 +9048,29 @@ async function handleMessage(message, sender) {
       break;
     case "OPEN_RECORDING_PANEL":
       try {
-        recordingPanelTargetTabId =
-          typeof normalizedMessage.tabId === "number"
-            ? normalizedMessage.tabId
-            : recordingPanelTargetTabId;
+        if (Number.isFinite(normalizedMessage.tabId)) {
+          recordingPanelTargetTabId = normalizedMessage.tabId;
+        }
+        if (Number.isFinite(normalizedMessage.panelWindowId)) {
+          recordingPanelWindowId = normalizedMessage.panelWindowId;
+        }
+        if (Number.isFinite(normalizedMessage.panelTabId)) {
+          recordingPanelWindowTabId = normalizedMessage.panelTabId;
+        }
         console.log("[REC][sw] OPEN_RECORDING_PANEL", {
           tabId: recordingPanelTargetTabId || null,
           currentRecordingState: recordingController.state || state.recording.status,
         });
-        const readyPromise = waitForRecordingPanelReady();
-        await openRecordingPanelWindow(recordingPanelTargetTabId);
-        const ready = await readyPromise;
-        if (ready && ready.ok) {
-          result = { ok: true };
-        } else {
-          result = {
-            ok: false,
-            error: "Recording panel failed to initialize. Try again.",
-          };
+        if (normalizedMessage.openWindow !== false) {
+          const readyPromise = waitForRecordingPanelReady();
+          await openRecordingPanelWindow(recordingPanelTargetTabId);
+          readyPromise.then((ready) => {
+            if (!ready || !ready.ok) {
+              console.warn("[REC][sw] recording panel ready timeout");
+            }
+          });
         }
+        result = { ok: true };
       } catch (error) {
         console.warn("[REC][sw] OPEN_RECORDING_PANEL failed", {
           error: error?.message || String(error),
@@ -9643,6 +9647,17 @@ async function handleMessage(message, sender) {
         panelUrl: message && message.panelUrl ? message.panelUrl : null,
         windowId: recordingPanelWindowId || null,
       });
+      if (sender && sender.tab) {
+        if (Number.isFinite(sender.tab.windowId)) {
+          recordingPanelWindowId = sender.tab.windowId;
+        }
+        if (Number.isFinite(sender.tab.id)) {
+          recordingPanelWindowTabId = sender.tab.id;
+        }
+      }
+      if (message && Number.isFinite(message.targetTabId)) {
+        recordingPanelTargetTabId = message.targetTabId;
+      }
       if (recordingPanelReadyWaiter && typeof recordingPanelReadyWaiter.resolve === "function") {
         recordingPanelReadyWaiter.resolve({ ok: true });
       }
