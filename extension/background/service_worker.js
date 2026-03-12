@@ -3716,6 +3716,23 @@ function getStatusSnapshot() {
   };
 }
 
+function getRecordingPanelStatus() {
+  const nowMs = Date.now();
+  const elapsedMs = computeRecordingElapsedMs(nowMs);
+  return {
+    canonicalState: recordingController.state || state.recording.status || "idle",
+    elapsedMs,
+    elapsedText: formatElapsedMs(elapsedMs),
+    hasData: Boolean(state.recording.hasData),
+    statusMessage:
+      statusMessage && statusMessage.message ? statusMessage.message : "-",
+    sessionState: session ? session.state : "idle",
+    isFinalizing: session ? session.state === "finalizing" : false,
+    hasRecording:
+      Boolean(state.recording.dataUrl) || Boolean(state.recording.hasData),
+  };
+}
+
 function mapPublicRecordingState(stateName) {
   return stateName === "stopped" ? "idle" : stateName;
 }
@@ -9104,6 +9121,9 @@ async function handleMessage(message, sender) {
         await refreshLastCompletedPart();
       }
       result = { ok: true, state: getStatusSnapshot() };
+      break;
+    case "GET_RECORDING_PANEL_STATUS":
+      result = { ok: true, state: getRecordingPanelStatus() };
       break;
     case "GET_CAPABILITIES":
       result = {

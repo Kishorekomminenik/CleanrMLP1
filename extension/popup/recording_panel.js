@@ -8,6 +8,12 @@ const stopBtn = document.getElementById("panel_stop");
 const downloadBtn = document.getElementById("panel_download");
 const resetBtn = document.getElementById("panel_reset");
 const closeBtn = document.getElementById("closePanel");
+const PANEL_REFRESH_INTERVAL_MS = 2000;
+let refreshInFlight = false;
+let refreshPending = false;
+let refreshLoopActive = false;
+let refreshTimer = null;
+const actionLocks = new WeakSet();
 
 const query = new URLSearchParams(window.location.search);
 const targetTabIdParam = query.get("targetTabId");
@@ -216,173 +222,240 @@ function applyRecordingControls({
 }
 
 async function refreshStatus() {
-  const res = await send("GET_STATUS");
-  if (!res || !res.ok) {
-    messageEl.textContent = "Panel unavailable.";
-    applyRecordingControls({
-      liveState: "idle",
-      sessionState: "idle",
-      hasData: false,
-      isFinalizing: false,
-    });
+  if (refreshInFlight) {
+    refreshPending = true;
     return;
   }
-  const state = res.state;
-  const sessionState = state.session ? state.session.state : "idle";
-  const statusMessage =
-    state.statusMessage && state.statusMessage.message
-      ? state.statusMessage.message
-      : "-";
-  messageEl.textContent = statusMessage;
-
-  const live = await send("RECORDING_GET_STATE");
-  if (live && live.ok) {
-    if (live.elapsedText) {
-      timerEl.textContent = live.elapsedText;
-    } else if (typeof live.elapsedMs === "number") {
-      const totalSeconds = Math.max(0, Math.floor(live.elapsedMs / 1000));
-      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-      const seconds = String(totalSeconds % 60).padStart(2, "0");
-      timerEl.textContent = `${minutes}:${seconds}`;
-    } else {
-      timerEl.textContent = "00:00";
+  refreshInFlight = true;
+  try {
+    const res = await send("GET_RECORDING_PANEL_STATUS");
+    if (!res || !res.ok) {
+      messageEl.textContent = "Panel unavailable.";
+      applyRecordingControls({
+        liveState: "idle",
+        sessionState: "idle",
+        hasData: false,
+        isFinalizing: false,
+      });
+      return;
     }
+    const panelState = res.state || {};
+    const sessionState = panelState.sessionState || "idle";
+    const statusMessage = panelState.statusMessage || "-";
+    messageEl.textContent = statusMessage;
+
+    const live = await send("RECORDING_GET_STATE");
+    if (live && live.ok) {
+      if (live.elapsedText) {
+        timerEl.textContent = live.elapsedText;
+      } else if (typeof live.elapsedMs === "number") {
+        const totalSeconds = Math.max(0, Math.floor(live.elapsedMs / 1000));
+        const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+        const seconds = String(totalSeconds % 60).padStart(2, "0");
+        timerEl.textContent = `${minutes}:${seconds}`;
+      } else if (panelState.elapsedText) {
+        timerEl.textContent = panelState.elapsedText;
+      } else {
+        timerEl.textContent = "00:00";
+      }
+      stateEl.textContent = resolvePanelStateLabel({
+        liveState: live.state,
+        sessionState,
+        statusMessage,
+      });
+      const isTransition =
+        live.state === "starting" ||
+        live.state === "stopping" ||
+        sessionState === "finalizing";
+      const hasData =
+        Boolean(live.hasData) || Boolean(panelState.hasRecording);
+      applyRecordingControls({
+        liveState: live.state,
+        sessionState,
+        hasData,
+        isFinalizing: isTransition,
+      });
+      return;
+    }
+
+    timerEl.textContent = panelState.elapsedText || "00:00";
     stateEl.textContent = resolvePanelStateLabel({
-      liveState: live.state,
+      liveState: panelState.canonicalState || "idle",
       sessionState,
       statusMessage,
     });
-    const isCapturing = live.state === "recording";
-    const isPaused = live.state === "paused";
-    const isTransition =
-      live.state === "starting" ||
-      live.state === "stopping" ||
-      sessionState === "finalizing";
-    const hasData =
-      Boolean(live.hasData) || Boolean(state.artifacts?.hasRecording);
+    const isCapturing = sessionState === "capturing";
+    const isPaused = sessionState === "paused";
     applyRecordingControls({
-      liveState: live.state,
+      liveState: isCapturing ? "recording" : isPaused ? "paused" : "idle",
       sessionState,
-      hasData,
-      isFinalizing: isTransition,
+      hasData: Boolean(panelState.hasRecording),
+      isFinalizing: Boolean(panelState.isFinalizing),
     });
+  } finally {
+    refreshInFlight = false;
+    if (refreshPending) {
+      refreshPending = false;
+      void refreshStatus();
+    }
+  }
+}
+
+function requestRefresh() {
+  if (refreshInFlight) {
+    refreshPending = true;
     return;
   }
+  void refreshStatus();
+}
 
-  timerEl.textContent = formatElapsedWithPauses(state.session);
-  stateEl.textContent = resolvePanelStateLabel({
-    liveState: null,
-    sessionState,
-    statusMessage,
-  });
-  const isCapturing = sessionState === "capturing";
-  const isPaused = sessionState === "paused";
-  applyRecordingControls({
-    liveState: isCapturing ? "recording" : isPaused ? "paused" : "idle",
-    sessionState,
-    hasData: Boolean(state.artifacts?.hasRecording),
-    isFinalizing: sessionState === "finalizing",
-  });
+function startRefreshLoop() {
+  if (refreshLoopActive) {
+    return;
+  }
+  refreshLoopActive = true;
+  const tick = async () => {
+    if (!refreshLoopActive) {
+      return;
+    }
+    await refreshStatus();
+    if (!refreshLoopActive) {
+      return;
+    }
+    refreshTimer = setTimeout(tick, PANEL_REFRESH_INTERVAL_MS);
+  };
+  tick();
+}
+
+function stopRefreshLoop() {
+  refreshLoopActive = false;
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+async function runActionWithLock(button, handler) {
+  if (button && actionLocks.has(button)) {
+    return;
+  }
+  if (button) {
+    actionLocks.add(button);
+    button.disabled = true;
+  }
+  try {
+    await handler();
+  } finally {
+    if (button) {
+      actionLocks.delete(button);
+    }
+    requestRefresh();
+  }
 }
 
 startBtn.addEventListener("click", async () => {
-  messageEl.textContent = "Starting recording...";
-  let tab = null;
-  if (Number.isFinite(targetTabId)) {
-    try {
-      tab = await chrome.tabs.get(targetTabId);
-    } catch (error) {
-      tab = null;
+  await runActionWithLock(startBtn, async () => {
+    messageEl.textContent = "Starting recording...";
+    let tab = null;
+    if (Number.isFinite(targetTabId)) {
+      try {
+        tab = await chrome.tabs.get(targetTabId);
+      } catch (error) {
+        tab = null;
+      }
     }
-  }
-  if (!tab) {
-    tab = await getActiveTab();
-  }
-  if (!tab || !tab.id) {
-    messageEl.textContent = "No active tab.";
-    return;
-  }
-  if (isRestrictedUrl(tab.url)) {
-    messageEl.textContent = "Recording not supported on this page.";
-    return;
-  }
-  if (!chrome?.tabCapture?.getMediaStreamId) {
-    messageEl.textContent = "tabCapture.getMediaStreamId unavailable.";
-    return;
-  }
-  await focusTargetTab(tab);
-  const prep = await send("RECORDING_GET_STATE");
-  if (!prep || !prep.ok) {
-    messageEl.textContent = prep?.error
-      ? `Recording unavailable: ${prep.error}`
-      : "Recording unavailable.";
-    return;
-  }
-  let streamId = null;
-  try {
-    streamId = await getMediaStreamId(tab.id);
-  } catch (error) {
-    messageEl.textContent =
-      error && error.message ? `Start failed: ${error.message}` : "Start failed.";
-    return;
-  }
-  if (!streamId) {
-    messageEl.textContent = "Start failed: no stream id.";
-    return;
-  }
-  const preferredMimeType = pickRecordingMimeType() || "video/webm";
-  const res = await send("RECORDING_START", {
-    tabId: tab.id,
-    streamId,
-    mimeType: preferredMimeType,
+    if (!tab) {
+      tab = await getActiveTab();
+    }
+    if (!tab || !tab.id) {
+      messageEl.textContent = "No active tab.";
+      return;
+    }
+    if (isRestrictedUrl(tab.url)) {
+      messageEl.textContent = "Recording not supported on this page.";
+      return;
+    }
+    if (!chrome?.tabCapture?.getMediaStreamId) {
+      messageEl.textContent = "tabCapture.getMediaStreamId unavailable.";
+      return;
+    }
+    await focusTargetTab(tab);
+    const prep = await send("RECORDING_GET_STATE");
+    if (!prep || !prep.ok) {
+      messageEl.textContent = prep?.error
+        ? `Recording unavailable: ${prep.error}`
+        : "Recording unavailable.";
+      return;
+    }
+    let streamId = null;
+    try {
+      streamId = await getMediaStreamId(tab.id);
+    } catch (error) {
+      messageEl.textContent =
+        error && error.message ? `Start failed: ${error.message}` : "Start failed.";
+      return;
+    }
+    if (!streamId) {
+      messageEl.textContent = "Start failed: no stream id.";
+      return;
+    }
+    const preferredMimeType = pickRecordingMimeType() || "video/webm";
+    const res = await send("RECORDING_START", {
+      tabId: tab.id,
+      streamId,
+      mimeType: preferredMimeType,
+    });
+    if (!res?.ok) {
+      messageEl.textContent = res?.error
+        ? `Failed to start: ${res.error}`
+        : "Failed to start recording.";
+    }
   });
-  if (!res?.ok) {
-    messageEl.textContent = res?.error
-      ? `Failed to start: ${res.error}`
-      : "Failed to start recording.";
-    return;
-  }
-  await refreshStatus();
 });
 
 pauseBtn.addEventListener("click", async () => {
-  await send("RECORDING_PAUSE");
-  await refreshStatus();
+  await runActionWithLock(pauseBtn, async () => {
+    await send("RECORDING_PAUSE");
+  });
 });
 resumeBtn.addEventListener("click", async () => {
-  await send("RECORDING_RESUME");
-  await refreshStatus();
+  await runActionWithLock(resumeBtn, async () => {
+    await send("RECORDING_RESUME");
+  });
 });
 stopBtn.addEventListener("click", async () => {
-  await send("RECORDING_STOP");
-  await refreshStatus();
+  await runActionWithLock(stopBtn, async () => {
+    await send("RECORDING_STOP");
+  });
 });
 downloadBtn.addEventListener("click", async () => {
-  messageEl.textContent = "Preparing download...";
-  const res = await send("RECORDING_EXPORT_WEBM");
-  if (!res?.ok || !res.blobUrl) {
-    messageEl.textContent = res?.error || "No recording available.";
-    return;
-  }
-  if (!chrome.downloads?.download) {
-    messageEl.textContent = "Downloads API unavailable.";
-    return;
-  }
-  const exportTimestamp = formatExportTimestamp(new Date());
-  chrome.downloads.download(
-    {
-      url: res.blobUrl,
-      filename: `qa-session-video-${exportTimestamp}.webm`,
-      saveAs: false,
-    },
-    () => {
-      if (chrome.runtime.lastError) {
-        messageEl.textContent = chrome.runtime.lastError.message;
-        return;
-      }
-      messageEl.textContent = "Download started.";
+  await runActionWithLock(downloadBtn, async () => {
+    messageEl.textContent = "Preparing download...";
+    const res = await send("RECORDING_EXPORT_WEBM");
+    if (!res?.ok || !res.blobUrl) {
+      messageEl.textContent = res?.error || "No recording available.";
+      return;
     }
-  );
+    if (!chrome.downloads?.download) {
+      messageEl.textContent = "Downloads API unavailable.";
+      return;
+    }
+    const exportTimestamp = formatExportTimestamp(new Date());
+    chrome.downloads.download(
+      {
+        url: res.blobUrl,
+        filename: `qa-session-video-${exportTimestamp}.webm`,
+        saveAs: false,
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          messageEl.textContent = chrome.runtime.lastError.message;
+          return;
+        }
+        messageEl.textContent = "Download started.";
+      }
+    );
+  });
 });
 resetBtn.addEventListener("click", async () => {
   const confirmReset = window.confirm(
@@ -391,18 +464,21 @@ resetBtn.addEventListener("click", async () => {
   if (!confirmReset) {
     return;
   }
-  messageEl.textContent = "Resetting recording...";
-  const res = await send("RECORDING_RESET");
-  if (!res?.ok) {
-    messageEl.textContent = res?.error || "Failed to reset recording.";
-    await refreshStatus();
-    return;
-  }
-  timerEl.textContent = "00:00";
-  messageEl.textContent = "Recording cleared.";
-  await refreshStatus();
+  await runActionWithLock(resetBtn, async () => {
+    messageEl.textContent = "Resetting recording...";
+    const res = await send("RECORDING_RESET");
+    if (!res?.ok) {
+      messageEl.textContent = res?.error || "Failed to reset recording.";
+      return;
+    }
+    timerEl.textContent = "00:00";
+    messageEl.textContent = "Recording cleared.";
+  });
 });
-closeBtn.addEventListener("click", () => window.close());
+closeBtn.addEventListener("click", () => {
+  stopRefreshLoop();
+  window.close();
+});
 
 chrome.runtime.onMessage.addListener((message) => {
   if (!message || !message.type) {
@@ -419,9 +495,10 @@ chrome.runtime.onMessage.addListener((message) => {
     "RECORDING_ERROR",
   ]);
   if (refreshTypes.has(message.type)) {
-    refreshStatus();
+    requestRefresh();
   }
 });
 
-refreshStatus();
-setInterval(refreshStatus, 750);
+window.addEventListener("beforeunload", stopRefreshLoop);
+requestRefresh();
+startRefreshLoop();
