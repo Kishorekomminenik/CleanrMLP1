@@ -3144,17 +3144,98 @@ async function hidePanelOverlay(tabId, panel) {
   }
 }
 
-async function openRecordingPanelWindow(targetTabId) {
-  const updateFocus = (windowId) =>
-    new Promise((resolve) => {
-      chrome.windows.update(windowId, { focused: true }, (windowInfo) => {
-        if (chrome.runtime.lastError || !windowInfo) {
-          resolve(null);
+function updateRecordingPanelWindowFocus(windowId) {
+  return new Promise((resolve) => {
+    chrome.windows.update(windowId, { focused: true }, (windowInfo) => {
+      if (chrome.runtime.lastError || !windowInfo) {
+        resolve(null);
+        return;
+      }
+      resolve(windowInfo);
+    });
+  });
+}
+
+async function findRecordingPanelWindow() {
+  return new Promise((resolve) => {
+    const panelUrl = chrome.runtime.getURL("popup/recording_panel.html");
+    chrome.windows.getAll({ populate: true, windowTypes: ["popup"] }, (windows) => {
+      if (chrome.runtime.lastError || !Array.isArray(windows)) {
+        resolve(null);
+        return;
+      }
+      for (const windowInfo of windows) {
+        const tab =
+          windowInfo && Array.isArray(windowInfo.tabs)
+            ? windowInfo.tabs.find((candidate) => {
+                const url = candidate && candidate.url ? candidate.url : "";
+                return url === panelUrl || url.startsWith(`${panelUrl}?`);
+              })
+            : null;
+        if (tab && windowInfo && typeof windowInfo.id === "number") {
+          resolve({ windowId: windowInfo.id, tabId: tab.id || null });
           return;
         }
-        resolve(windowInfo);
-      });
+      }
+      resolve(null);
     });
+  });
+}
+
+async function focusRecordingPanelWindow() {
+  if (recordingPanelWindowId) {
+    const updated = await updateRecordingPanelWindowFocus(recordingPanelWindowId);
+    if (updated) {
+      console.log("[REC][sw] recording panel focused", {
+        windowId: recordingPanelWindowId,
+      });
+      if (
+        recordingPanelTargetTabId &&
+        recordingPanelWindowTabId &&
+        typeof recordingPanelTargetTabId === "number"
+      ) {
+        chrome.tabs.update(recordingPanelWindowTabId, {
+          url: chrome.runtime.getURL(
+            `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
+          ),
+        });
+      }
+      return { ok: true, windowInfo: updated };
+    }
+    recordingPanelWindowId = null;
+    recordingPanelWindowTabId = null;
+  }
+
+  const discovered = await findRecordingPanelWindow();
+  if (discovered && typeof discovered.windowId === "number") {
+    recordingPanelWindowId = discovered.windowId;
+    recordingPanelWindowTabId = discovered.tabId || null;
+    const updated = await updateRecordingPanelWindowFocus(recordingPanelWindowId);
+    if (updated) {
+      console.log("[REC][sw] recording panel focused", {
+        windowId: recordingPanelWindowId,
+      });
+      if (
+        recordingPanelTargetTabId &&
+        recordingPanelWindowTabId &&
+        typeof recordingPanelTargetTabId === "number"
+      ) {
+        chrome.tabs.update(recordingPanelWindowTabId, {
+          url: chrome.runtime.getURL(
+            `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
+          ),
+        });
+      }
+      return { ok: true, windowInfo: updated };
+    }
+  }
+
+  recordingPanelWindowId = null;
+  recordingPanelWindowTabId = null;
+  return { ok: false, reason: "panel_missing" };
+}
+
+async function openRecordingPanelWindow(targetTabId) {
   const createWindow = () =>
     new Promise((resolve, reject) => {
       const url = chrome.runtime.getURL(
@@ -3193,27 +3274,9 @@ async function openRecordingPanelWindow(targetTabId) {
         }
       );
     });
-  if (recordingPanelWindowId) {
-    const updated = await updateFocus(recordingPanelWindowId);
-    if (updated) {
-      console.log("[REC][sw] recording panel focused", {
-        windowId: recordingPanelWindowId,
-      });
-      if (
-        recordingPanelTargetTabId &&
-        recordingPanelWindowTabId &&
-        typeof recordingPanelTargetTabId === "number"
-      ) {
-        chrome.tabs.update(recordingPanelWindowTabId, {
-          url: chrome.runtime.getURL(
-            `popup/recording_panel.html?targetTabId=${recordingPanelTargetTabId}`
-          ),
-        });
-      }
-      return updated;
-    }
-    recordingPanelWindowId = null;
-    recordingPanelWindowTabId = null;
+  const focusResult = await focusRecordingPanelWindow();
+  if (focusResult.ok) {
+    return focusResult.windowInfo;
   }
   const windowInfo = await createWindow();
   recordingPanelWindowId = windowInfo.id || null;
@@ -9065,8 +9128,15 @@ async function handleMessage(message, sender) {
       break;
     case "OPEN_RECORDING_PANEL":
       try {
-        if (Number.isFinite(normalizedMessage.tabId)) {
-          recordingPanelTargetTabId = normalizedMessage.tabId;
+        const requestedTabId = Number.isFinite(normalizedMessage.tabId)
+          ? normalizedMessage.tabId
+          : null;
+        const activeTargetTabId =
+          recordingController.targetTabId ||
+          recordingPanelTargetTabId ||
+          requestedTabId;
+        if (Number.isFinite(activeTargetTabId)) {
+          recordingPanelTargetTabId = activeTargetTabId;
         }
         if (Number.isFinite(normalizedMessage.panelWindowId)) {
           recordingPanelWindowId = normalizedMessage.panelWindowId;
@@ -9078,16 +9148,23 @@ async function handleMessage(message, sender) {
           tabId: recordingPanelTargetTabId || null,
           currentRecordingState: recordingController.state || state.recording.status,
         });
-        if (normalizedMessage.openWindow !== false) {
-          const readyPromise = waitForRecordingPanelReady();
-          await openRecordingPanelWindow(recordingPanelTargetTabId);
-          readyPromise.then((ready) => {
-            if (!ready || !ready.ok) {
-              console.warn("[REC][sw] recording panel ready timeout");
-            }
-          });
+        const focusResult = await focusRecordingPanelWindow();
+        if (focusResult.ok) {
+          result = { ok: true, action: "focused" };
+          break;
         }
-        result = { ok: true };
+        if (normalizedMessage.openWindow === false) {
+          result = { ok: false, reason: "panel_missing" };
+          break;
+        }
+        const readyPromise = waitForRecordingPanelReady();
+        await openRecordingPanelWindow(recordingPanelTargetTabId);
+        readyPromise.then((ready) => {
+          if (!ready || !ready.ok) {
+            console.warn("[REC][sw] recording panel ready timeout");
+          }
+        });
+        result = { ok: true, action: "opened" };
       } catch (error) {
         console.warn("[REC][sw] OPEN_RECORDING_PANEL failed", {
           error: error?.message || String(error),

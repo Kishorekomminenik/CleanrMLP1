@@ -3012,24 +3012,11 @@ async function handleOpenRecordingPanel() {
   });
   const tab = await getActiveTab();
   const tabId = tab && typeof tab.id === "number" ? tab.id : null;
-  let windowInfo = null;
-  try {
-    windowInfo = await openRecordingPanelWindow(tabId);
-  } catch (error) {
-    console.warn("[REC][popup] open recording panel window failed", {
-      error: error?.message || String(error),
-    });
-  }
   let response = null;
   try {
     response = await send("OPEN_RECORDING_PANEL", {
       tabId,
-      openWindow: !windowInfo,
-      panelWindowId: windowInfo && typeof windowInfo.id === "number" ? windowInfo.id : null,
-      panelTabId:
-        windowInfo && windowInfo.tabs && windowInfo.tabs[0]
-          ? windowInfo.tabs[0].id
-          : null,
+      openWindow: false,
     });
   } catch (error) {
     console.warn("[REC][popup] OPEN_RECORDING_PANEL send failed", {
@@ -3038,8 +3025,52 @@ async function handleOpenRecordingPanel() {
     response = { ok: false, error: error?.message || "Send failed." };
   }
   console.log("[REC][popup] open recording panel response", response);
+  if (response && response.ok) {
+    await refreshStatus();
+    window.close();
+    return;
+  }
+  let windowInfo = null;
+  try {
+    windowInfo = await openRecordingPanelWindow(tabId);
+  } catch (error) {
+    console.warn("[REC][popup] open recording panel window failed", {
+      error: error?.message || String(error),
+    });
+  }
+  if (windowInfo) {
+    try {
+      await send("OPEN_RECORDING_PANEL", {
+        tabId,
+        openWindow: false,
+        panelWindowId: typeof windowInfo.id === "number" ? windowInfo.id : null,
+        panelTabId:
+          windowInfo && windowInfo.tabs && windowInfo.tabs[0]
+            ? windowInfo.tabs[0].id
+            : null,
+      });
+    } catch (error) {
+      console.warn("[REC][popup] OPEN_RECORDING_PANEL register failed", {
+        error: error?.message || String(error),
+      });
+    }
+    await refreshStatus();
+    window.close();
+    return;
+  }
+  try {
+    response = await send("OPEN_RECORDING_PANEL", {
+      tabId,
+      openWindow: true,
+    });
+  } catch (error) {
+    console.warn("[REC][popup] OPEN_RECORDING_PANEL open failed", {
+      error: error?.message || String(error),
+    });
+    response = { ok: false, error: error?.message || "Send failed." };
+  }
   await refreshStatus();
-  if ((response && response.ok) || windowInfo) {
+  if (response && response.ok) {
     window.close();
     return;
   }
