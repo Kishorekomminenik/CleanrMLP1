@@ -1,34 +1,38 @@
 const activeDownloads = new Map();
+const hasDownloads =
+  typeof chrome !== "undefined" && chrome.downloads && chrome.downloads.download;
 
-chrome.downloads.onChanged.addListener((delta) => {
-  if (!delta || typeof delta.id !== "number") {
-    return;
-  }
-  if (delta.state && (delta.state.current === "complete" || delta.state.current === "interrupted")) {
-    const entry = activeDownloads.get(delta.id);
-    if (entry && entry.url) {
-      URL.revokeObjectURL(entry.url);
+if (hasDownloads && chrome.downloads.onChanged) {
+  chrome.downloads.onChanged.addListener((delta) => {
+    if (!delta || typeof delta.id !== "number") {
+      return;
     }
-    if (entry && entry.artifactKey && delta.state.current === "complete") {
-      if (globalThis.ReproIdb) {
-        ReproIdb.deleteByKey("export_artifacts", entry.artifactKey).catch(() => {});
+    if (delta.state && (delta.state.current === "complete" || delta.state.current === "interrupted")) {
+      const entry = activeDownloads.get(delta.id);
+      if (entry && entry.url) {
+        URL.revokeObjectURL(entry.url);
       }
-      console.log("[BROKER][EXPORT_CLEANUP]", {
-        artifactKey: entry.artifactKey,
-        status: "complete",
-      });
-    } else if (entry && entry.artifactKey && delta.state.current === "interrupted") {
-      console.log("[BROKER][EXPORT_CLEANUP]", {
-        artifactKey: entry.artifactKey,
-        status: "interrupted",
-        kept: true,
-      });
+      if (entry && entry.artifactKey && delta.state.current === "complete") {
+        if (globalThis.ReproIdb) {
+          ReproIdb.deleteByKey("export_artifacts", entry.artifactKey).catch(() => {});
+        }
+        console.log("[BROKER][EXPORT_CLEANUP]", {
+          artifactKey: entry.artifactKey,
+          status: "complete",
+        });
+      } else if (entry && entry.artifactKey && delta.state.current === "interrupted") {
+        console.log("[BROKER][EXPORT_CLEANUP]", {
+          artifactKey: entry.artifactKey,
+          status: "interrupted",
+          kept: true,
+        });
+      }
+      if (entry) {
+        activeDownloads.delete(delta.id);
+      }
     }
-    if (entry) {
-      activeDownloads.delete(delta.id);
-    }
-  }
-});
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") {
@@ -41,7 +45,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (
     message.type !== "BROKER_DOWNLOAD_BLOB" &&
     message.type !== "BROKER_DOWNLOAD_BYTES" &&
-    message.type !== "BROKER_DOWNLOAD_EXPORT_ARTIFACT"
+    message.type !== "BROKER_DOWNLOAD_EXPORT_ARTIFACT" &&
+    message.type !== "BROKER_CREATE_URL" &&
+    message.type !== "BROKER_CREATE_EXPORT_URL" &&
+    message.type !== "BROKER_REVOKE_URL"
   ) {
     return false;
   }
@@ -53,6 +60,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const saveAs = payload.saveAs === true;
       let arrayBuffer = payload.arrayBuffer;
       let artifactKey = null;
+      if (message.type === "BROKER_REVOKE_URL") {
+        const url = payload.url || null;
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+        sendResponse({ ok: true });
+        return;
+      }
       if (message.type === "BROKER_DOWNLOAD_EXPORT_ARTIFACT") {
         artifactKey = payload.artifactKey || null;
         if (!artifactKey) {
@@ -93,6 +108,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           computedChecksum,
         });
       }
+      if (message.type === "BROKER_CREATE_EXPORT_URL") {
+        artifactKey = payload.artifactKey || null;
+        if (!artifactKey) {
+          sendResponse({ ok: false, error: "Missing export artifact key." });
+          return;
+        }
+        if (!globalThis.ReproIdb) {
+          sendResponse({ ok: false, error: "IndexedDB unavailable." });
+          return;
+        }
+        const record = await ReproIdb.getByKey("export_artifacts", artifactKey);
+        if (!record || !record.bytes) {
+          sendResponse({ ok: false, error: "Export artifact not found." });
+          return;
+        }
+        arrayBuffer = record.bytes;
+      }
+      if (message.type === "BROKER_CREATE_URL") {
+        arrayBuffer = payload.arrayBuffer;
+      }
       if (!arrayBuffer) {
         sendResponse({ ok: false, error: "Missing payload." });
         return;
@@ -124,6 +159,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         artifactKey,
       });
       const url = URL.createObjectURL(blob);
+      if (message.type === "BROKER_CREATE_URL" || message.type === "BROKER_CREATE_EXPORT_URL") {
+        sendResponse({ ok: true, url, bytes: byteLength, artifactKey });
+        return;
+      }
+      if (!hasDownloads) {
+        sendResponse({ ok: false, error: "Downloads API unavailable." });
+        return;
+      }
       chrome.downloads.download(
         {
           url,

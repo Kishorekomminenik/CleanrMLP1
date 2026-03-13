@@ -312,6 +312,7 @@ function setPanelHiddenForCapture(tabId, panel, hidden) {
 let exportPhase = null;
 let exportJob = null;
 let lastLogsPauseLogMs = 0;
+const brokerDownloadUrls = new Map();
 
 function nowIso() {
   return new Date().toISOString();
@@ -1628,22 +1629,14 @@ async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
   if (!(arrayBuffer instanceof ArrayBuffer)) {
     throw new Error("Missing download bytes.");
   }
-  console.log("[EXPORT][BROKER_REQUEST]", {
-    filename,
-    mimeType: mimeType || "application/octet-stream",
-    bytes: arrayBuffer.byteLength,
-    nonEmpty: arrayBuffer.byteLength > 0,
-  });
   const sendRequest = () =>
     new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
-          type: "BROKER_DOWNLOAD_BYTES",
+          type: "BROKER_CREATE_URL",
           payload: {
             arrayBuffer,
-            filename,
             mimeType: mimeType || "application/octet-stream",
-            saveAs: opts.saveAs === true,
           },
         },
         (reply) => {
@@ -1668,9 +1661,31 @@ async function brokerDownloadBytes(arrayBuffer, filename, mimeType, opts = {}) {
       throw error;
     }
   }
-  if (!response || !response.ok) {
+  if (!response || !response.ok || !response.url) {
     throw new Error(response && response.error ? response.error : "Download failed.");
   }
+  if (!chrome.downloads?.download) {
+    throw new Error("Downloads API unavailable.");
+  }
+  const downloadId = await new Promise((resolve, reject) => {
+    chrome.downloads.download(
+      { url: response.url, filename, saveAs: opts.saveAs === true },
+      (id) => {
+        if (chrome.runtime.lastError || !id) {
+          reject(
+            new Error(
+              chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : "Download blocked."
+            )
+          );
+          return;
+        }
+        resolve(id);
+      }
+    );
+  });
+  brokerDownloadUrls.set(downloadId, { url: response.url, artifactKey: null });
   return true;
 }
 
@@ -1683,12 +1698,10 @@ async function brokerDownloadExportArtifact(artifactKey, filename, mimeType, opt
     new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
-          type: "BROKER_DOWNLOAD_EXPORT_ARTIFACT",
+          type: "BROKER_CREATE_EXPORT_URL",
           payload: {
             artifactKey,
-            filename,
             mimeType: mimeType || "application/octet-stream",
-            saveAs: opts.saveAs === true,
           },
         },
         (reply) => {
@@ -1713,9 +1726,31 @@ async function brokerDownloadExportArtifact(artifactKey, filename, mimeType, opt
       throw error;
     }
   }
-  if (!response || !response.ok) {
+  if (!response || !response.ok || !response.url) {
     throw new Error(response && response.error ? response.error : "Download failed.");
   }
+  if (!chrome.downloads?.download) {
+    throw new Error("Downloads API unavailable.");
+  }
+  const downloadId = await new Promise((resolve, reject) => {
+    chrome.downloads.download(
+      { url: response.url, filename, saveAs: opts.saveAs === true },
+      (id) => {
+        if (chrome.runtime.lastError || !id) {
+          reject(
+            new Error(
+              chrome.runtime.lastError
+                ? chrome.runtime.lastError.message
+                : "Download blocked."
+            )
+          );
+          return;
+        }
+        resolve(id);
+      }
+    );
+  });
+  brokerDownloadUrls.set(downloadId, { url: response.url, artifactKey });
   return true;
 }
 
@@ -10015,6 +10050,33 @@ chrome.windows.onRemoved.addListener((windowId) => {
     recordingPanelWindowId = null;
     recordingPanelWindowTabId = null;
     recordingPanelTargetTabId = null;
+  }
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta || typeof delta.id !== "number") {
+    return;
+  }
+  if (
+    delta.state &&
+    (delta.state.current === "complete" || delta.state.current === "interrupted")
+  ) {
+    const entry = brokerDownloadUrls.get(delta.id);
+    if (!entry) {
+      return;
+    }
+    brokerDownloadUrls.delete(delta.id);
+    if (entry.url) {
+      chrome.runtime.sendMessage({
+        type: "BROKER_REVOKE_URL",
+        payload: { url: entry.url },
+      });
+    }
+    if (entry.artifactKey && delta.state.current === "complete") {
+      if (globalThis.ReproIdb) {
+        ReproIdb.deleteByKey("export_artifacts", entry.artifactKey).catch(() => {});
+      }
+    }
   }
 });
 
