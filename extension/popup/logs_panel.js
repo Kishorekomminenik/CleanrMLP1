@@ -4,6 +4,8 @@ const consoleEl = document.getElementById("panel_console");
 const messageEl = document.getElementById("panel_message");
 const exportEl = document.getElementById("panel_export");
 const startBtn = document.getElementById("panel_start");
+const pauseBtn = document.getElementById("panel_pause");
+const resumeBtn = document.getElementById("panel_resume");
 const stopBtn = document.getElementById("panel_stop");
 const downloadBtn = document.getElementById("panel_download");
 const clearBtn = document.getElementById("panel_clear");
@@ -43,13 +45,18 @@ function setHidden(el, hidden) {
 
 function applyLogsControls({ logsState, hasArtifacts, isExporting }) {
   const isCapturing = logsState === "capturing";
-  const isIdle = !isCapturing;
+  const isPaused = logsState === "paused";
+  const isIdle = !isCapturing && !isPaused;
   setHidden(startBtn, !isIdle);
-  setHidden(stopBtn, !isCapturing);
+  setHidden(pauseBtn, !isCapturing);
+  setHidden(resumeBtn, !isPaused);
+  setHidden(stopBtn, !(isCapturing || isPaused));
   setHidden(downloadBtn, !hasArtifacts);
 
   startBtn.disabled = !isIdle || isExporting;
-  stopBtn.disabled = !isCapturing || isExporting;
+  pauseBtn.disabled = !isCapturing || isExporting;
+  resumeBtn.disabled = !isPaused || isExporting;
+  stopBtn.disabled = !(isCapturing || isPaused) || isExporting;
   clearBtn.disabled = isExporting;
   resetBtn.disabled = isExporting;
   downloadBtn.disabled = !hasArtifacts || isExporting || isCapturing;
@@ -259,6 +266,30 @@ startBtn.addEventListener("click", async () => {
   await refreshStatus();
 });
 
+pauseBtn.addEventListener("click", async () => {
+  messageEl.textContent = "Pausing capture...";
+  const res = await send("LOGS_PAUSE");
+  if (!res.ok) {
+    messageEl.textContent = res.error || "Failed to pause capture.";
+    await refreshStatus();
+    return;
+  }
+  messageEl.textContent = "Capture paused.";
+  await refreshStatus();
+});
+
+resumeBtn.addEventListener("click", async () => {
+  messageEl.textContent = "Resuming capture...";
+  const res = await send("LOGS_RESUME");
+  if (!res.ok) {
+    messageEl.textContent = res.error || "Failed to resume capture.";
+    await refreshStatus();
+    return;
+  }
+  messageEl.textContent = "Capture resumed.";
+  await refreshStatus();
+});
+
 stopBtn.addEventListener("click", async () => {
   messageEl.textContent = "Stopping capture...";
   const res = await send("NETWORK_STOP");
@@ -289,8 +320,7 @@ downloadBtn.addEventListener("click", async () => {
   }
   if (
     statusResponse.state.session &&
-    (statusResponse.state.session.state === "capturing" ||
-      statusResponse.state.session.state === "paused")
+    statusResponse.state.session.state === "capturing"
   ) {
     messageEl.textContent = "Stop capture before downloading.";
     return;

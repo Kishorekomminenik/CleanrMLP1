@@ -61,6 +61,7 @@ const FULL_CAPTURE_CONFIG = {
   maxRetriesPerShot: 1,
 };
 const DEBUG_FULLPAGE = true;
+const DEBUG_LOGS_PAUSE = false;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -192,6 +193,7 @@ const captureState = {
   lastCompletedPartNumber: null,
   partHasData: false,
   completedPartsCount: 0,
+  logsState: "idle",
   pausedForStorageLimit: false,
   rolloverPending: false,
   pendingFinalizePart: null,
@@ -309,6 +311,7 @@ function setPanelHiddenForCapture(tabId, panel, hidden) {
 }
 let exportPhase = null;
 let exportJob = null;
+let lastLogsPauseLogMs = 0;
 
 function nowIso() {
   return new Date().toISOString();
@@ -3664,6 +3667,20 @@ function setNetworkCaptureEnabled(enabled) {
   state.network.captureEnabled = Boolean(enabled);
 }
 
+function getLogsCaptureState() {
+  if (captureState.pausedForStorageLimit) {
+    return "paused";
+  }
+  if (captureState.logsState) {
+    return captureState.logsState;
+  }
+  return state.network.active ? "capturing" : "idle";
+}
+
+function isLogsCapturing() {
+  return getLogsCaptureState() === "capturing";
+}
+
 function markSessionStopped() {
   if (!session) {
     return;
@@ -3737,11 +3754,7 @@ function getStatusSnapshot() {
     recordingStatus: state.recording.status,
     recordingCapturedAt: state.recording.capturedAt,
     networkActive: state.network.active,
-    logsState: captureState.pausedForStorageLimit
-      ? "paused"
-      : state.network.active
-        ? "capturing"
-        : "idle",
+    logsState: getLogsCaptureState(),
     networkCount: captureState.sessionId
       ? captureState.totalRequests
       : Object.keys(state.network.requests).length,
@@ -7948,6 +7961,7 @@ async function startNetworkCapture(filters) {
 
   state.network.active = true;
   setNetworkCaptureEnabled(true);
+  captureState.logsState = "capturing";
   state.network.tabId = tab.id;
   state.network.requests = {};
   state.network.order = [];
@@ -7972,6 +7986,7 @@ async function stopNetworkCapture() {
 
   state.network.active = false;
   setNetworkCaptureEnabled(false);
+  captureState.logsState = "idle";
   state.network.stoppedAt = nowIso();
 
   state.console.active = false;
@@ -8051,6 +8066,49 @@ async function stopNetworkCapture() {
   await flushQueues();
 }
 
+async function pauseLogsCapture() {
+  if (!state.network.active) {
+    throw new Error("Network capture is not active.");
+  }
+  const current = getLogsCaptureState();
+  if (current === "paused") {
+    return { ok: true, alreadyPaused: true };
+  }
+  if (current !== "capturing") {
+    throw new Error("Logs capture is not running.");
+  }
+  finalizePendingNetworkEntries("paused");
+  state.network.requests = {};
+  state.network.order = [];
+  captureState.logsState = "paused";
+  setSessionState("paused");
+  setStatusMessage("Capture paused. Resume to continue.", "info");
+  if (DEBUG_LOGS_PAUSE) {
+    console.log("[LOGS][PAUSE]", { sessionId: captureState.sessionId || null });
+  }
+  return { ok: true };
+}
+
+async function resumeLogsCapture() {
+  if (!state.network.active) {
+    throw new Error("Network capture is not active.");
+  }
+  const current = getLogsCaptureState();
+  if (current === "capturing") {
+    return { ok: true, alreadyCapturing: true };
+  }
+  if (current !== "paused") {
+    throw new Error("Logs capture is not paused.");
+  }
+  captureState.logsState = "capturing";
+  setSessionState("capturing");
+  setStatusMessage("Capture resumed.", "success");
+  if (DEBUG_LOGS_PAUSE) {
+    console.log("[LOGS][RESUME]", { sessionId: captureState.sessionId || null });
+  }
+  return { ok: true };
+}
+
 function updateRequestEntry(requestId, updates, options = {}) {
   if (!requestId) {
     return;
@@ -8114,7 +8172,17 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.network.active || source.tabId !== state.network.tabId) {
     return;
   }
-  if (captureState.pausedForStorageLimit) {
+  if (!isLogsCapturing()) {
+    if (DEBUG_LOGS_PAUSE) {
+      const now = Date.now();
+      if (now - lastLogsPauseLogMs > 5000) {
+        lastLogsPauseLogMs = now;
+        console.log("[LOGS][PAUSED][IGNORED_EVENT]", {
+          method,
+          tabId: source.tabId || null,
+        });
+      }
+    }
     return;
   }
 
@@ -8506,6 +8574,7 @@ function resetCaptureState() {
   captureState.lastCompletedPartNumber = null;
   captureState.partHasData = false;
   captureState.completedPartsCount = 0;
+  captureState.logsState = "idle";
   captureState.pausedForStorageLimit = false;
   captureState.rolloverPending = false;
   captureState.pendingFinalizePart = null;
@@ -8774,6 +8843,7 @@ function pauseCaptureForStorageLimit(completedPart, startNewPartAfter) {
   captureState.rolloverPending = true;
   captureState.pendingFinalizePart = completedPart;
   captureState.pendingFinalizeStartNewPart = Boolean(startNewPartAfter);
+  captureState.logsState = "paused";
   state.network.requests = {};
   state.network.order = [];
   const message =
@@ -8794,6 +8864,7 @@ async function resumeCaptureAfterStorageLimit() {
     return;
   }
   captureState.pausedForStorageLimit = false;
+  captureState.logsState = state.network.active ? "capturing" : "idle";
   const pendingPart = captureState.pendingFinalizePart;
   const shouldStartNewPart = captureState.pendingFinalizeStartNewPart;
   captureState.rolloverPending = false;
@@ -9538,6 +9609,26 @@ async function handleMessage(message, sender) {
         };
       }
       break;
+    case "LOGS_PAUSE":
+      try {
+        result = await pauseLogsCapture();
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Failed to pause logs.",
+        };
+      }
+      break;
+    case "LOGS_RESUME":
+      try {
+        result = await resumeLogsCapture();
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Failed to resume logs.",
+        };
+      }
+      break;
     case "NETWORK_STOP":
       await stopNetworkCapture();
       result = { ok: true };
@@ -9701,10 +9792,20 @@ async function handleMessage(message, sender) {
         sender.tab &&
         sender.tab.id === state.console.tabId
       ) {
-        addConsoleEntry({
-          ...message.payload,
-          tabId: sender.tab.id,
-        });
+        if (isLogsCapturing()) {
+          addConsoleEntry({
+            ...message.payload,
+            tabId: sender.tab.id,
+          });
+        } else if (DEBUG_LOGS_PAUSE) {
+          const now = Date.now();
+          if (now - lastLogsPauseLogMs > 5000) {
+            lastLogsPauseLogMs = now;
+            console.log("[LOGS][PAUSED][IGNORED_CONSOLE]", {
+              tabId: sender.tab.id,
+            });
+          }
+        }
       }
       result = { ok: true };
       break;
