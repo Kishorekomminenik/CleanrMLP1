@@ -2253,6 +2253,7 @@ async function buildNdjsonBlobFromEntries(options) {
   const parts = [];
   let size = 0;
   let count = 0;
+  let truncated = false;
   for (let i = 0; i < entries.length; i += 1) {
     const entry = entries[i];
     if (onEntry) {
@@ -2260,13 +2261,12 @@ async function buildNdjsonBlobFromEntries(options) {
     }
     const payload = redactEntry ? redactEntry(entry) : entry;
     const line = `${JSON.stringify(payload)}\n`;
-    size += line.length;
-    if (maxBytes && size > maxBytes) {
-      throw buildExportSizeError(
-        `${options.label || "Export"} NDJSON exceeds size guard.`,
-        options.debugCode || "ndjson_too_large"
-      );
+    const nextSize = size + line.length;
+    if (maxBytes && nextSize > maxBytes) {
+      truncated = true;
+      break;
     }
+    size = nextSize;
     parts.push(line);
     count += 1;
     if (yieldEvery > 0 && i % yieldEvery === 0) {
@@ -2277,6 +2277,7 @@ async function buildNdjsonBlobFromEntries(options) {
     blob: new Blob(parts, { type: "application/x-ndjson" }),
     size,
     count,
+    truncated,
   };
 }
 
@@ -5023,6 +5024,9 @@ async function runEvidenceZipExport(context) {
             }
           );
           trackJsonSize("network_ndjson", result.size);
+          if (result.truncated) {
+            logExportPhase("ndjson_truncated", { type: "network" });
+          }
           networkBuilt = true;
           finalizePartTruncationReport();
           return result.blob;
@@ -5053,6 +5057,9 @@ async function runEvidenceZipExport(context) {
             }
           );
           trackJsonSize("console_ndjson", result.size);
+          if (result.truncated) {
+            logExportPhase("ndjson_truncated", { type: "console" });
+          }
           consoleBuilt = true;
           finalizePartTruncationReport();
           return result.blob;
@@ -5240,6 +5247,9 @@ async function runEvidenceZipExport(context) {
               },
             });
             trackJsonSize("network_ndjson", result.size);
+            if (result.truncated) {
+              logExportPhase("ndjson_truncated", { type: "network" });
+            }
             return result.blob;
           }
           const fallbackEntries =
@@ -5257,6 +5267,9 @@ async function runEvidenceZipExport(context) {
             },
           });
           trackJsonSize("network_ndjson", result.size);
+          if (result.truncated) {
+            logExportPhase("ndjson_truncated", { type: "network" });
+          }
           return result.blob;
         },
         options: { date: zipDate },
@@ -5372,6 +5385,9 @@ async function runEvidenceZipExport(context) {
               },
             });
             trackJsonSize("console_ndjson", result.size);
+            if (result.truncated) {
+              logExportPhase("ndjson_truncated", { type: "console" });
+            }
             return result.blob;
           }
           const fallbackEntries =
@@ -5389,6 +5405,9 @@ async function runEvidenceZipExport(context) {
             },
           });
           trackJsonSize("console_ndjson", result.size);
+          if (result.truncated) {
+            logExportPhase("ndjson_truncated", { type: "console" });
+          }
           return result.blob;
         },
         options: { date: zipDate },
