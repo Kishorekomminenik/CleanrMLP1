@@ -1579,19 +1579,18 @@ function delay(ms) {
 
 async function ensureBrokerTabOrOffscreen() {
   if (brokerState.tabId) {
-    try {
-      await chrome.tabs.get(brokerState.tabId);
-      return brokerState.tabId;
-    } catch (error) {
-      brokerState.tabId = null;
-      brokerState.ready = false;
-    }
+    brokerState.tabId = null;
   }
-  const url = chrome.runtime.getURL("background/download_broker.html");
-  const tab = await chrome.tabs.create({ url, active: false });
-  brokerState.tabId = tab.id;
+  const hasDocument = await chrome.offscreen.hasDocument();
+  if (!hasDocument) {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL("background/download_broker.html"),
+      reasons: ["BLOBS"],
+      justification: "Download exported artifacts without opening a tab.",
+    });
+  }
   brokerState.ready = false;
-  return tab.id;
+  return "offscreen";
 }
 
 async function ensureBrokerReady() {
