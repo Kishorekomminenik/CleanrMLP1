@@ -1957,9 +1957,12 @@ function updateLauncherSessionUI(context) {
     return;
   }
   const {
+    sessionMode,
     sessionActive,
     sessionPaused,
     sessionCaptured,
+    recordOnlyActive,
+    recordOnlyCaptured,
     durationText,
     requestCount,
     logCount,
@@ -1968,8 +1971,13 @@ function updateLauncherSessionUI(context) {
     hasLiveNetwork,
   } = context;
 
-  const showStatus = sessionActive || sessionCaptured;
+  const showStatus =
+    sessionActive || sessionCaptured || recordOnlyActive || recordOnlyCaptured;
   launcherSessionStatus.classList.toggle("is-hidden", !showStatus);
+  launcherSessionStatus.classList.toggle(
+    "record-only",
+    sessionMode === "recording"
+  );
 
   if (launcherSessionDuration) {
     launcherSessionDuration.textContent = durationText || "00:00";
@@ -1994,7 +2002,13 @@ function updateLauncherSessionUI(context) {
   }
   if (launcherSessionLabel) {
     let label = "Session";
-    if (sessionCaptured) {
+    if (sessionMode === "recording") {
+      if (recordOnlyCaptured) {
+        label = "Screen Recording Complete";
+      } else if (sessionPaused || recordOnlyActive) {
+        label = sessionPaused ? "Screen Recording Paused" : "Screen Recording";
+      }
+    } else if (sessionCaptured) {
       label = "Session Captured";
     } else if (sessionPaused) {
       label = "Session Paused";
@@ -2005,7 +2019,15 @@ function updateLauncherSessionUI(context) {
   }
   if (launcherSessionMessage) {
     let message = "";
-    if (sessionCaptured) {
+    if (sessionMode === "recording") {
+      if (recordOnlyCaptured) {
+        message = "Recording complete. Use the panel to download the WebM.";
+      } else if (recordOnlyActive && sessionPaused) {
+        message = "Recording paused. Resume to continue.";
+      } else if (recordOnlyActive) {
+        message = "Recording screen only. Logs are not captured.";
+      }
+    } else if (sessionCaptured) {
       message = "Session captured. Export to inspect in the viewer.";
     } else if (sessionPaused) {
       message = "Session paused. Resume to continue capturing.";
@@ -2055,14 +2077,18 @@ function updateLauncherSessionUI(context) {
     launcherButtons.sessionStop.classList.toggle("is-hidden", !sessionActive);
   }
   if (launcherButtons.sessionExport) {
-    launcherButtons.sessionExport.disabled =
-      !sessionCaptured || exportInProgress;
-    launcherButtons.sessionExport.classList.toggle("is-hidden", sessionActive);
+    const canExportSession = sessionMode === "session" && sessionCaptured;
+    launcherButtons.sessionExport.disabled = !canExportSession || exportInProgress;
+    launcherButtons.sessionExport.classList.toggle(
+      "is-hidden",
+      sessionActive || sessionMode === "recording"
+    );
   }
   if (launcherButtons.sessionViewer) {
     const viewerReady = Boolean(lastExportFilename);
-    launcherButtons.sessionViewer.disabled = !viewerReady;
-    launcherButtons.sessionViewer.classList.toggle("is-hidden", sessionActive);
+    const canShowViewer = sessionMode === "session" && !sessionActive;
+    launcherButtons.sessionViewer.disabled = !viewerReady || !canShowViewer;
+    launcherButtons.sessionViewer.classList.toggle("is-hidden", !canShowViewer);
   }
 }
 
@@ -2103,7 +2129,8 @@ function updateStatusUI(state) {
     sessionState === "recording";
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabelMap = {
-    recording: "Record Session",
+    recording: "Screen Recording",
+    session: "Session",
     network_console: "Capture Logs",
     screenshot: "Screenshot",
   };
@@ -2130,11 +2157,21 @@ function updateStatusUI(state) {
     state.artifacts && state.artifacts.hasAnyArtifacts
   );
   const sessionCaptured =
-    !sessionActive && hasAnyArtifacts && Boolean(state.session);
+    sessionMode === "session" && !sessionActive && hasAnyArtifacts;
+  const recordOnlyActive =
+    sessionMode === "recording" &&
+    (sessionState === "recording" || sessionState === "paused");
+  const recordOnlyCaptured =
+    sessionMode === "recording" &&
+    !sessionActive &&
+    Boolean(state.artifacts && state.artifacts.hasRecording);
   updateLauncherSessionUI({
+    sessionMode,
     sessionActive,
     sessionPaused: sessionState === "paused",
     sessionCaptured,
+    recordOnlyActive,
+    recordOnlyCaptured,
     durationText,
     requestCount,
     logCount,
@@ -2471,12 +2508,12 @@ async function handleSessionStart() {
   let recordingLive = false;
   let mergeAllowed = false;
   if (canRecord) {
-    await handleRecordingStart({ force: true });
+    await handleRecordingStart({ force: true, sessionMode: "session" });
     const recordingStatus = await send(MSG.GET_STATUS);
     if (recordingStatus.ok) {
       mergeAllowed =
         recordingStatus.state.session &&
-        recordingStatus.state.session.mode === "recording";
+        recordingStatus.state.session.mode === "session";
       recordingLive =
         recordingStatus.state.recordingStatus === "recording" ||
         recordingStatus.state.recordingStatus === "paused";
@@ -2596,6 +2633,18 @@ async function handleSessionScreenshot() {
 }
 
 async function handleSessionExport() {
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to read session status.");
+    return;
+  }
+  if (
+    !statusResponse.state.session ||
+    statusResponse.state.session.mode !== "session"
+  ) {
+    showToast("Export is available only for session captures.", "error");
+    return;
+  }
   await handleDownload({ allowAnyMode: true });
 }
 
@@ -2782,6 +2831,7 @@ async function handleRecordingStart(options = {}) {
     tabId: tab.id,
     streamId,
     mimeType: preferredMimeType,
+    sessionMode: options.sessionMode || null,
   });
   if (!res?.ok) {
     setStatus(

@@ -251,6 +251,7 @@ let activeFilters = { ...FILTER_DEFAULTS };
 const MODE_LABELS = {
   screenshot: "Screenshot",
   recording: "Recording",
+  session: "Session",
   network_console: "Capture Logs",
 };
 
@@ -3648,7 +3649,7 @@ function checkStartMode(mode, options = {}) {
     if (
       allowExistingSession &&
       mode === "network_console" &&
-      session.mode === "recording" &&
+      session.mode === "session" &&
       !state.network.active &&
       (recordingActive || session.state === "error")
     ) {
@@ -8132,7 +8133,7 @@ function applyTextAnnotations(ctx, annotations, dpr) {
   });
 }
 
-async function startRecording(streamId, tabId, mimeType) {
+async function startRecording(streamId, tabId, mimeType, options = {}) {
   // V1 STABLE: recording state orchestration (start).
   return await withRecordingTransitionLock("start", async () => {
     const tab = tabId ? await chrome.tabs.get(tabId) : await getActiveTab();
@@ -8191,7 +8192,8 @@ async function startRecording(streamId, tabId, mimeType) {
         throw new Error(errorMessage);
       }
 
-      ensureSessionForMode("recording", tab);
+      const sessionMode = options.sessionMode === "session" ? "session" : "recording";
+      ensureSessionForMode(sessionMode, tab);
       setSessionState("capturing");
       syncRecordingState(response, { targetTabId: tab.id });
       await updateRecordingSessionRecord(recordingSessionId, { status: "recording" });
@@ -8368,7 +8370,6 @@ async function stopRecording() {
       recordingOverlayState.totalPausedMs = 0;
       recordingOverlayState.tabId = null;
       await restorePanelAfterRecording(recordingTabId);
-      await closeRecordingPanelWindow();
       return { ok: true, alreadyStopped: true };
     }
     setRecordingState("stopping", { targetTabId: recordingTabId });
@@ -8422,7 +8423,6 @@ async function stopRecording() {
         errorMessage,
       });
       await restorePanelAfterRecording(recordingTabId);
-      await closeRecordingPanelWindow();
       setRecordingState("idle", { errorMessage });
       throw new Error(errorMessage);
     }
@@ -8492,7 +8492,6 @@ async function stopRecording() {
     }
     clearStatusMessage();
     await restorePanelAfterRecording(recordingTabId);
-    await closeRecordingPanelWindow();
     setRecordingState("idle");
     logRecordingDiagnostic("stop_complete", {
       stateBefore: "stopped",
@@ -8514,7 +8513,7 @@ async function startNetworkCapture(filters, options = {}) {
   const allowExistingSession = options.allowExistingSession === true;
   if (!session) {
     ensureSessionForMode("network_console", tab);
-  } else if (!allowExistingSession) {
+  } else if (!allowExistingSession || session.mode !== "session") {
     ensureSessionForMode("network_console", tab);
   } else if (session.state === "error") {
     session.state = "capturing";
@@ -10130,7 +10129,9 @@ async function handleMessage(message, sender) {
     }
     case "RECORDING_START":
       try {
-        const lock = checkStartMode("recording");
+        const requestedMode =
+          normalizedMessage.sessionMode === "session" ? "session" : "recording";
+        const lock = checkStartMode(requestedMode);
         if (!lock.allowed) {
           if (lock.reason === "already_running") {
             result = {
@@ -10153,7 +10154,8 @@ async function handleMessage(message, sender) {
         const response = await startRecording(
           message.streamId,
           message.tabId,
-          message.mimeType
+          message.mimeType,
+          { sessionMode: requestedMode }
         );
         if (session) {
           session.state = "capturing";
@@ -10434,6 +10436,14 @@ async function handleMessage(message, sender) {
       }
       break;
     case "EXPORT_EVIDENCE_ZIP_REQUEST":
+      if (session && session.mode === "recording") {
+        result = {
+          ok: false,
+          accepted: false,
+          error: "Session export is unavailable for screen-only recordings.",
+        };
+        break;
+      }
       if (!session && !hasExportableArtifacts()) {
         result = { ok: false, accepted: false, error: "No session to export yet." };
         break;
@@ -10453,6 +10463,14 @@ async function handleMessage(message, sender) {
       }
       break;
     case "DOWNLOAD_EVIDENCE_ZIP":
+      if (session && session.mode === "recording") {
+        result = {
+          ok: false,
+          accepted: false,
+          error: "Session export is unavailable for screen-only recordings.",
+        };
+        break;
+      }
       if (!session && !hasExportableArtifacts()) {
         result = { ok: false, accepted: false, error: "No session to export yet." };
         break;
@@ -10604,7 +10622,6 @@ async function handleMessage(message, sender) {
             isPartial: true,
           });
           await restorePanelAfterRecording(recordingTabId);
-          await closeRecordingPanelWindow();
           setRecordingState("idle", { errorMessage: "Track ended." });
           result = { ok: true, partial: true };
           break;
@@ -10613,7 +10630,6 @@ async function handleMessage(message, sender) {
         console.warn("[RECORDING][TRACK_ENDED_EXPORT_FAILED]", error);
       }
       await restorePanelAfterRecording(recordingTabId);
-      await closeRecordingPanelWindow();
       setRecordingState("idle", { errorMessage: "Track ended." });
       result = { ok: true, partial: false };
       break;
@@ -10636,7 +10652,6 @@ async function handleMessage(message, sender) {
         recordingOverlayState.tabId = null;
         await restorePanelAfterRecording(recordingTabId);
       }
-      await closeRecordingPanelWindow();
       if (recordingController.state !== "idle") {
         setRecordingState("idle", {
           errorMessage: message.error || "Recording failed.",

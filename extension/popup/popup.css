@@ -492,6 +492,11 @@ h2 {
   gap: 8px;
 }
 
+.launcher-status.record-only .launcher-status-grid,
+.launcher-status.record-only .launcher-session-actions {
+  display: none;
+}
+
 .launcher-help-modal {
   position: fixed;
   inset: 0;
