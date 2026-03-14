@@ -132,7 +132,7 @@ const STATUS_COLORS = {
 const CLICK_DEBUG = false;
 
 const APP_VERSION = "v0.1";
-const APP_TAGLINE = "QA evidence recorder";
+const APP_TAGLINE = "Show the duck what happened.";
 const RECORDING_DATAURL_MAX_BYTES = 10 * 1024 * 1024;
 const JSZIP_LOAD_ERROR =
   "Export unavailable: JSZip failed to load. Check popup.html script path.";
@@ -876,7 +876,7 @@ function getExportStageLabel(stage) {
     case "zip_generate_start":
     case "zip_generate":
     case "zip_generate_done":
-      return "Building ZIP";
+      return "Building Evidence";
     case "zip_download":
       return "Downloading";
     default:
@@ -888,7 +888,7 @@ function startExportUI() {
   exportInProgress = true;
   exportProgressPercent = 0;
   if (!exportButtonLabel && buttons.download) {
-    exportButtonLabel = buttons.download.textContent || "Export ZIP";
+    exportButtonLabel = buttons.download.textContent || "Export Evidence";
   }
   if (buttons.download) {
     buttons.download.disabled = true;
@@ -921,7 +921,7 @@ function finishExportUI(message, type = "success") {
   exportProgressPercent = 0;
   if (buttons.download) {
     if (!exportButtonLabel) {
-      exportButtonLabel = buttons.download.textContent || "Export ZIP";
+      exportButtonLabel = buttons.download.textContent || "Export Evidence";
     }
     buttons.download.disabled = false;
     buttons.download.textContent = exportButtonLabel;
@@ -1254,7 +1254,7 @@ async function exportRecordingWebm() {
     if (!downloadUrl) {
       return { ok: false, error: "No recording available to download." };
     }
-    const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
+    const filename = `debugduck-recording-${formatZipTimestamp(new Date())}.webm`;
     try {
       await new Promise((resolve, reject) => {
         chrome.downloads.download({ url: downloadUrl, filename }, (downloadId) => {
@@ -1770,7 +1770,7 @@ function applyStatusMessage(state) {
     if (recordingBlockedReason === "policy") {
       setStatus(
         statusElements.message,
-        "recording_blocked_policy: Recording is unavailable due to browser or enterprise policy. Use Screenshot or Network+Console.",
+        "recording_blocked_policy: Recording is unavailable due to browser or enterprise policy. Use Screenshot or Capture Logs.",
         "error"
       );
       return;
@@ -1964,9 +1964,9 @@ function updateStatusUI(state) {
     sessionState === "recording";
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabelMap = {
-    recording: "Record",
-    network_console: "Logs",
-    screenshot: "Shot",
+    recording: "Record Session",
+    network_console: "Capture Logs",
+    screenshot: "Screenshot",
   };
   const modeLabel = sessionMode ? modeLabelMap[sessionMode] || sessionMode : "-";
   statusElements.mode.textContent = modeLabel;
@@ -2032,7 +2032,7 @@ function updateStatusUI(state) {
     }
   }
   if (sessionMeta) {
-    const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
+    const metaMode = modeLabel === "-" ? "Screenshot" : modeLabel;
     sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
   }
   if (sessionPill) {
@@ -2047,7 +2047,7 @@ function updateStatusUI(state) {
     sessionPill.textContent = pillText;
   }
   if (sessionMeta) {
-    const metaMode = modeLabel === "-" ? "Shot" : modeLabel;
+    const metaMode = modeLabel === "-" ? "Screenshot" : modeLabel;
     sessionMeta.textContent = `${metaMode} • ${requestCount} req • ${errorCount} err`;
   }
   if (sessionPill) {
@@ -2557,7 +2557,7 @@ async function handleNetworkStart() {
       disableNetworkUI();
       setStatus(
         statusElements.message,
-        "Network+Console is blocked by enterprise policy on this browser.",
+        "Capture Logs is blocked by enterprise policy on this browser.",
         "error"
       );
     }
@@ -2895,7 +2895,7 @@ async function handleRecordingDownload() {
       chrome.downloads.download(
         {
           url: res.blobUrl,
-          filename: `qa-session-video-${exportTimestamp}.webm`,
+          filename: `debugduck-recording-${exportTimestamp}.webm`,
           saveAs: false,
         },
         (downloadId) => {
@@ -3650,13 +3650,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function initPopup() {
   const manifest = chrome.runtime.getManifest();
-  const appName = manifest && manifest.name ? manifest.name : "Repro";
+  const appName = manifest && manifest.name ? manifest.name : "DebugDuck";
   const headerText = `${appName} — ${APP_TAGLINE}`;
   if (appTitleEl) {
     appTitleEl.textContent = headerText;
   }
   if (appIconEl) {
-    appIconEl.src = chrome.runtime.getURL("assets/icon32.png");
+    appIconEl.src = chrome.runtime.getURL("icons/debugduck32.png");
     appIconEl.alt = appName;
   }
   document.title = headerText;

@@ -1551,7 +1551,7 @@ async function exportRecordingWebm() {
   }
   recordingObjectUrl = URL.createObjectURL(blob);
   recordingObjectUrlBytes = blob.size;
-  const filename = `repro_recording_${formatZipTimestamp(new Date())}.webm`;
+  const filename = `debugduck-recording-${formatZipTimestamp(new Date())}.webm`;
   if (recordingSessionId) {
     const artifactKey = `recording_final_${recordingSessionId}_${Date.now()}`;
     try {

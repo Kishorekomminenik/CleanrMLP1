@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Repro</title>
-    <link rel="icon" href="../assets/icon32.png" />
+    <title>DebugDuck</title>
+    <link rel="icon" href="../icons/debugduck32.png" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -12,8 +12,8 @@
       <div class="launcher-card">
         <div class="launcher-header">
           <div class="launcher-brand">
-            <div class="launcher-title">Repro</div>
-            <div class="launcher-subtitle">QA capture</div>
+            <div class="launcher-title">DebugDuck</div>
+            <div class="launcher-subtitle">Show the duck what happened.</div>
           </div>
           <div class="launcher-meta">
             <div class="launcher-badge">Local only</div>
@@ -30,16 +30,16 @@
         </div>
         <div class="launcher-actions">
           <button class="launcher-btn primary" type="button" data-action="launcher:snap">
-            Snap
+            Screenshot
           </button>
           <button class="launcher-btn" type="button" data-action="launcher:full">
-            Full
+            Full Page
           </button>
           <button class="launcher-btn" type="button" data-action="launcher:record">
-            Record
+            Record Session
           </button>
           <button class="launcher-btn" type="button" data-action="launcher:logs">
-            Logs
+            Capture Logs
           </button>
         </div>
         <div id="launcher_error" class="launcher-error is-hidden"></div>
@@ -57,7 +57,7 @@
         aria-modal="true"
       >
         <div class="launcher-help-header help-modal-header">
-          <div class="help-title">How Repro Works</div>
+          <div class="help-title">How DebugDuck Works</div>
           <button
             id="launcher_help_close"
             class="launcher-help-close help-close-btn"
@@ -72,8 +72,8 @@
           <div class="help-section">
             <div class="help-heading">Visual Capture</div>
             <ul>
-              <li>Snap — Capture visible screen.</li>
-              <li>Full — Capture entire scrollable page.</li>
+              <li>Screenshot — Capture visible screen.</li>
+              <li>Full Page — Capture entire scrollable page.</li>
               <li>Annotate, copy, or download.</li>
             </ul>
           </div>
@@ -90,14 +90,14 @@
             <ul>
               <li>Capture Network (XHR/Fetch).</li>
               <li>Capture Console errors.</li>
-              <li>Readable JSON export.</li>
+              <li>Readable log export.</li>
             </ul>
           </div>
           <div class="help-section">
             <div class="help-heading">Automation Bridge</div>
             <ul>
               <li>Export API calls as Postman Collection.</li>
-              <li>Structured evidence ZIP.</li>
+              <li>Structured evidence bundle.</li>
               <li>Designed for defect acceleration.</li>
             </ul>
           </div>
@@ -133,7 +133,7 @@
             </button>
           </div>
         </div>
-        <div id="session_meta" class="meta-line">Shot • 0 req • 0 err</div>
+        <div id="session_meta" class="meta-line">Screenshot • 0 req • 0 err</div>
         <p class="warning">
           Captures active tab only. Starts only when you press Start.
         </p>
@@ -147,7 +147,7 @@
           data-action="mode:recording"
           data-mode="recording"
         >
-          Record
+          Record Session
         </button>
         <button
           type="button"
@@ -156,7 +156,7 @@
           data-action="mode:network_console"
           data-mode="network_console"
         >
-          Logs
+          Capture Logs
         </button>
         <button
           type="button"
@@ -165,13 +165,13 @@
           data-action="mode:screenshot"
           data-mode="screenshot"
         >
-          Shot
+          Screenshot
         </button>
       </section>
 
       <div id="capability-messages" class="capability-messages">
         <div id="recording-disabled-msg" class="capability-msg hidden">
-          Recording unavailable due to browser/enterprise policy. Use Shot or Net.
+          Recording unavailable due to browser/enterprise policy. Use Screenshot or Logs.
         </div>
         <div id="network-disabled-msg" class="capability-msg hidden">
           Logs blocked by enterprise policy.
@@ -182,7 +182,7 @@
         <h2>Controls</h2>
         <div class="mode-controls" data-mode="screenshot">
           <p id="screenshotHint" class="hint">
-            Use Snap or Full below to capture.
+            Use Screenshot or Full Page below to capture.
           </p>
         </div>
         <div class="mode-controls" data-mode="recording">
@@ -238,14 +238,14 @@
       <section class="card mode-controls" data-mode="screenshot">
         <div class="action-row" id="quick_actions">
           <button id="btn_take_screenshot" class="secondary" data-action="screenshot:snap">
-            &#128247; Snap
+            &#128247; Screenshot
           </button>
           <button
             id="btn_fullpage_screenshot_mode"
             class="secondary"
             data-action="screenshot:full"
           >
-            &#128470; Full
+            &#128470; Full Page
           </button>
         </div>
         <p id="fullPageHint" class="hint">
@@ -293,7 +293,7 @@
       </section>
 
       <section class="card mode-controls" data-mode="network_console">
-        <h2>Network + Console</h2>
+        <h2>Capture Logs</h2>
           <button
             id="filters_toggle"
             class="section-toggle"
@@ -475,7 +475,7 @@
         </div>
         <div class="button-row" id="download_controls">
           <button id="btn_download_zip" class="primary" data-action="export:zip">
-            Export ZIP
+            Export Evidence
           </button>
           <button id="btn_reset_session" data-action="session:reset">Reset</button>
         </div>
@@ -491,8 +491,10 @@
       <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help_title">
         <div class="help-header">
           <div>
-            <h2 id="help_title">How Repro works</h2>
-            <p class="help-subtitle">Local-only QA evidence capture</p>
+            <h2 id="help_title">How DebugDuck works</h2>
+            <p class="help-subtitle">
+              Capture screenshots, recordings, logs, and bug evidence locally.
+            </p>
           </div>
           <button
             id="help_close"
@@ -509,15 +511,15 @@
           <h3>Choose a mode</h3>
           <div class="help-lines">
             <div class="help-line">
-              <span class="help-mode">Shot</span>
-              <span class="help-desc">Capture screenshots (Snap / Full)</span>
+              <span class="help-mode">Screenshot</span>
+              <span class="help-desc">Capture screenshots (visible or full page)</span>
             </div>
             <div class="help-line">
-              <span class="help-mode">Record</span>
-              <span class="help-desc">Capture video with logs</span>
+              <span class="help-mode">Record Session</span>
+              <span class="help-desc">Capture video with optional logs</span>
             </div>
             <div class="help-line">
-              <span class="help-mode">Logs</span>
+              <span class="help-mode">Capture Logs</span>
               <span class="help-desc">Capture network and console only</span>
             </div>
           </div>
@@ -534,10 +536,10 @@
         <div class="help-section">
           <h3>Export rules</h3>
           <ul>
-            <li>ZIP is available after Stop for recordings and screenshots</li>
+            <li>Export Evidence is available after Stop for recordings and screenshots</li>
             <li>Completed log parts can be downloaded while capture continues</li>
             <li>WebM = video only</li>
-            <li>ZIP = logs, screenshots (+ video if recorded)</li>
+            <li>Export Evidence includes logs, screenshots (+ video if recorded)</li>
           </ul>
         </div>
 

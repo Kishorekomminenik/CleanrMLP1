@@ -444,7 +444,7 @@ downloadBtn.addEventListener("click", async () => {
     chrome.downloads.download(
       {
         url: res.blobUrl,
-        filename: `qa-session-video-${exportTimestamp}.webm`,
+        filename: `debugduck-recording-${exportTimestamp}.webm`,
         saveAs: false,
       },
       () => {

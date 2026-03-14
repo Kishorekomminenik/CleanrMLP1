@@ -18,7 +18,7 @@
     brand.className = "repro-panel-brand";
     const title = document.createElement("div");
     title.className = "repro-panel-title";
-    title.textContent = "Repro";
+    title.textContent = "DebugDuck";
     const subtitle = document.createElement("div");
     subtitle.className = "repro-panel-subtitle";
     subtitle.textContent = panel === "recording" ? "Recording" : "Logs";
@@ -54,7 +54,8 @@
         ? "popup/recording_panel.html?embedded=1"
         : "popup/logs_panel.html?embedded=1";
     frame.src = chrome.runtime.getURL(src);
-    frame.title = panel === "recording" ? "Repro Recording Panel" : "Repro Logs Panel";
+    frame.title =
+      panel === "recording" ? "DebugDuck Recorder" : "DebugDuck Logs";
     frame.setAttribute("aria-label", frame.title);
 
     body.appendChild(frame);

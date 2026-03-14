@@ -26,12 +26,12 @@ function clearError() {
 }
 
 function parseTimestampFromName(name) {
-  const match = name.match(/qa-session-log[-_](\d{8})[-_](\d{6})/i);
+  const match = name.match(/(qa-session-log|debugduck-session-log)[-_](\d{8})[-_](\d{6})/i);
   if (!match) {
     return null;
   }
-  const rawDate = match[1];
-  const rawTime = match[2];
+  const rawDate = match[2];
+  const rawTime = match[3];
   const year = rawDate.slice(0, 4);
   const month = rawDate.slice(4, 6);
   const day = rawDate.slice(6, 8);
@@ -44,7 +44,7 @@ function parseTimestampFromName(name) {
 function selectSessionLogFile(zipFiles) {
   const names = Object.keys(zipFiles);
   const timestamped = names.filter((name) =>
-    /qa-session-log[-_]\d{8}[-_]\d{6}\.json$/i.test(name)
+    /(qa-session-log|debugduck-session-log)[-_]\d{8}[-_]\d{6}\.json$/i.test(name)
   );
   if (timestamped.length) {
     const sorted = timestamped
@@ -52,7 +52,9 @@ function selectSessionLogFile(zipFiles) {
       .sort((a, b) => b.ts - a.ts);
     return sorted[0].name;
   }
-  const generic = names.filter((name) => /qa-session-log\.json$/i.test(name));
+  const generic = names.filter((name) =>
+    /(qa-session-log|debugduck-session-log)\.json$/i.test(name)
+  );
   if (generic.length) {
     return generic[0];
   }
@@ -67,7 +69,8 @@ function listScreenshotFiles(zipFiles) {
   const names = Object.keys(zipFiles);
   return names.filter(
     (name) =>
-      /^screenshots\/.+\.png$/i.test(name) || /qa-screenshot-.*\.png$/i.test(name)
+      /^screenshots\/.+\.png$/i.test(name) ||
+      /(qa-screenshot|debugduck-screenshot)-.*\.png$/i.test(name)
   );
 }
 
@@ -202,7 +205,10 @@ async function loadZip(file) {
   state.sessionLogName = selectSessionLogFile(zip.files);
   state.summaryName = findFile(zip.files, /qa-summary.*\.txt$/i);
   state.environmentName = findFile(zip.files, /environment\.json$/i);
-  state.videoName = findFile(zip.files, /qa-session-video-.*\.webm$/i);
+  state.videoName = findFile(
+    zip.files,
+    /(qa-session-video|debugduck-recording)-.*\.webm$/i
+  );
   state.screenshotNames = listScreenshotFiles(zip.files);
 
   if (state.sessionLogName) {
@@ -225,7 +231,7 @@ async function buildPackZip() {
   ).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(
     now.getMinutes()
   ).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
-  const root = `repro-watch-pack-${stamp}`;
+  const root = `debugduck-watch-pack-${stamp}`;
 
   const templateFiles = [
     "index.html",
@@ -299,7 +305,7 @@ async function buildPackZip() {
 
   const zipBlob = await out.generateAsync({ type: "blob", compression: "STORE" });
   const url = URL.createObjectURL(zipBlob);
-  const filename = `repro-watch-pack-${stamp}.zip`;
+  const filename = `debugduck-watch-pack-${stamp}.zip`;
   try {
     const a = document.createElement("a");
     a.href = url;

@@ -1,20 +1,20 @@
-# Repro Watch Lite
+# DebugDuck Watch Lite
 
-Standalone local viewer for Repro evidence exports. No uploads. No backend.
+Standalone local viewer for DebugDuck evidence exports. No uploads. No backend.
 
 ## How to use
 1. Open `watch-lite/index.html` in Chrome or Edge.
-2. Click **Open Evidence ZIP** and select a Repro export zip.
+2. Click **Open Evidence ZIP** and select a DebugDuck export zip.
 
 ## What it expects
 Required files inside the ZIP:
-- `qa-session-log-*.json`
+- `debugduck-session-log-*.json` (or legacy `qa-session-log-*.json`)
 - `qa-summary-*.txt`
 - `environment.json`
 
 Optional files:
-- `qa-session-video-*.webm`
-- `screenshots/qa-screenshot-*.png`
+- `debugduck-recording-*.webm` (or legacy `qa-session-video-*.webm`)
+- `screenshots/debugduck-screenshot-*.png` (or legacy `qa-screenshot-*.png`)
 - `network_logs.json`, `console_logs.json`
 - `export_metadata.json`
 
@@ -23,7 +23,7 @@ Recent exports add additive metadata for deterministic playback syncing. Fields 
 present but null when unavailable.
 
 Highlights:
-- `qa-session-log.json`: `schema_version`, `session_id`, `startedAt_ms`,
+- `debugduck-session-log.json` (or `qa-session-log.json`): `schema_version`, `session_id`, `startedAt_ms`,
   `endedAt_ms`, `durationMs`, `timezone_offset_minutes`, `timezone_iana`,
   `extension_version`, `monotonic`, `monotonic_available`,
   `video_time_zero_epoch_ms`, `video_duration_ms`, `video_codec`, `video_fps`.
@@ -36,5 +36,5 @@ Highlights:
 
 ## Notes
 - All data stays on your machine.
-- If the ZIP is missing `qa-session-log-*.json`, a friendly error is shown.
+- If the ZIP is missing a session log file, a friendly error is shown.
 - This repo-mode viewer loads JSZip from `../extension/lib`. For standalone sharing, bundle JSZip into `watch-lite/vendor`.

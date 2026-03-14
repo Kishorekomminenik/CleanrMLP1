@@ -113,12 +113,12 @@ function clearLoadedInfo() {
 }
 
 function parseTimestampFromName(name) {
-  const match = name.match(/qa-session-log[-_](\d{8})[-_](\d{6})/i);
+  const match = name.match(/(qa-session-log|debugduck-session-log)[-_](\d{8})[-_](\d{6})/i);
   if (!match) {
     return null;
   }
-  const rawDate = match[1];
-  const rawTime = match[2];
+  const rawDate = match[2];
+  const rawTime = match[3];
   const year = rawDate.slice(0, 4);
   const month = rawDate.slice(4, 6);
   const day = rawDate.slice(6, 8);
@@ -144,7 +144,7 @@ function pickNewestByZipDate(names, zipFiles) {
 function selectSessionLogFile(zipFiles) {
   const names = Object.keys(zipFiles);
   const timestamped = names.filter((name) =>
-    /qa-session-log[-_]\d{8}[-_]\d{6}\.json$/i.test(name)
+    /(qa-session-log|debugduck-session-log)[-_]\d{8}[-_]\d{6}\.json$/i.test(name)
   );
   if (timestamped.length) {
     const sorted = timestamped
@@ -152,7 +152,9 @@ function selectSessionLogFile(zipFiles) {
       .sort((a, b) => b.ts - a.ts);
     return sorted[0].name;
   }
-  const generic = names.filter((name) => /qa-session-log\.json$/i.test(name));
+  const generic = names.filter((name) =>
+    /(qa-session-log|debugduck-session-log)\.json$/i.test(name)
+  );
   if (generic.length) {
     return pickNewestByZipDate(generic, zipFiles) || generic[0];
   }
@@ -179,7 +181,8 @@ function listScreenshotFiles(zipFiles) {
   const names = Object.keys(zipFiles);
   return names.filter(
     (name) =>
-      /^screenshots\/.+\.png$/i.test(name) || /qa-screenshot-.*\.png$/i.test(name)
+      /^screenshots\/.+\.png$/i.test(name) ||
+      /(qa-screenshot|debugduck-screenshot)-.*\.png$/i.test(name)
   );
 }
 
@@ -461,7 +464,7 @@ async function loadScreenshotBlobs(zip, screenshotFiles, referencedNames = []) {
 
 async function loadVideo(zip) {
   const candidates = Object.keys(zip.files).filter((name) =>
-    /qa-session-video-.*\.webm$/i.test(name)
+    /(qa-session-video|debugduck-recording)-.*\.webm$/i.test(name)
   );
   if (!candidates.length) {
     videoPanel.classList.add("hidden");
@@ -723,7 +726,7 @@ async function loadZip(file) {
   try {
     zip = await JSZip.loadAsync(file);
   } catch (error) {
-    showError("Unable to read ZIP file. Please select a valid Repro export.");
+    showError("Unable to read ZIP file. Please select a valid DebugDuck export.");
     return;
   }
   state.zip = zip;
@@ -746,13 +749,13 @@ async function loadZip(file) {
     try {
       sessionLogRaw = await zip.file(sessionLogName).async("string");
     } catch (error) {
-      showError("Unable to read qa-session-log JSON from ZIP.");
+      showError("Unable to read session log JSON from ZIP.");
       return;
     }
     try {
       state.sessionLog = JSON.parse(sessionLogRaw);
     } catch (error) {
-      showError("Invalid qa-session-log JSON. Re-export the evidence ZIP.");
+      showError("Invalid session log JSON. Re-export the evidence ZIP.");
       return;
     }
 
@@ -772,7 +775,7 @@ async function loadZip(file) {
         .join(", ");
       const foundText = found ? `Found JSON: ${found}` : "No JSON files found.";
       showError(
-        `This ZIP does not look like a Repro export (missing qa-session-log*.json). ${foundText}`
+        `This ZIP does not look like a DebugDuck export (missing session log). ${foundText}`
       );
       return;
     }
@@ -850,7 +853,7 @@ async function loadZip(file) {
 
   const warnings = [];
   if (state.partialMode) {
-    warnings.push("Loaded partial logs (no qa-session-log). Some details may be missing.");
+    warnings.push("Loaded partial logs (no session log). Some details may be missing.");
   }
   if (state.missingScreenshots.length) {
     warnings.push("Some screenshots referenced in the log are missing from this ZIP.");
@@ -898,7 +901,7 @@ function resetState() {
     videoSyncNote.classList.add("hidden");
   }
   emptyState.textContent =
-    "Open an evidence ZIP exported from Repro to replay a session locally.";
+    "Open an evidence ZIP exported from DebugDuck to replay a session locally.";
   clearError();
   clearLoadedInfo();
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert Repro network NDJSON to a Postman collection.
+Convert DebugDuck network NDJSON to a Postman collection.
 
 Usage:
   python ndjson_to_postman.py input.ndjson output.postman_collection.json
@@ -402,10 +402,10 @@ def build_collection(entries: list[dict[str, Any]], source_name: str) -> dict[st
 
     return {
         "info": {
-            "name": f"Repro Import - {source_name}",
+            "name": f"DebugDuck Import - {source_name}",
             "_postman_id": f"repro-{source_name}",
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-            "description": "Generated from Repro network NDJSON export.",
+            "description": "Generated from DebugDuck network NDJSON export.",
         },
         "item": folders,
         "variable": [],

@@ -1,12 +1,12 @@
 ---
-title: Repro V1 Architecture
+title: DebugDuck V1 Architecture
 version: v1
 status: frozen-core
 ---
 
-# Repro V1 Architecture
+# DebugDuck V1 Architecture
 
-Repro is a local-only MV3 Chrome extension for QA capture and automation handoff.
+DebugDuck is a local-only MV3 Chrome extension for QA capture and automation handoff.
 It supports Snap and Full-page screenshots, detached-window tab recording,
 network/console logs, structured evidence export, and Postman collection export.
 
@@ -16,7 +16,7 @@ This document contains multiple diagrams for engineering discussion and onboardi
 
 ```mermaid
 graph TD
-  User[User] --> Popup[Repro Popup UI]
+  User[User] --> Popup[DebugDuck Popup UI]
   User --> RecWin[Detached Recording Window]
   User --> Viewer[Screenshot Viewer/Editor]
   User --> LogsUI[Logs Control UI]
@@ -193,10 +193,10 @@ flowchart TD
   ConsoleEntries --> IDB
 
   IDB --> ExportZIP[Evidence ZIP]
-  ExportZIP --> LogsNDJSON[logs/network.ndjson]
-  ExportZIP --> LogsJSON[logs/network.json]
-  ExportZIP --> ConsoleNDJSON[logs/console.ndjson]
-  ExportZIP --> ConsoleJSON[logs/console.json]
+  ExportZIP --> LogsNDJSON[logs/debugduck-logs-network.ndjson]
+  ExportZIP --> LogsJSON[logs/debugduck-logs-network.json]
+  ExportZIP --> ConsoleNDJSON[logs/debugduck-logs-console.ndjson]
+  ExportZIP --> ConsoleJSON[logs/debugduck-logs-console.json]
   ExportZIP --> Summary[summary/*.json]
   ExportZIP --> Postman[automation/postman_collection.json]
 ```
@@ -209,10 +209,10 @@ graph TD
   ZIP --> Meta[meta/session.json]
   ZIP --> Env[meta/environment.json (if present)]
   ZIP --> ExportMeta[meta/export_metadata.json (if present)]
-  ZIP --> LogsND[logs/network.ndjson]
-  ZIP --> LogsJSON[logs/network.json]
-  ZIP --> ConsoleND[logs/console.ndjson]
-  ZIP --> ConsoleJSON[logs/console.json]
+  ZIP --> LogsND[logs/debugduck-logs-network.ndjson]
+  ZIP --> LogsJSON[logs/debugduck-logs-network.json]
+  ZIP --> ConsoleND[logs/debugduck-logs-console.ndjson]
+  ZIP --> ConsoleJSON[logs/debugduck-logs-console.json]
   ZIP --> SummaryErrors[summary/errors.json]
   ZIP --> SummaryFailed[summary/failed_requests.json]
   ZIP --> SummarySession[summary/session_summary.json]

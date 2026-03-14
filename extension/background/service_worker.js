@@ -2743,11 +2743,11 @@ function buildPostmanCollection(entries, sourceName) {
     .filter(Boolean);
   return {
     info: {
-      name: `Repro Import - ${sourceName}`,
-      _postman_id: `repro-${sourceName}`,
+      name: `DebugDuck Import - ${sourceName}`,
+      _postman_id: `debugduck-${sourceName}`,
       schema:
         "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-      description: "Generated from Repro network NDJSON export.",
+      description: "Generated from DebugDuck network NDJSON export.",
     },
     item: folders,
     variable: [],
@@ -4433,8 +4433,8 @@ async function buildEvidenceExportData(context) {
           ? entry.t_ms
           : computeSessionOffsetMs(timestampIso),
       fileName: isFullPage
-        ? `qa-screenshot-fullpage-${exportTimestamp}.png`
-        : `qa-screenshot-${String(displayIndex).padStart(
+        ? `debugduck-screenshot-fullpage-${exportTimestamp}.png`
+        : `debugduck-screenshot-${String(displayIndex).padStart(
             3,
             "0"
           )}-${exportTimestamp}.png`,
@@ -4495,7 +4495,7 @@ async function buildEvidenceExportData(context) {
       videoReference = {
         blobUrl: state.recording.videoBlobUrl,
         mime: state.recording.videoMime,
-        fileName: `qa-session-video-${exportTimestamp}.webm`,
+        fileName: `debugduck-recording-${exportTimestamp}.webm`,
         byteLength: state.recording.videoByteLength,
       };
     }
@@ -5027,7 +5027,7 @@ async function runEvidenceZipExport(context) {
           ? data.partInfo.consoleCount
           : null;
       logItems.push({
-        path: "logs/network.ndjson",
+        path: "logs/debugduck-logs-network.ndjson",
         getData: async () => {
           const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
             {
@@ -5069,7 +5069,7 @@ async function runEvidenceZipExport(context) {
           options: { date: zipDate },
         });
       logItems.push({
-        path: "logs/console.ndjson",
+        path: "logs/debugduck-logs-console.ndjson",
         getData: async () => {
           const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
             {
@@ -5124,7 +5124,7 @@ async function runEvidenceZipExport(context) {
         );
       }
       logItems.push({
-        path: "logs/network.json",
+        path: "logs/debugduck-logs-network.json",
         getData: async () => {
           const entries = await loadLimitedEntriesFromIdb({
             storeName: "network_entries",
@@ -5200,7 +5200,7 @@ async function runEvidenceZipExport(context) {
         }
       }
       logItems.push({
-        path: "logs/console.json",
+        path: "logs/debugduck-logs-console.json",
         getData: async () => {
           const entries = await loadLimitedEntriesFromIdb({
             storeName: "console_entries",
@@ -5260,7 +5260,7 @@ async function runEvidenceZipExport(context) {
       const consoleTotal =
         data.session && data.session.counts ? data.session.counts.console_entries : null;
       logItems.push({
-        path: "logs/network.ndjson",
+        path: "logs/debugduck-logs-network.ndjson",
         getData: async () => {
           if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
             const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
@@ -5310,7 +5310,7 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       });
       logItems.push({
-        path: "logs/network.json",
+        path: "logs/debugduck-logs-network.json",
         getData: async () => {
           let entries = [];
           if (exportSessionId && isIdbAvailable()) {
@@ -5398,7 +5398,7 @@ async function runEvidenceZipExport(context) {
         }
       }
       logItems.push({
-        path: "logs/console.ndjson",
+        path: "logs/debugduck-logs-console.ndjson",
         getData: async () => {
           if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
             const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
@@ -5448,7 +5448,7 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       });
       logItems.push({
-        path: "logs/console.json",
+        path: "logs/debugduck-logs-console.json",
         getData: async () => {
           const entries =
             data.consoleLogs && Array.isArray(data.consoleLogs.entries)
@@ -5521,7 +5521,7 @@ async function runEvidenceZipExport(context) {
     }
     if (EXTENDED_EXPORT && !usePartExport && data.qaSessionLog) {
       summaryItems.push({
-        path: "qa/qa-session-log.json",
+        path: "debugduck/debugduck-session-log.json",
         getData: () =>
           toJsonWithSize(data.qaSessionLog || {}, "qa_session_log"),
         options: { date: zipDate },
@@ -5714,7 +5714,7 @@ async function runEvidenceZipExport(context) {
         return;
       }
       const name =
-        shot.fileName || `qa-screenshot-${formatZipTimestamp(new Date())}.png`;
+        shot.fileName || `debugduck-screenshot-${formatZipTimestamp(new Date())}.png`;
       screenshotItems.push({
         path: `screenshots/${name}`,
         getData: () => dataUrlToBlob(shot.dataUrl),
@@ -5742,7 +5742,7 @@ async function runEvidenceZipExport(context) {
       const exportTimestamp =
         data.exportTimestamp || formatExportTimestamp(new Date());
       let recordingBlob = null;
-      let recordingFileName = `qa-session-video-${exportTimestamp}.webm`;
+      let recordingFileName = `debugduck-recording-${exportTimestamp}.webm`;
       if (data.video && data.video.blobUrl) {
         try {
           const response = await fetch(data.video.blobUrl);
@@ -5817,7 +5817,7 @@ async function runEvidenceZipExport(context) {
     logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });
     reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 
-    const filename = `evidence_${formatZipTimestamp(new Date())}.zip`;
+    const filename = `debugduck-session-${formatZipTimestamp(new Date())}.zip`;
     const stored = await storeExportArtifact(zipArrayBuffer, {
       filename,
       mimeType: "application/zip",
@@ -6168,7 +6168,7 @@ async function captureScreenshot() {
       const tMs = computeSessionOffsetMs(timestampIso);
       const index = session.screenshots.length + 1;
       const blob = dataUrlToBlob(dataUrl);
-      const fileName = `qa-screenshot-${String(index).padStart(3, "0")}.png`;
+      const fileName = `debugduck-screenshot-${String(index).padStart(3, "0")}.png`;
       session.screenshots.push({
         index,
         timestampIso,
