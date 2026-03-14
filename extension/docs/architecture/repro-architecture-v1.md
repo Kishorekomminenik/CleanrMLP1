@@ -187,7 +187,7 @@ flowchart TD
   Chunks --> IDB
   IDB --> FinalWebM[Final WebM]
 
-  Logs[Network + Console] --> NetEntries[Network Entries]
+  Logs[Capture Logs] --> NetEntries[Network Entries]
   Logs --> ConsoleEntries[Console Entries]
   NetEntries --> IDB
   ConsoleEntries --> IDB

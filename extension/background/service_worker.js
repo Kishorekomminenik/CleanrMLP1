@@ -251,7 +251,7 @@ let activeFilters = { ...FILTER_DEFAULTS };
 const MODE_LABELS = {
   screenshot: "Screenshot",
   recording: "Recording",
-  network_console: "Network + Console",
+  network_console: "Capture Logs",
 };
 
 let session = null;
@@ -7952,11 +7952,11 @@ async function startNetworkCapture(filters) {
       error: message,
     });
     setStatusMessage(
-      "Network+Console blocked by enterprise policy.",
+      "Capture Logs blocked by enterprise policy.",
       "error"
     );
     const attachError = new Error(
-      "Network+Console blocked by enterprise policy."
+      "Capture Logs blocked by enterprise policy."
     );
     attachError.code = "debugger_blocked";
     throw attachError;

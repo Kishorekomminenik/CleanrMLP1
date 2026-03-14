@@ -1,4 +1,4 @@
-/* Repro floating panel overlays (content script) */
+/* DebugDuck floating panel overlays (content script) */
 :root {
   --repro-bg: #f8fafc;
   --repro-card: rgba(255, 255, 255, 0.96);
