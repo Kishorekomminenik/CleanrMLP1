@@ -22,10 +22,13 @@ const prevIncidentBtn = document.getElementById("prevIncidentBtn");
 const nextIncidentBtn = document.getElementById("nextIncidentBtn");
 const followPlayheadToggle = document.getElementById("followPlayheadToggle");
 const timeWindowSelect = document.getElementById("timeWindowSelect");
+const timeBadge = document.getElementById("timeBadge");
+const timelineHover = document.getElementById("timelineHover");
 const contextIncident = document.getElementById("contextIncident");
 const contextScreenshot = document.getElementById("contextScreenshot");
 const contextNetworkCount = document.getElementById("contextNetworkCount");
 const contextConsoleCount = document.getElementById("contextConsoleCount");
+const contextWindow = document.getElementById("contextWindow");
 const eventList = document.getElementById("eventList");
 const detailsBody = document.getElementById("detailsBody");
 const videoPanel = document.getElementById("videoPanel");
@@ -71,6 +74,9 @@ const consoleLevelChips = Array.from(
 const consoleModeChips = Array.from(
   document.querySelectorAll("[data-console-mode]")
 );
+const inspectorPanel = document.getElementById("inspectorPanel");
+const inspectorTitle = document.getElementById("inspectorTitle");
+const inspectorBody = document.getElementById("inspectorBody");
 
 const state = {
   zip: null,
@@ -107,10 +113,24 @@ const state = {
     selectedScreenshotId: null,
     activePanel: "timeline",
     lastSeekSource: null,
+    lastCommittedTimeMs: 0,
+    pendingSeekTimeMs: null,
+    nearestIncidentId: null,
+    nearestScreenshotId: null,
+    hasRecording: false,
+    nearestMarkerId: null,
+  },
+  hover: {
+    hoverTimeMs: null,
+    hoverMarkerId: null,
   },
   panelModes: {
     network: "near",
     console: "near",
+  },
+  inspector: {
+    type: null,
+    id: null,
   },
   incidents: [],
   incidentSourcePanel: null,
@@ -272,12 +292,15 @@ function parseTimestampFromName(name) {
   return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).getTime();
 }
 
-function clampToDuration(tms) {
-  const duration = state.playhead.durationMs || 0;
-  if (!Number.isFinite(duration) || duration <= 0) {
-    return Math.max(0, tms);
+function clampTimeMs(targetTimeMs, durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return Math.max(0, targetTimeMs);
   }
-  return Math.min(Math.max(0, tms), duration);
+  return Math.min(Math.max(0, targetTimeMs), durationMs);
+}
+
+function clampToDuration(tms) {
+  return clampTimeMs(tms, state.playhead.durationMs || 0);
 }
 
 function setPlayState(isPlaying) {
@@ -309,6 +332,9 @@ function updatePlayheadDisplay() {
   if (durationLabel) {
     durationLabel.textContent = `Duration: ${formatTime(duration)}`;
   }
+  if (timeBadge) {
+    timeBadge.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+  }
   if (videoTime) {
     videoTime.textContent = formatTime(current);
   }
@@ -335,6 +361,27 @@ function getEntriesNearTime(entries, tms, windowMs) {
           : null;
     return typeof ts === "number" && ts >= min && ts <= max;
   });
+}
+
+function filterEntriesNearTime(entries, tms, windowMs, getTime) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [];
+  }
+  const min = tms - windowMs;
+  const max = tms + windowMs;
+  return entries.filter((entry) => {
+    const ts = getTime(entry);
+    return typeof ts === "number" && ts >= min && ts <= max;
+  });
+}
+
+function getNetworkTimestampMs(entry) {
+  return (
+    entry.endTimestampMs ||
+    entry.timestampMs ||
+    entry.timestamp_ms ||
+    0
+  );
 }
 
 function findNearestIncident(incidents, tms) {
@@ -380,47 +427,183 @@ function findNearestScreenshot(tms) {
   return nearest;
 }
 
+function findNearestTimelineEvent(currentTimeMs, events) {
+  if (!Array.isArray(events) || !events.length) {
+    return null;
+  }
+  let nearest = events[0];
+  let best = Math.abs((nearest.t_ms || 0) - currentTimeMs);
+  events.forEach((ev) => {
+    const delta = Math.abs((ev.t_ms || 0) - currentTimeMs);
+    if (delta < best) {
+      best = delta;
+      nearest = ev;
+    }
+  });
+  return nearest;
+}
+
+function getImportantMarkers() {
+  const markers = [];
+  const incidents = getFilteredIncidents();
+  incidents.forEach((inc) => {
+    markers.push({
+      id: inc.id,
+      timestampMs: inc.timestampMs || 0,
+      type: "incident",
+      priority: 1,
+      label: buildIncidentTitle(inc),
+    });
+  });
+  const screenshots = state.manifest?.artifacts?.screenshots?.items || [];
+  screenshots.forEach((shot) => {
+    markers.push({
+      id: shot.id,
+      timestampMs: shot.timestampMs || 0,
+      type: "screenshot",
+      priority: 2,
+      label: shot.label || "Screenshot",
+    });
+  });
+  state.events.forEach((ev) => {
+    const rawType = ev.raw?.type || "";
+    if (rawType.startsWith("network") && ev.isError) {
+      markers.push({
+        id: ev.id,
+        timestampMs: ev.t_ms || 0,
+        type: "network",
+        priority: 3,
+        label: ev.summary,
+      });
+    }
+    if (rawType.startsWith("console") && ev.isError) {
+      markers.push({
+        id: ev.id,
+        timestampMs: ev.t_ms || 0,
+        type: "console",
+        priority: 4,
+        label: ev.summary,
+      });
+    }
+  });
+  return markers;
+}
+
+function findNearestMarker(currentTimeMs, markers) {
+  if (!markers.length) {
+    return null;
+  }
+  let nearest = markers[0];
+  let best = Math.abs((nearest.timestampMs || 0) - currentTimeMs);
+  markers.forEach((marker) => {
+    const delta = Math.abs((marker.timestampMs || 0) - currentTimeMs);
+    if (delta < best || (delta === best && marker.priority < nearest.priority)) {
+      best = delta;
+      nearest = marker;
+    }
+  });
+  return nearest;
+}
+
+function getVisibleNetworkEvents() {
+  const entries = state.networkEntries || [];
+  const base =
+    state.panelModes.network === "near"
+      ? filterEntriesNearTime(
+          entries,
+          state.playhead.currentTimeMs,
+          state.playhead.timeWindowMs,
+          getNetworkTimestampMs
+        )
+      : entries;
+  return base.filter((entry) => {
+    if (state.filters.errorOnly && !isNetworkError(entry)) {
+      return false;
+    }
+    const bucket = classifyNetworkStatus(entry);
+    if (state.filters.networkStatusBucket === "errors") {
+      return isNetworkError(entry);
+    }
+    if (state.filters.networkStatusBucket === "4xx") {
+      return bucket === "4xx";
+    }
+    if (state.filters.networkStatusBucket === "5xx") {
+      return bucket === "5xx";
+    }
+    return true;
+  });
+}
+
+function getVisibleConsoleEvents() {
+  const entries = state.consoleEntries || [];
+  const base =
+    state.panelModes.console === "near"
+      ? getEntriesNearTime(
+          entries,
+          state.playhead.currentTimeMs,
+          state.playhead.timeWindowMs
+        )
+      : entries;
+  const allowedLevels = getEffectiveConsoleLevels();
+  return base.filter((entry) =>
+    allowedLevels.includes(normalizeConsoleLevel(entry.level))
+  );
+}
+
+function getCurrentMomentContext() {
+  return {
+    nearestIncident: findNearestIncident(getFilteredIncidents(), state.playhead.currentTimeMs),
+    nearestScreenshot: findNearestScreenshot(state.playhead.currentTimeMs),
+    nearbyNetworkCount: state.loadedArtifacts.network
+      ? filterEntriesNearTime(
+          state.networkEntries,
+          state.playhead.currentTimeMs,
+          state.playhead.timeWindowMs,
+          getNetworkTimestampMs
+        ).length
+      : 0,
+    nearbyConsoleCount: state.loadedArtifacts.console
+      ? getEntriesNearTime(
+          state.consoleEntries,
+          state.playhead.currentTimeMs,
+          state.playhead.timeWindowMs
+        ).length
+      : 0,
+  };
+}
+
 function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
   const tms = state.playhead.currentTimeMs || 0;
-  const incidents = getFilteredIncidents();
-  const nearestIncident = findNearestIncident(incidents, tms);
+  const moment = getCurrentMomentContext();
+  const nearestIncident = moment.nearestIncident;
+  state.playhead.nearestIncidentId = nearestIncident ? nearestIncident.id : null;
   contextIncident.textContent = nearestIncident
     ? `${buildIncidentTitle(nearestIncident)} (${formatTimeWithMs(
         nearestIncident.timestampMs || 0
       )})`
     : "None";
-  const nearestShot = findNearestScreenshot(tms);
+  const nearestShot = moment.nearestScreenshot;
+  state.playhead.nearestScreenshotId = nearestShot ? nearestShot.id : null;
   contextScreenshot.textContent = nearestShot
     ? `${nearestShot.label || nearestShot.kind || "Screenshot"} (${formatTimeWithMs(
         nearestShot.timestampMs || 0
       )})`
     : "None";
   if (contextNetworkCount) {
-    if (state.loadedArtifacts.network) {
-      const near = getEntriesNearTime(
-        state.networkEntries,
-        tms,
-        state.playhead.timeWindowMs
-      );
-      contextNetworkCount.textContent = String(near.length);
-    } else {
-      contextNetworkCount.textContent = "-";
-    }
+    contextNetworkCount.textContent = state.loadedArtifacts.network
+      ? String(moment.nearbyNetworkCount)
+      : "-";
   }
   if (contextConsoleCount) {
-    if (state.loadedArtifacts.console) {
-      const near = getEntriesNearTime(
-        state.consoleEntries,
-        tms,
-        state.playhead.timeWindowMs
-      );
-      contextConsoleCount.textContent = String(near.length);
-    } else {
-      contextConsoleCount.textContent = "-";
-    }
+    contextConsoleCount.textContent = state.loadedArtifacts.console
+      ? String(moment.nearbyConsoleCount)
+      : "-";
+  }
+  if (contextWindow) {
+    contextWindow.textContent = `±${Math.round(state.playhead.timeWindowMs / 1000)}s`;
   }
 }
 
@@ -431,6 +614,30 @@ function updateTimeAwarePanels() {
   if (state.loadedArtifacts.console && state.panelModes.console === "near") {
     renderConsolePanel();
   }
+}
+
+function seekTo(targetTimeMs, source, options = {}) {
+  let next = clampToDuration(targetTimeMs);
+  const markers = getImportantMarkers();
+  const snapEnabled = Boolean(options.snap);
+  if (snapEnabled) {
+    const nearest = findNearestMarker(next, markers);
+    const thresholdMs = typeof options.snapThresholdMs === "number" ? options.snapThresholdMs : 500;
+    if (nearest && Math.abs((nearest.timestampMs || 0) - next) <= thresholdMs) {
+      next = nearest.timestampMs || 0;
+      state.playhead.nearestMarkerId = nearest.id;
+    } else {
+      state.playhead.nearestMarkerId = null;
+    }
+  }
+  if (options.updateNearest !== false) {
+    const nearest = findNearestMarker(next, markers);
+    state.playhead.nearestMarkerId = nearest ? nearest.id : null;
+  }
+  applyPlayhead(next, {
+    ...options,
+    source,
+  });
 }
 
 function applyPlayhead(tms, options = {}) {
@@ -445,24 +652,33 @@ function applyPlayhead(tms, options = {}) {
   if (typeof options.isSeeking === "boolean") {
     state.playhead.isSeeking = options.isSeeking;
   }
-  if ("selectedEventId" in options) {
-    state.playhead.selectedEventId = options.selectedEventId;
+  if (state.playhead.isSeeking) {
+    state.playhead.pendingSeekTimeMs = next;
+  } else {
+    state.playhead.pendingSeekTimeMs = null;
   }
-  if ("selectedIncidentId" in options) {
-    state.playhead.selectedIncidentId = options.selectedIncidentId;
-  }
-  if ("selectedScreenshotId" in options) {
-    state.playhead.selectedScreenshotId = options.selectedScreenshotId;
+  if (!options.suppressSelectionUpdate) {
+    if ("selectedEventId" in options) {
+      state.playhead.selectedEventId = options.selectedEventId;
+    }
+    if ("selectedIncidentId" in options) {
+      state.playhead.selectedIncidentId = options.selectedIncidentId;
+    }
+    if ("selectedScreenshotId" in options) {
+      state.playhead.selectedScreenshotId = options.selectedScreenshotId;
+    }
   }
   if (options.activePanel) {
     setActivePanel(options.activePanel);
   }
+  state.playhead.lastCommittedTimeMs = next;
   updatePlayheadDisplay();
   if (options.updateContext !== false) {
     updateCurrentTimeContext();
   }
   if (
     options.syncVideo !== false &&
+    !options.suppressVideoUpdate &&
     state.videoSyncAvailable &&
     options.source !== "video"
   ) {
@@ -618,6 +834,7 @@ async function initFromManifest(manifest, options = {}) {
   state.videoSyncAvailable =
     Boolean(manifest?.artifacts?.recording?.present) &&
     state.playhead.durationMs > 0;
+  state.playhead.hasRecording = Boolean(manifest?.artifacts?.recording?.present);
 
   applyManifestAvailability(manifest);
   renderSummaryFromManifest(manifest);
@@ -629,6 +846,7 @@ async function initFromManifest(manifest, options = {}) {
   applySummaryInteractions();
   updatePlayheadDisplay();
   updateCurrentTimeContext();
+  renderInspector();
 
   const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
   if (options.baseUrl) {
@@ -858,7 +1076,7 @@ function buildIncidentsFromNetwork(entries) {
       return {
         id: `inc_${entry.id}`,
         type,
-        timestampMs: entry.timestamp_ms || 0,
+        timestampMs: entry.timestampMs || entry.timestamp_ms || 0,
         severity: bucket === "5xx" ? "error" : "warning",
         title: buildIncidentTitle({
           type: "network",
@@ -866,7 +1084,7 @@ function buildIncidentsFromNetwork(entries) {
           method: entry.method,
           url: entry.url,
         }),
-        subtitle: formatTimeWithMs(entry.timestamp_ms || 0),
+        subtitle: formatTimeWithMs(entry.timestampMs || entry.timestamp_ms || 0),
         sourceRef: entry.id,
         panelTarget: "network",
         statusCode: entry.response_status || entry.status || 0,
@@ -887,7 +1105,7 @@ function buildIncidentsFromConsole(entries) {
         timestampMs: entry.timestamp_ms || 0,
         severity: level === "error" ? "error" : "warning",
         title: `Console ${level}: ${entry.message || ""}`.trim(),
-        subtitle: formatTimeWithMs(entry.timestamp_ms || 0),
+        subtitle: formatTimeWithMs(entry.timestampMs || entry.timestamp_ms || 0),
         sourceRef: entry.id,
         panelTarget: "console",
         statusCode: 0,
@@ -970,7 +1188,7 @@ function renderIncidentRail() {
     body.appendChild(subtitle);
     row.appendChild(dot);
     row.appendChild(body);
-    row.addEventListener("click", () => handleIncidentSelection(inc));
+    row.addEventListener("click", () => handleIncidentSelection(inc, "incident-click"));
     incidentList.appendChild(row);
   });
   updateIncidentNavControls();
@@ -1011,7 +1229,10 @@ function navigateIncident(direction) {
   } else {
     index = Math.min(Math.max(index + direction, 0), incidents.length - 1);
   }
-  handleIncidentSelection(incidents[index]);
+  handleIncidentSelection(
+    incidents[index],
+    direction > 0 ? "next-incident" : "prev-incident"
+  );
 }
 
 function renderScreenshotsPanel() {
@@ -1049,6 +1270,7 @@ function renderScreenshotsPanel() {
     row.appendChild(meta);
     row.addEventListener("click", () => {
       state.playhead.selectedScreenshotId = shot.id;
+      setInspector("screenshot", shot.id);
       const baseName = shot.path ? shot.path.split("/").pop() : null;
       const linkedEvent = state.events.find(
         (ev) =>
@@ -1109,29 +1331,7 @@ function renderNetworkPanel() {
     return;
   }
   const entries = state.networkEntries || [];
-  const base = state.panelModes.network === "near"
-    ? getEntriesNearTime(
-        entries,
-        state.playhead.currentTimeMs,
-        state.playhead.timeWindowMs
-      )
-    : entries;
-  const filtered = base.filter((entry) => {
-    if (state.filters.errorOnly && !isNetworkError(entry)) {
-      return false;
-    }
-    const bucket = classifyNetworkStatus(entry);
-    if (state.filters.networkStatusBucket === "errors") {
-      return isNetworkError(entry);
-    }
-    if (state.filters.networkStatusBucket === "4xx") {
-      return bucket === "4xx";
-    }
-    if (state.filters.networkStatusBucket === "5xx") {
-      return bucket === "5xx";
-    }
-    return true;
-  });
+  const filtered = getVisibleNetworkEvents();
   networkList.innerHTML = "";
   if (!entries.length) {
     networkEmpty.classList.remove("hidden");
@@ -1156,9 +1356,11 @@ function renderNetworkPanel() {
     const time = document.createElement("div");
     time.className = "muted";
     const entryTime =
-      typeof entry.timestamp_ms === "number"
-        ? entry.timestamp_ms
-        : entry.timestampMs || 0;
+      typeof entry.endTimestampMs === "number"
+        ? entry.endTimestampMs
+        : typeof entry.timestampMs === "number"
+          ? entry.timestampMs
+          : entry.timestamp_ms || 0;
     time.textContent = formatTimeWithMs(entryTime);
     const status = document.createElement("div");
     status.textContent = entry.response_status || entry.status || "-";
@@ -1169,9 +1371,9 @@ function renderNetworkPanel() {
     row.appendChild(url);
     row.addEventListener("click", () => {
       state.selectedNetworkId = entry.id;
+      setInspector("network", entry.id);
       if (typeof entryTime === "number") {
-        applyPlayhead(entryTime, {
-          source: "network",
+        seekTo(entryTime, "network", {
           selectedEventId: state.playhead.selectedEventId,
         });
       }
@@ -1196,17 +1398,7 @@ function renderConsolePanel() {
     return;
   }
   const entries = state.consoleEntries || [];
-  const base = state.panelModes.console === "near"
-    ? getEntriesNearTime(
-        entries,
-        state.playhead.currentTimeMs,
-        state.playhead.timeWindowMs
-      )
-    : entries;
-  const allowedLevels = getEffectiveConsoleLevels();
-  const filtered = base.filter((entry) =>
-    allowedLevels.includes(normalizeConsoleLevel(entry.level))
-  );
+  const filtered = getVisibleConsoleEvents();
   consoleList.innerHTML = "";
   if (!entries.length) {
     consoleEmpty.classList.remove("hidden");
@@ -1244,9 +1436,9 @@ function renderConsolePanel() {
     row.appendChild(msg);
     row.addEventListener("click", () => {
       state.selectedConsoleId = entry.id;
+      setInspector("console", entry.id);
       if (typeof entryTime === "number") {
-        applyPlayhead(entryTime, {
-          source: "console",
+        seekTo(entryTime, "console", {
           selectedEventId: state.playhead.selectedEventId,
         });
       }
@@ -1692,6 +1884,37 @@ async function loadNdjsonEntries(path) {
     .filter(Boolean);
 }
 
+async function loadIncidentsFromPackage(baseUrl) {
+  try {
+    const incidentsUrl = new URL("incidents.json", baseUrl).toString();
+    const response = await fetch(incidentsUrl);
+    if (!response.ok) {
+      return [];
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      return [];
+    }
+    return data
+      .map((item, index) => ({
+        id: item.id || `inc_pkg_${index + 1}`,
+        type: item.type || "manifest-marker",
+        timestampMs: item.timestampMs || item.timestamp_ms || 0,
+        severity: item.severity || "warning",
+        title: item.title || item.label || "Incident",
+        subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
+        sourceRef: item.sourceRef || item.ref || item.id || null,
+        panelTarget: item.panelTarget || "timeline",
+        statusCode: item.statusCode || 0,
+        consoleLevel: item.consoleLevel || "",
+        url: item.url || "",
+      }))
+      .filter((item) => item.timestampMs !== null);
+  } catch (error) {
+    return [];
+  }
+}
+
 function indexEntriesById(entries) {
   const map = new Map();
   entries.forEach((entry) => {
@@ -1702,6 +1925,51 @@ function indexEntriesById(entries) {
   return map;
 }
 
+function normalizeNetworkEntry(entry) {
+  const startMs =
+    typeof entry.timestamp_ms === "number"
+      ? entry.timestamp_ms
+      : typeof entry.timestampMs === "number"
+        ? entry.timestampMs
+        : typeof entry.timestamp_epoch_ms === "number"
+          ? entry.timestamp_epoch_ms
+          : 0;
+  const durationMs =
+    entry.duration_ms ||
+    entry.durationMs ||
+    entry.timing ||
+    entry.total_time_ms ||
+    0;
+  const endMs =
+    typeof entry.end_timestamp_ms === "number"
+      ? entry.end_timestamp_ms
+      : durationMs
+        ? startMs + durationMs
+        : startMs;
+  return {
+    ...entry,
+    timestampMs: startMs,
+    startTimestampMs: startMs,
+    endTimestampMs: endMs,
+    durationMs: durationMs,
+  };
+}
+
+function normalizeConsoleEntry(entry) {
+  const timestampMs =
+    typeof entry.timestamp_ms === "number"
+      ? entry.timestamp_ms
+      : typeof entry.timestampMs === "number"
+        ? entry.timestampMs
+        : typeof entry.timestamp_epoch_ms === "number"
+          ? entry.timestamp_epoch_ms
+          : 0;
+  return {
+    ...entry,
+    timestampMs,
+  };
+}
+
 async function ensureNetworkLogsLoaded() {
   if (state.loadingNetwork || state.networkIndex) {
     return;
@@ -1710,12 +1978,13 @@ async function ensureNetworkLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
-    state.networkEntries = entries;
-    state.networkIndex = indexEntriesById(entries);
+    const normalized = entries.map(normalizeNetworkEntry);
+    state.networkEntries = normalized;
+    state.networkIndex = indexEntriesById(normalized);
     state.loadedArtifacts.network = true;
     state.incidents = mergeIncidents(
       state.incidents,
-      buildIncidentsFromNetwork(entries)
+      buildIncidentsFromNetwork(normalized)
     );
     renderIncidentRail();
   } catch (error) {
@@ -1734,12 +2003,13 @@ async function ensureConsoleLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
-    state.consoleEntries = entries;
-    state.consoleIndex = indexEntriesById(entries);
+    const normalized = entries.map(normalizeConsoleEntry);
+    state.consoleEntries = normalized;
+    state.consoleIndex = indexEntriesById(normalized);
     state.loadedArtifacts.console = true;
     state.incidents = mergeIncidents(
       state.incidents,
-      buildIncidentsFromConsole(entries)
+      buildIncidentsFromConsole(normalized)
     );
     renderIncidentRail();
   } catch (error) {
@@ -1861,6 +2131,9 @@ function renderTimelineLanes(events) {
       if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
         marker.classList.add("selected");
       }
+      if (state.playhead.nearestMarkerId && ev.id === state.playhead.nearestMarkerId) {
+        marker.classList.add("nearest");
+      }
       marker.addEventListener("click", () => handleEventSelection(ev, "timeline"));
       track.appendChild(marker);
     });
@@ -1878,7 +2151,10 @@ function renderTimelineLanes(events) {
         if (state.playhead.selectedIncidentId === inc.id) {
           marker.classList.add("selected");
         }
-        marker.addEventListener("click", () => handleIncidentSelection(inc));
+        if (state.playhead.nearestMarkerId && inc.id === state.playhead.nearestMarkerId) {
+          marker.classList.add("nearest");
+        }
+        marker.addEventListener("click", () => handleIncidentSelection(inc, "incident-click"));
         track.appendChild(marker);
       });
     }
@@ -2062,6 +2338,232 @@ function renderDetails(ev) {
   }
 }
 
+function truncateText(value, maxLength = 1200) {
+  if (typeof value !== "string") {
+    return { text: String(value ?? ""), truncated: false };
+  }
+  if (value.length <= maxLength) {
+    return { text: value, truncated: false };
+  }
+  return { text: value.slice(0, maxLength), truncated: true };
+}
+
+function normalizeInspectorValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function createCopyButton(label, text) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "copy-button";
+  button.textContent = label;
+  button.addEventListener("click", async () => {
+    if (!text) {
+      return;
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.select();
+        document.execCommand("copy");
+        document.body.removeChild(helper);
+      }
+      button.textContent = "Copied";
+      setTimeout(() => {
+        button.textContent = label;
+      }, 1200);
+    } catch (error) {
+      button.textContent = "Copy failed";
+      setTimeout(() => {
+        button.textContent = label;
+      }, 1200);
+    }
+  });
+  return button;
+}
+
+function renderExpandableSection(title, value, copyLabel) {
+  const section = document.createElement("div");
+  section.className = "inspector-section";
+  const header = document.createElement("h3");
+  header.textContent = title;
+  section.appendChild(header);
+  if (!value) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "Not available.";
+    section.appendChild(empty);
+    return section;
+  }
+  const normalized = normalizeInspectorValue(value);
+  const truncated = truncateText(normalized);
+  const code = document.createElement("div");
+  code.className = "code-block";
+  code.textContent = truncated.text;
+  section.appendChild(code);
+  const actions = document.createElement("div");
+  actions.className = "inspector-actions";
+  actions.appendChild(createCopyButton(copyLabel, normalized));
+  if (truncated.truncated) {
+    const expandBtn = document.createElement("button");
+    expandBtn.type = "button";
+    expandBtn.className = "expand-toggle";
+    expandBtn.textContent = "Show more";
+    expandBtn.addEventListener("click", () => {
+      const expanded = expandBtn.textContent === "Show more";
+      expandBtn.textContent = expanded ? "Show less" : "Show more";
+      code.textContent = expanded ? normalized : truncated.text;
+    });
+    actions.appendChild(expandBtn);
+  }
+  section.appendChild(actions);
+  return section;
+}
+
+function setInspector(type, id) {
+  state.inspector.type = type;
+  state.inspector.id = id;
+  renderInspector();
+}
+
+function renderInspector() {
+  if (!inspectorBody || !inspectorTitle) {
+    return;
+  }
+  inspectorBody.innerHTML = "";
+  const { type, id } = state.inspector;
+  if (!type || !id) {
+    inspectorTitle.textContent = "Select an item";
+    inspectorBody.textContent =
+      "Inspect a network request, console entry, screenshot, or incident.";
+    inspectorBody.classList.add("muted");
+    return;
+  }
+  inspectorBody.classList.remove("muted");
+  if (type === "network") {
+    const entry = state.networkEntries.find((item) => item.id === id);
+    inspectorTitle.textContent = "Network request";
+    if (!entry) {
+      inspectorBody.textContent = "Network entry not found.";
+      return;
+    }
+    const summary = document.createElement("div");
+    summary.className = "inspector-section";
+    summary.innerHTML = `
+      <div><strong>${entry.method || ""} ${entry.url || ""}</strong></div>
+      <div class="muted">Status: ${entry.response_status || entry.status || "-"}</div>
+      <div class="muted">Duration: ${entry.durationMs || entry.timing || "-"}</div>
+    `;
+    inspectorBody.appendChild(summary);
+    const actions = document.createElement("div");
+    actions.className = "inspector-actions";
+    actions.appendChild(createCopyButton("Copy URL", entry.url || ""));
+    inspectorBody.appendChild(actions);
+    inspectorBody.appendChild(
+      renderExpandableSection("Request Headers", entry.request_headers, "Copy headers")
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection(
+        "Request Body",
+        entry.request_post_data || entry.request_body || entry.request_body_raw,
+        "Copy request body"
+      )
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Response Headers", entry.response_headers, "Copy headers")
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Response Body", entry.response_body, "Copy response body")
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Raw Entry", entry, "Copy raw entry")
+    );
+    return;
+  }
+  if (type === "console") {
+    const entry = state.consoleEntries.find((item) => item.id === id);
+    inspectorTitle.textContent = "Console log";
+    if (!entry) {
+      inspectorBody.textContent = "Console entry not found.";
+      return;
+    }
+    const summary = document.createElement("div");
+    summary.className = "inspector-section";
+    summary.innerHTML = `
+      <div><strong>${(entry.level || "log").toUpperCase()}</strong></div>
+      <div>${entry.message || ""}</div>
+    `;
+    inspectorBody.appendChild(summary);
+    inspectorBody.appendChild(
+      renderExpandableSection("Stack Trace", entry.stack, "Copy stack")
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Raw Entry", entry, "Copy raw entry")
+    );
+    return;
+  }
+  if (type === "screenshot") {
+    const shot = state.screenshotById.get(id);
+    inspectorTitle.textContent = "Screenshot";
+    if (!shot) {
+      inspectorBody.textContent = "Screenshot not found.";
+      return;
+    }
+    const img = document.createElement("img");
+    const baseName = shot.path ? shot.path.split("/").pop() : null;
+    if (baseName && state.screenshotUrls.has(baseName)) {
+      img.src = state.screenshotUrls.get(baseName);
+    }
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "10px";
+    inspectorBody.appendChild(img);
+    const meta = document.createElement("div");
+    meta.className = "inspector-section";
+    meta.innerHTML = `
+      <div>Time: ${formatTimeWithMs(shot.timestampMs || 0)}</div>
+      <div>Kind: ${shot.kind || "-"}</div>
+      <div>Label: ${shot.label || "-"}</div>
+    `;
+    inspectorBody.appendChild(meta);
+    return;
+  }
+  if (type === "incident") {
+    const incident = state.incidents.find((item) => item.id === id);
+    inspectorTitle.textContent = "Incident";
+    if (!incident) {
+      inspectorBody.textContent = "Incident not found.";
+      return;
+    }
+    const summary = document.createElement("div");
+    summary.className = "inspector-section";
+    summary.innerHTML = `
+      <div><strong>${buildIncidentTitle(incident)}</strong></div>
+      <div class="muted">Severity: ${incident.severity || "-"}</div>
+      <div class="muted">Time: ${formatTimeWithMs(incident.timestampMs || 0)}</div>
+    `;
+    inspectorBody.appendChild(summary);
+    inspectorBody.appendChild(
+      renderExpandableSection("Raw Incident", incident, "Copy raw incident")
+    );
+  }
+}
+
 function setActivePanel(panel) {
   state.playhead.activePanel = panel;
   panelTabs.forEach((tab) => {
@@ -2115,8 +2617,7 @@ function handleEventSelection(ev, source = "timeline") {
     : null;
   const screenshotId =
     panel === "screenshots" && ev.refs?.ref ? ev.refs.ref : state.playhead.selectedScreenshotId;
-  applyPlayhead(ev.t_ms || 0, {
-    source,
+  seekTo(ev.t_ms || 0, source, {
     activePanel: panel,
     selectedEventId: ev.id,
     selectedIncidentId: matched ? matched.id : state.playhead.selectedIncidentId,
@@ -2124,20 +2625,29 @@ function handleEventSelection(ev, source = "timeline") {
   });
   renderDetails(ev);
   if (panel === "screenshots") {
+    if (screenshotId) {
+      setInspector("screenshot", screenshotId);
+    }
     renderScreenshotsPanel();
   }
   if (panel === "network") {
     state.selectedNetworkId = ev.refs?.ref || null;
+    if (state.selectedNetworkId) {
+      setInspector("network", state.selectedNetworkId);
+    }
     ensureNetworkLogsLoaded().then(renderNetworkPanel);
   }
   if (panel === "console") {
     state.selectedConsoleId = ev.refs?.ref || null;
+    if (state.selectedConsoleId) {
+      setInspector("console", state.selectedConsoleId);
+    }
     ensureConsoleLogsLoaded().then(renderConsolePanel);
   }
   renderIncidentRail();
 }
 
-function handleIncidentSelection(incident) {
+function handleIncidentSelection(incident, source = "incident-click") {
   if (!incident) {
     return;
   }
@@ -2146,12 +2656,12 @@ function handleIncidentSelection(incident) {
       ev.id === incident.sourceRef ||
       (ev.refs?.ref && ev.refs.ref === incident.sourceRef)
   );
-  applyPlayhead(incident.timestampMs || 0, {
-    source: "incident",
+  seekTo(incident.timestampMs || 0, source, {
     activePanel: incident.panelTarget,
     selectedIncidentId: incident.id,
     selectedEventId: eventMatch ? eventMatch.id : state.playhead.selectedEventId,
   });
+  setInspector("incident", incident.id);
   if (incident.panelTarget === "network") {
     setActivePanel("network");
     state.selectedNetworkId = incident.sourceRef;
@@ -2186,12 +2696,14 @@ function handleVideoTimeUpdate() {
   const now = Date.now();
   const shouldRefresh =
     state.playhead.followPlayhead && now - lastVideoSyncAt > 250;
-  applyPlayhead(tms, {
-    source: "video",
+  seekTo(tms, "video", {
     syncVideo: false,
+    suppressVideoUpdate: true,
+    suppressSelectionUpdate: true,
     refresh: shouldRefresh,
     updatePanels: shouldRefresh,
     updateContext: shouldRefresh,
+    updateNearest: shouldRefresh,
   });
   if (shouldRefresh) {
     lastVideoSyncAt = now;
@@ -2209,7 +2721,7 @@ async function togglePlayback(source = "video") {
   if (videoEl.paused) {
     await videoEl.play();
     setPlayState(true);
-    applyPlayhead(state.playhead.currentTimeMs, { source, refresh: false });
+    seekTo(state.playhead.currentTimeMs, source, { refresh: false });
   } else {
     videoEl.pause();
     setPlayState(false);
@@ -2229,7 +2741,7 @@ function findNearestEvent(events, tms) {
 }
 
 function setCurrentTms(tms, snap = true) {
-  applyPlayhead(tms, { source: "timeline", refresh: false });
+  seekTo(tms, "timeline", { refresh: false, snap: state.playhead.isSeeking });
   if (snap) {
     const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
     if (nearest) {
@@ -2261,6 +2773,26 @@ function updateTimeline() {
   if (videoSyncNote) {
     videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
   }
+}
+
+function updateTimelineHover(clientX) {
+  if (!timelineHover || !timeline) {
+    return;
+  }
+  const duration = state.playhead.durationMs || 0;
+  if (!duration) {
+    timelineHover.classList.add("hidden");
+    return;
+  }
+  const rect = timeline.getBoundingClientRect();
+  const ratio = Math.min(Math.max(0, clientX - rect.left), rect.width) / rect.width;
+  const hoverTime = Math.round(ratio * duration);
+  state.hover.hoverTimeMs = hoverTime;
+  const nearest = findNearestMarker(hoverTime, getImportantMarkers());
+  state.hover.hoverMarkerId = nearest ? nearest.id : null;
+  timelineHover.textContent = formatTimeWithMs(hoverTime);
+  timelineHover.style.left = `${ratio * 100}%`;
+  timelineHover.classList.remove("hidden");
 }
 
 function refreshView() {
@@ -2328,6 +2860,32 @@ async function loadZip(file) {
       zip,
       screenshotFiles: screenshotFilesFromZip,
     });
+    const incidentEntry = zip.file("incidents.json");
+    if (incidentEntry) {
+      try {
+        const raw = await incidentEntry.async("string");
+        const data = JSON.parse(raw);
+        if (Array.isArray(data)) {
+          const normalized = data.map((item, index) => ({
+            id: item.id || `inc_pkg_${index + 1}`,
+            type: item.type || "manifest-marker",
+            timestampMs: item.timestampMs || item.timestamp_ms || 0,
+            severity: item.severity || "warning",
+            title: item.title || item.label || "Incident",
+            subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
+            sourceRef: item.sourceRef || item.ref || item.id || null,
+            panelTarget: item.panelTarget || "timeline",
+            statusCode: item.statusCode || 0,
+            consoleLevel: item.consoleLevel || "",
+            url: item.url || "",
+          }));
+          state.incidents = mergeIncidents(state.incidents, normalized);
+          renderIncidentRail();
+        }
+      } catch (error) {
+        // ignore optional incidents file
+      }
+    }
   } else {
     const sessionLogName = selectSessionLogFile(zip.files);
     const screenshotTimes = screenshotFiles
@@ -2432,6 +2990,7 @@ async function loadZip(file) {
     await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
     await loadVideo(zip);
     state.videoSyncAvailable = !state.videoMissing && state.playhead.durationMs > 0;
+    state.playhead.hasRecording = !state.videoMissing;
     if (playToggleBtn) {
       playToggleBtn.disabled = !state.videoSyncAvailable;
     }
@@ -2489,6 +3048,11 @@ async function tryLoadPackageSession() {
     const manifest = await response.json();
     setPackageMode(true, baseUrl);
     await initFromManifest(manifest, { baseUrl });
+    const packageIncidents = await loadIncidentsFromPackage(baseUrl);
+    if (packageIncidents.length) {
+      state.incidents = mergeIncidents(state.incidents, packageIncidents);
+      renderIncidentRail();
+    }
     setLoadedInfo("package", manifest.session?.id || "session.json");
     updateTimeline();
     refreshView();
@@ -2534,6 +3098,16 @@ function resetState() {
     selectedScreenshotId: null,
     activePanel: "timeline",
     lastSeekSource: null,
+    lastCommittedTimeMs: 0,
+    pendingSeekTimeMs: null,
+    nearestIncidentId: null,
+    nearestScreenshotId: null,
+    hasRecording: false,
+    nearestMarkerId: null,
+  };
+  state.hover = {
+    hoverTimeMs: null,
+    hoverMarkerId: null,
   };
   state.missingScreenshots = [];
   state.videoMissing = false;
@@ -2549,6 +3123,10 @@ function resetState() {
   state.panelModes = {
     network: "near",
     console: "near",
+  };
+  state.inspector = {
+    type: null,
+    id: null,
   };
   state.incidents = [];
   state.videoSyncAvailable = false;
@@ -2587,6 +3165,12 @@ function resetState() {
   if (timelineCursor) {
     timelineCursor.style.left = "0%";
   }
+  if (timelineHover) {
+    timelineHover.classList.add("hidden");
+  }
+  if (timeBadge) {
+    timeBadge.textContent = "00:00 / 00:00";
+  }
   videoPanel.classList.add("hidden");
   videoEl.removeAttribute("src");
   videoPlay.textContent = "Play";
@@ -2620,6 +3204,9 @@ function resetState() {
   if (timeWindowSelect) {
     timeWindowSelect.value = "5000";
   }
+  if (contextWindow) {
+    contextWindow.textContent = "±5s";
+  }
   networkModeChips.forEach((chip) => {
     chip.classList.toggle("active", chip.dataset.netMode === "near");
   });
@@ -2635,6 +3222,7 @@ function resetState() {
   setActivePanel("timeline");
   clearError();
   clearLoadedInfo();
+  renderInspector();
 }
 
 if (openZipBtn && zipInput) {
@@ -2674,6 +3262,16 @@ tryLoadPackageSession()
 
 timeline.addEventListener("input", () => {
   setCurrentTms(Number(timeline.value), true);
+});
+timeline.addEventListener("mousemove", (event) => {
+  updateTimelineHover(event.clientX);
+});
+timeline.addEventListener("mouseleave", () => {
+  state.hover.hoverTimeMs = null;
+  state.hover.hoverMarkerId = null;
+  if (timelineHover) {
+    timelineHover.classList.add("hidden");
+  }
 });
 timeline.addEventListener("mousedown", () => {
   state.playhead.isSeeking = true;
@@ -2867,10 +3465,10 @@ window.addEventListener("keydown", (event) => {
     togglePlayback("keyboard");
   } else if (event.code === "ArrowLeft") {
     event.preventDefault();
-    applyPlayhead(state.playhead.currentTimeMs - 5000, { source: "keyboard" });
+    seekTo(state.playhead.currentTimeMs - 5000, "keyboard");
   } else if (event.code === "ArrowRight") {
     event.preventDefault();
-    applyPlayhead(state.playhead.currentTimeMs + 5000, { source: "keyboard" });
+    seekTo(state.playhead.currentTimeMs + 5000, "keyboard");
   } else if (event.key === "[") {
     navigateIncident(-1);
   } else if (event.key === "]") {

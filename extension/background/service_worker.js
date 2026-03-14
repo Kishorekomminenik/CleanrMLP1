@@ -6245,6 +6245,7 @@ async function runEvidenceZipExport(context) {
     if (!usePartExport) {
       const viewerAssets = [
         "viewer/index.html",
+        "viewer/viewer.js",
         "viewer/app.js",
         "viewer/styles.css",
       ];

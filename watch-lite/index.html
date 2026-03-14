@@ -77,6 +77,7 @@
               <h2>Timeline</h2>
               <span id="currentTime" class="muted">00:00</span>
             </div>
+            <div id="timeBadge" class="time-badge">00:00 / 00:00</div>
             <div class="playback-controls">
               <button id="playToggleBtn" class="primary" type="button">Play</button>
               <div class="playback-time">
@@ -107,6 +108,7 @@
             <div class="timeline-track">
               <input id="timeline" type="range" min="0" max="0" value="0" />
               <div id="timelineCursor" class="timeline-cursor"></div>
+              <div id="timelineHover" class="timeline-hover hidden"></div>
             </div>
             <div id="timelineLanes" class="timeline-lanes">
               <div class="timeline-lane" data-lane="screenshots">
@@ -143,6 +145,10 @@
               <div class="context-row">
                 <span class="muted">Nearby console</span>
                 <span id="contextConsoleCount">-</span>
+              </div>
+              <div class="context-row">
+                <span class="muted">Time window</span>
+                <span id="contextWindow">±5s</span>
               </div>
             </div>
             <div class="timeline-meta muted">
@@ -323,6 +329,15 @@
               <div id="consoleFilteredEmpty" class="empty-state muted hidden">
                 No console entries match current filter.
               </div>
+            </div>
+          </div>
+          <div id="inspectorPanel" class="panel inspector-panel">
+            <div class="inspector-header">
+              <h2>Inspector</h2>
+              <div class="muted" id="inspectorTitle">Select an item</div>
+            </div>
+            <div id="inspectorBody" class="inspector-body muted">
+              Inspect a network request, console entry, screenshot, or incident.
             </div>
           </div>
         </section>
