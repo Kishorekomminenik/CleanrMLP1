@@ -296,6 +296,26 @@ body {
   font-size: 12px;
 }
 
+.filter-row.chips {
+  gap: 6px;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chip.active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
 .search {
   width: 100%;
   padding: 8px 10px;
@@ -361,6 +381,74 @@ body {
 .details-kv {
   display: grid;
   gap: 2px;
+}
+
+.incident-panel.hidden {
+  display: none;
+}
+
+.incident-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.incident-toggle {
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.incident-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.incident-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.incident-item.active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: #eff6ff;
+}
+
+.incident-severity {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-top: 4px;
+}
+
+.incident-severity.error {
+  background: #dc2626;
+}
+
+.incident-severity.warning {
+  background: #f59e0b;
+}
+
+.incident-title {
+  font-weight: 600;
+}
+
+.incident-subtitle {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .panel-tabs {

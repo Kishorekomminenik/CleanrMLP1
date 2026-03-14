@@ -115,6 +115,20 @@
             <div id="summarySignals" class="summary-signals muted"></div>
           </div>
 
+          <div id="incidentPanel" class="panel incident-panel hidden">
+            <div class="incident-header">
+              <h2>Incidents</h2>
+              <label class="incident-toggle">
+                <input type="checkbox" id="errorOnlyToggle" />
+                Error-only
+              </label>
+            </div>
+            <div id="incidentList" class="incident-list"></div>
+            <div id="incidentEmpty" class="empty-state muted hidden">
+              No incidents match current filters.
+            </div>
+          </div>
+
           <div class="panel panel-tabs">
             <button class="tab-button active" type="button" data-panel="timeline">
               Timeline
@@ -182,9 +196,26 @@
           <div class="panel-group hidden" data-panel="network">
             <div class="panel network-panel">
               <h2>Network</h2>
+              <div class="filter-row chips">
+                <button class="chip active" type="button" data-net-filter="all">
+                  All
+                </button>
+                <button class="chip" type="button" data-net-filter="errors">
+                  Errors
+                </button>
+                <button class="chip" type="button" data-net-filter="4xx">
+                  4xx
+                </button>
+                <button class="chip" type="button" data-net-filter="5xx">
+                  5xx
+                </button>
+              </div>
               <div id="networkList" class="data-list"></div>
               <div id="networkEmpty" class="empty-state muted hidden">
                 No network logs available for this session.
+              </div>
+              <div id="networkFilteredEmpty" class="empty-state muted hidden">
+                No network entries match current filter.
               </div>
             </div>
           </div>
@@ -192,9 +223,29 @@
           <div class="panel-group hidden" data-panel="console">
             <div class="panel console-panel">
               <h2>Console</h2>
+              <div class="filter-row chips">
+                <button class="chip active" type="button" data-console-level="error">
+                  Error
+                </button>
+                <button class="chip active" type="button" data-console-level="warning">
+                  Warning
+                </button>
+                <button class="chip active" type="button" data-console-level="info">
+                  Info
+                </button>
+                <button class="chip active" type="button" data-console-level="log">
+                  Log
+                </button>
+                <button class="chip active" type="button" data-console-level="debug">
+                  Debug
+                </button>
+              </div>
               <div id="consoleList" class="data-list"></div>
               <div id="consoleEmpty" class="empty-state muted hidden">
                 No console logs available for this session.
+              </div>
+              <div id="consoleFilteredEmpty" class="empty-state muted hidden">
+                No console entries match current filter.
               </div>
             </div>
           </div>

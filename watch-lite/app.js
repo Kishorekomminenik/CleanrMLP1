@@ -42,8 +42,18 @@ const screenshotsEmpty = document.getElementById("screenshotsEmpty");
 const screenshotPreview = document.getElementById("screenshotPreview");
 const networkList = document.getElementById("networkList");
 const networkEmpty = document.getElementById("networkEmpty");
+const networkFilteredEmpty = document.getElementById("networkFilteredEmpty");
 const consoleList = document.getElementById("consoleList");
 const consoleEmpty = document.getElementById("consoleEmpty");
+const consoleFilteredEmpty = document.getElementById("consoleFilteredEmpty");
+const incidentPanel = document.getElementById("incidentPanel");
+const incidentList = document.getElementById("incidentList");
+const incidentEmpty = document.getElementById("incidentEmpty");
+const errorOnlyToggle = document.getElementById("errorOnlyToggle");
+const networkFilterChips = Array.from(document.querySelectorAll("[data-net-filter]"));
+const consoleLevelChips = Array.from(
+  document.querySelectorAll("[data-console-level]")
+);
 
 const state = {
   zip: null,
@@ -65,6 +75,16 @@ const state = {
   selectedNetworkId: null,
   selectedConsoleId: null,
   currentSeekMs: 0,
+  filters: {
+    errorOnly: false,
+    networkStatusBucket: "all",
+    consoleLevels: ["error", "warning", "info", "log", "debug"],
+    selectedIncidentId: null,
+    incidentSourcePanel: null,
+    showIncidentRail: true,
+  },
+  incidents: [],
+  incidentSourcePanel: null,
   loadedArtifacts: {
     network: false,
     console: false,
@@ -109,6 +129,56 @@ function formatTimeWithMs(ms) {
   const seconds = String(Math.floor((totalMs % 60000) / 1000)).padStart(2, "0");
   const millis = String(totalMs % 1000).padStart(3, "0");
   return `${minutes}:${seconds}.${millis}`;
+}
+
+function normalizeConsoleLevel(level) {
+  const raw = String(level || "log").toLowerCase();
+  if (raw === "warn") {
+    return "warning";
+  }
+  return raw;
+}
+
+function classifyNetworkStatus(entry) {
+  const status = entry.response_status || entry.status;
+  if (typeof status === "number") {
+    if (status >= 500) {
+      return "5xx";
+    }
+    if (status >= 400) {
+      return "4xx";
+    }
+    return "ok";
+  }
+  if (entry.error_text || entry.errorText) {
+    return "failure";
+  }
+  return "unknown";
+}
+
+function isNetworkError(entry) {
+  const bucket = classifyNetworkStatus(entry);
+  return bucket === "4xx" || bucket === "5xx" || bucket === "failure";
+}
+
+function getEffectiveConsoleLevels() {
+  if (state.filters.errorOnly) {
+    return ["error"];
+  }
+  return state.filters.consoleLevels;
+}
+
+function buildIncidentTitle(incident) {
+  if (incident.type.startsWith("network")) {
+    const status = incident.statusCode ? String(incident.statusCode) : "";
+    const method = incident.method || "";
+    const url = incident.url || "";
+    return `${status} ${method} ${url}`.trim();
+  }
+  if (incident.type.startsWith("console")) {
+    return `Console ${incident.type.replace("console-", "")}: ${incident.message || ""}`.trim();
+  }
+  return incident.title || "Incident";
 }
 
 function showError(message, isWarning = false) {
@@ -268,6 +338,13 @@ function applyManifestAvailability(manifest) {
   if (!hasScreenshots) {
     screenshotsEmpty?.classList.remove("hidden");
   }
+
+  networkFilterChips.forEach((chip) => {
+    chip.disabled = !hasNetwork;
+  });
+  consoleLevelChips.forEach((chip) => {
+    chip.disabled = !hasConsole;
+  });
 }
 
 function renderSummaryFromManifest(manifest) {
@@ -331,6 +408,229 @@ function updateTimelineSummary(manifest) {
   timelineSummary.textContent = parts.join(" • ");
 }
 
+function buildIncidentsFromManifest(manifest) {
+  const incidents = [];
+  if (!manifest || !manifest.timeline || !Array.isArray(manifest.timeline.events)) {
+    return incidents;
+  }
+  manifest.timeline.events.forEach((ev) => {
+    if (!ev || !ev.type) {
+      return;
+    }
+    if (ev.type.startsWith("network")) {
+      const severity = ev.type === "network-error" ? "error" : "warning";
+      incidents.push({
+        id: `inc_${ev.id}`,
+        type: ev.type === "network-error" ? "network-5xx" : "network-4xx",
+        timestampMs: ev.timestampMs || 0,
+        severity,
+        title: ev.label || "Network issue",
+        subtitle: formatTimeWithMs(ev.timestampMs || 0),
+        sourceRef: ev.ref || ev.id,
+        panelTarget: "network",
+        statusCode: null,
+        consoleLevel: "",
+        url: "",
+      });
+    } else if (ev.type.startsWith("console")) {
+      incidents.push({
+        id: `inc_${ev.id}`,
+        type: ev.type === "console-error" ? "console-error" : "console-warning",
+        timestampMs: ev.timestampMs || 0,
+        severity: ev.type === "console-error" ? "error" : "warning",
+        title: ev.label || "Console issue",
+        subtitle: formatTimeWithMs(ev.timestampMs || 0),
+        sourceRef: ev.ref || ev.id,
+        panelTarget: "console",
+        statusCode: null,
+        consoleLevel: ev.type.replace("console-", ""),
+        url: "",
+      });
+    }
+  });
+  return incidents;
+}
+
+function applySummaryInteractions() {
+  if (!summaryPanel) {
+    return;
+  }
+  if (summaryPanel.dataset.bound === "true") {
+    return;
+  }
+  summaryPanel.dataset.bound = "true";
+  summaryPanel.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const label = target.closest(".summary-item");
+    if (!label) {
+      return;
+    }
+    const key = label.querySelector(".summary-label")?.textContent || "";
+    if (key === "Errors") {
+      state.filters.errorOnly = true;
+      if (errorOnlyToggle) {
+        errorOnlyToggle.checked = true;
+      }
+      renderIncidentRail();
+      renderTimelineTicks(state.events);
+    } else if (key === "Network") {
+      setActivePanel("network");
+      state.filters.networkStatusBucket = "errors";
+      networkFilterChips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.netFilter === "errors");
+      });
+      ensureNetworkLogsLoaded().then(renderNetworkPanel);
+    } else if (key === "Console") {
+      setActivePanel("console");
+      state.filters.consoleLevels = ["error"];
+      consoleLevelChips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.consoleLevel === "error");
+      });
+      ensureConsoleLogsLoaded().then(renderConsolePanel);
+    } else if (key === "Screenshots") {
+      setActivePanel("screenshots");
+      renderScreenshotsPanel();
+    } else if (key === "Recording") {
+      setActivePanel("timeline");
+    }
+    renderIncidentRail();
+  });
+}
+
+function buildIncidentsFromNetwork(entries) {
+  return entries
+    .filter((entry) => isNetworkError(entry))
+    .map((entry) => {
+      const bucket = classifyNetworkStatus(entry);
+      const type =
+        bucket === "5xx"
+          ? "network-5xx"
+          : bucket === "4xx"
+            ? "network-4xx"
+            : "network-failure";
+      return {
+        id: `inc_${entry.id}`,
+        type,
+        timestampMs: entry.timestamp_ms || 0,
+        severity: bucket === "5xx" ? "error" : "warning",
+        title: buildIncidentTitle({
+          type: "network",
+          statusCode: entry.response_status || entry.status,
+          method: entry.method,
+          url: entry.url,
+        }),
+        subtitle: formatTimeWithMs(entry.timestamp_ms || 0),
+        sourceRef: entry.id,
+        panelTarget: "network",
+        statusCode: entry.response_status || entry.status || 0,
+        consoleLevel: "",
+        url: entry.url || "",
+      };
+    });
+}
+
+function buildIncidentsFromConsole(entries) {
+  return entries
+    .filter((entry) => ["error", "warning"].includes(normalizeConsoleLevel(entry.level)))
+    .map((entry) => {
+      const level = normalizeConsoleLevel(entry.level);
+      return {
+        id: `inc_${entry.id}`,
+        type: level === "error" ? "console-error" : "console-warning",
+        timestampMs: entry.timestamp_ms || 0,
+        severity: level === "error" ? "error" : "warning",
+        title: `Console ${level}: ${entry.message || ""}`.trim(),
+        subtitle: formatTimeWithMs(entry.timestamp_ms || 0),
+        sourceRef: entry.id,
+        panelTarget: "console",
+        statusCode: 0,
+        consoleLevel: level,
+        url: entry.url || "",
+      };
+    });
+}
+
+function mergeIncidents(existing, incoming) {
+  const map = new Map();
+  existing.forEach((inc) => {
+    map.set(inc.id, inc);
+  });
+  incoming.forEach((inc) => {
+    map.set(inc.id, inc);
+  });
+  return Array.from(map.values());
+}
+
+function getFilteredIncidents() {
+  let incidents = state.incidents.slice();
+  if (state.filters.errorOnly) {
+    incidents = incidents.filter((inc) => inc.severity === "error");
+  }
+  if (state.filters.networkStatusBucket !== "all") {
+    if (state.filters.networkStatusBucket === "errors") {
+      incidents = incidents.filter((inc) =>
+        ["network-4xx", "network-5xx", "network-failure"].includes(inc.type)
+      );
+    } else if (state.filters.networkStatusBucket === "4xx") {
+      incidents = incidents.filter((inc) => inc.type === "network-4xx");
+    } else if (state.filters.networkStatusBucket === "5xx") {
+      incidents = incidents.filter((inc) => inc.type === "network-5xx");
+    }
+  }
+  const allowedLevels = getEffectiveConsoleLevels();
+  incidents = incidents.filter((inc) => {
+    if (inc.type.startsWith("console")) {
+      return allowedLevels.includes(inc.consoleLevel || "");
+    }
+    return true;
+  });
+  incidents.sort((a, b) => a.timestampMs - b.timestampMs);
+  return incidents;
+}
+
+function renderIncidentRail() {
+  if (!incidentPanel || !incidentList || !incidentEmpty) {
+    return;
+  }
+  if (!state.filters.showIncidentRail) {
+    incidentPanel.classList.add("hidden");
+    return;
+  }
+  const incidents = getFilteredIncidents();
+  incidentPanel.classList.remove("hidden");
+  incidentList.innerHTML = "";
+  if (!incidents.length) {
+    incidentEmpty.classList.remove("hidden");
+    return;
+  }
+  incidentEmpty.classList.add("hidden");
+  incidents.forEach((inc) => {
+    const row = document.createElement("div");
+    row.className = "incident-item";
+    if (state.filters.selectedIncidentId === inc.id) {
+      row.classList.add("active");
+    }
+    const dot = document.createElement("div");
+    dot.className = `incident-severity ${inc.severity}`;
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "incident-title";
+    title.textContent = buildIncidentTitle(inc);
+    const subtitle = document.createElement("div");
+    subtitle.className = "incident-subtitle";
+    subtitle.textContent = inc.subtitle;
+    body.appendChild(title);
+    body.appendChild(subtitle);
+    row.appendChild(dot);
+    row.appendChild(body);
+    row.addEventListener("click", () => handleIncidentSelection(inc));
+    incidentList.appendChild(row);
+  });
+}
+
 function renderScreenshotsPanel() {
   if (!screenshotsList || !screenshotsEmpty) {
     return;
@@ -366,13 +666,19 @@ function renderScreenshotsPanel() {
     row.appendChild(meta);
     row.addEventListener("click", () => {
       state.selectedScreenshotId = shot.id;
+      const baseName = shot.path ? shot.path.split("/").pop() : null;
+      const linkedEvent = state.events.find(
+        (ev) =>
+          ev.refs?.ref === shot.id ||
+          (baseName && ev.refs?.screenshotFile === baseName)
+      );
       handleEventSelection(
-        {
+        linkedEvent || {
           id: shot.id,
           t_ms: shot.timestampMs || 0,
           type: "screenshot",
           summary: shot.label || "Screenshot",
-          refs: { ref: shot.id },
+          refs: { ref: shot.id, screenshotFile: baseName },
           raw: { type: "screenshot" },
         },
         true
@@ -420,14 +726,32 @@ function renderNetworkPanel() {
     return;
   }
   const entries = state.networkEntries || [];
+  const filtered = entries.filter((entry) => {
+    if (state.filters.errorOnly && !isNetworkError(entry)) {
+      return false;
+    }
+    const bucket = classifyNetworkStatus(entry);
+    if (state.filters.networkStatusBucket === "errors") {
+      return isNetworkError(entry);
+    }
+    if (state.filters.networkStatusBucket === "4xx") {
+      return bucket === "4xx";
+    }
+    if (state.filters.networkStatusBucket === "5xx") {
+      return bucket === "5xx";
+    }
+    return true;
+  });
   networkList.innerHTML = "";
   if (!entries.length) {
     networkEmpty.classList.remove("hidden");
+    networkFilteredEmpty?.classList.add("hidden");
     return;
   }
   networkEmpty.classList.add("hidden");
+  networkFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   const maxRows = 500;
-  const rows = entries.slice(0, maxRows);
+  const rows = filtered.slice(0, maxRows);
   rows.forEach((entry) => {
     const row = document.createElement("div");
     row.className = "data-row";
@@ -450,10 +774,10 @@ function renderNetworkPanel() {
     });
     networkList.appendChild(row);
   });
-  if (entries.length > maxRows) {
+  if (filtered.length > maxRows) {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = `Showing first ${maxRows} entries of ${entries.length}.`;
+    note.textContent = `Showing first ${maxRows} entries of ${filtered.length}.`;
     networkList.appendChild(note);
   }
   const activeRow = networkList.querySelector(".data-row.active");
@@ -467,14 +791,20 @@ function renderConsolePanel() {
     return;
   }
   const entries = state.consoleEntries || [];
+  const allowedLevels = getEffectiveConsoleLevels();
+  const filtered = entries.filter((entry) =>
+    allowedLevels.includes(normalizeConsoleLevel(entry.level))
+  );
   consoleList.innerHTML = "";
   if (!entries.length) {
     consoleEmpty.classList.remove("hidden");
+    consoleFilteredEmpty?.classList.add("hidden");
     return;
   }
   consoleEmpty.classList.add("hidden");
+  consoleFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   const maxRows = 500;
-  const rows = entries.slice(0, maxRows);
+  const rows = filtered.slice(0, maxRows);
   rows.forEach((entry) => {
     const row = document.createElement("div");
     row.className = "data-row";
@@ -497,10 +827,10 @@ function renderConsolePanel() {
     });
     consoleList.appendChild(row);
   });
-  if (entries.length > maxRows) {
+  if (filtered.length > maxRows) {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = `Showing first ${maxRows} entries of ${entries.length}.`;
+    note.textContent = `Showing first ${maxRows} entries of ${filtered.length}.`;
     consoleList.appendChild(note);
   }
   const activeRow = consoleList.querySelector(".data-row.active");
@@ -916,6 +1246,11 @@ async function ensureNetworkLogsLoaded() {
     state.networkEntries = entries;
     state.networkIndex = indexEntriesById(entries);
     state.loadedArtifacts.network = true;
+    state.incidents = mergeIncidents(
+      state.incidents,
+      buildIncidentsFromNetwork(entries)
+    );
+    renderIncidentRail();
   } catch (error) {
     state.networkIndex = new Map();
     state.networkEntries = [];
@@ -935,6 +1270,11 @@ async function ensureConsoleLogsLoaded() {
     state.consoleEntries = entries;
     state.consoleIndex = indexEntriesById(entries);
     state.loadedArtifacts.console = true;
+    state.incidents = mergeIncidents(
+      state.incidents,
+      buildIncidentsFromConsole(entries)
+    );
+    renderIncidentRail();
   } catch (error) {
     state.consoleIndex = new Map();
     state.consoleEntries = [];
@@ -996,6 +1336,9 @@ function renderTimelineTicks(events) {
   }
   events.forEach((ev) => {
     const markerClass = getTimelineMarkerClass(ev);
+    const isErrorEvent =
+      ev.isError ||
+      (ev.raw && typeof ev.raw.type === "string" && ev.raw.type.includes("error"));
     if (
       markerClass === "marker" ||
       markerClass === "screenshot" ||
@@ -1004,6 +1347,9 @@ function renderTimelineTicks(events) {
       markerClass === "recording" ||
       ev.isError
     ) {
+      if (state.filters.errorOnly && !isErrorEvent) {
+        return;
+      }
       const tick = document.createElement("div");
       tick.className = "timeline-tick";
       if (markerClass) {
@@ -1045,7 +1391,7 @@ function filterEvents(events) {
     if (!filters[ev.type]) {
       return false;
     }
-    if (filters.errorsOnly && !ev.isError) {
+    if ((filters.errorsOnly || state.filters.errorOnly) && !ev.isError) {
       return false;
     }
     if (filters.query) {
@@ -1250,6 +1596,12 @@ function handleEventSelection(ev, syncTimeline = false) {
   }
   state.selectedEventId = ev.id;
   state.currentSeekMs = ev.t_ms || 0;
+  if (ev.refs?.ref) {
+    const matched = state.incidents.find((inc) => inc.sourceRef === ev.refs.ref);
+    if (matched) {
+      state.filters.selectedIncidentId = matched.id;
+    }
+  }
   const panel = mapEventToPanel(ev);
   setActivePanel(panel);
   renderDetails(ev);
@@ -1271,11 +1623,38 @@ function handleEventSelection(ev, syncTimeline = false) {
   if (state.videoSyncAvailable) {
     ensureVideoLoaded().then(() => syncVideoToTms(state.currentSeekMs));
   }
+  renderIncidentRail();
   if (syncTimeline) {
     setCurrentTms(ev.t_ms, false);
   } else {
     refreshView();
   }
+}
+
+function handleIncidentSelection(incident) {
+  if (!incident) {
+    return;
+  }
+  state.filters.selectedIncidentId = incident.id;
+  state.currentSeekMs = incident.timestampMs || 0;
+  if (state.videoSyncAvailable) {
+    ensureVideoLoaded().then(() => syncVideoToTms(state.currentSeekMs));
+  }
+  if (incident.panelTarget === "network") {
+    setActivePanel("network");
+    state.selectedNetworkId = incident.sourceRef;
+    ensureNetworkLogsLoaded().then(renderNetworkPanel);
+  } else if (incident.panelTarget === "console") {
+    setActivePanel("console");
+    state.selectedConsoleId = incident.sourceRef;
+    ensureConsoleLogsLoaded().then(renderConsolePanel);
+  } else {
+    setActivePanel("timeline");
+  }
+  if (incident.timestampMs != null) {
+    setCurrentTms(incident.timestampMs, false);
+  }
+  renderIncidentRail();
 }
 
 function syncVideoToTms(tms) {
@@ -1421,6 +1800,9 @@ async function loadZip(file) {
     updateTimelineSummary(state.manifest);
     renderScreenshotsPanel();
     setActivePanel("timeline");
+    state.incidents = buildIncidentsFromManifest(state.manifest);
+    renderIncidentRail();
+    applySummaryInteractions();
   } else {
     const sessionLogName = selectSessionLogFile(zip.files);
     const screenshotTimes = screenshotFiles
@@ -1576,6 +1958,19 @@ function resetState() {
   state.videoMissing = false;
   state.selectedEventId = null;
   state.activePanel = "timeline";
+  state.selectedScreenshotId = null;
+  state.selectedNetworkId = null;
+  state.selectedConsoleId = null;
+  state.currentSeekMs = 0;
+  state.filters = {
+    errorOnly: false,
+    networkStatusBucket: "all",
+    consoleLevels: ["error", "warning", "info", "log", "debug"],
+    selectedIncidentId: null,
+    incidentSourcePanel: null,
+    showIncidentRail: true,
+  };
+  state.incidents = [];
   state.videoSyncAvailable = false;
   state.partialMode = false;
   eventIdCounter = 0;
@@ -1612,6 +2007,18 @@ function resetState() {
   if (timelineSummary) {
     timelineSummary.textContent = "";
   }
+  if (incidentPanel) {
+    incidentPanel.classList.add("hidden");
+  }
+  if (errorOnlyToggle) {
+    errorOnlyToggle.checked = false;
+  }
+  networkFilterChips.forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.netFilter === "all");
+  });
+  consoleLevelChips.forEach((chip) => {
+    chip.classList.toggle("active", true);
+  });
   setActivePanel("timeline");
   clearError();
   clearLoadedInfo();
@@ -1655,6 +2062,63 @@ panelTabs.forEach((tab) => {
     }
     if (panel === "console") {
       ensureConsoleLogsLoaded().then(renderConsolePanel);
+    }
+  });
+});
+
+if (errorOnlyToggle) {
+  errorOnlyToggle.addEventListener("change", () => {
+    state.filters.errorOnly = errorOnlyToggle.checked;
+    if (filterErrors) {
+      filterErrors.checked = state.filters.errorOnly || filterErrors.checked;
+    }
+    renderIncidentRail();
+    renderTimelineTicks(state.events);
+    if (state.loadedArtifacts.network) {
+      renderNetworkPanel();
+    }
+    if (state.loadedArtifacts.console) {
+      renderConsolePanel();
+    }
+  });
+}
+
+networkFilterChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.disabled) {
+      return;
+    }
+    networkFilterChips.forEach((btn) => btn.classList.remove("active"));
+    chip.classList.add("active");
+    state.filters.networkStatusBucket = chip.dataset.netFilter || "all";
+    renderIncidentRail();
+    if (state.loadedArtifacts.network) {
+      renderNetworkPanel();
+    }
+  });
+});
+
+consoleLevelChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.disabled) {
+      return;
+    }
+    const level = chip.dataset.consoleLevel;
+    if (!level) {
+      return;
+    }
+    const levels = new Set(state.filters.consoleLevels);
+    if (levels.has(level)) {
+      levels.delete(level);
+      chip.classList.remove("active");
+    } else {
+      levels.add(level);
+      chip.classList.add("active");
+    }
+    state.filters.consoleLevels = Array.from(levels);
+    renderIncidentRail();
+    if (state.loadedArtifacts.console) {
+      renderConsolePanel();
     }
   });
 });
