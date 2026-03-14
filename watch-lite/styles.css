@@ -225,13 +225,18 @@ body {
   width: 100%;
 }
 
+.timeline-summary {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
 .timeline-ticks {
   position: absolute;
   left: 0;
   right: 0;
   top: 10px;
   height: 10px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .timeline-tick {
@@ -241,10 +246,32 @@ body {
   height: 10px;
   background: var(--accent);
   opacity: 0.6;
+  cursor: pointer;
+}
+
+.timeline-tick.selected {
+  opacity: 1;
+  height: 14px;
 }
 
 .timeline-tick.error {
   background: var(--danger);
+}
+
+.timeline-tick.screenshot {
+  background: #0ea5e9;
+}
+
+.timeline-tick.network {
+  background: #f97316;
+}
+
+.timeline-tick.console {
+  background: #8b5cf6;
+}
+
+.timeline-tick.recording {
+  background: #22c55e;
 }
 
 .video-panel video {
@@ -334,6 +361,103 @@ body {
 .details-kv {
   display: grid;
   gap: 2px;
+}
+
+.panel-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tab-button {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  background: #eff6ff;
+  border-color: rgba(37, 99, 235, 0.5);
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.panel-group.hidden {
+  display: none;
+}
+
+.screenshots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.screenshot-item {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  align-items: center;
+}
+
+.screenshot-item.active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: #eff6ff;
+}
+
+.screenshot-thumb {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.screenshot-preview img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.data-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.data-row {
+  display: grid;
+  grid-template-columns: 64px 48px 1fr;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.data-row.active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: #eff6ff;
+}
+
+.data-row .muted {
+  color: var(--muted);
+}
+
+.empty-state {
+  margin-top: 8px;
+  font-size: 12px;
 }
 
 @media (max-width: 960px) {

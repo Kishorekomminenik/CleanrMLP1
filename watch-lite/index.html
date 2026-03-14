@@ -76,6 +76,7 @@
               <h2>Timeline</h2>
               <span id="currentTime" class="muted">00:00</span>
             </div>
+            <div id="timelineSummary" class="timeline-summary muted"></div>
             <div class="timeline-track">
               <input id="timeline" type="range" min="0" max="0" value="0" />
               <div id="timelineTicks" class="timeline-ticks"></div>
@@ -114,7 +115,22 @@
             <div id="summarySignals" class="summary-signals muted"></div>
           </div>
 
-          <div class="panel filters">
+          <div class="panel panel-tabs">
+            <button class="tab-button active" type="button" data-panel="timeline">
+              Timeline
+            </button>
+            <button class="tab-button" type="button" data-panel="screenshots">
+              Screenshots
+            </button>
+            <button class="tab-button" type="button" data-panel="network">
+              Network
+            </button>
+            <button class="tab-button" type="button" data-panel="console">
+              Console
+            </button>
+          </div>
+
+          <div class="panel filters" data-panel="timeline">
             <h2>Filters</h2>
             <div class="filter-row">
               <label><input type="checkbox" id="filterMarkers" checked /> Markers</label>
@@ -133,15 +149,53 @@
             />
           </div>
 
-          <div class="panel event-list-panel">
-            <h2>Events</h2>
-            <div id="eventList" class="event-list"></div>
+          <div class="panel-group" data-panel="timeline">
+            <div class="panel event-list-panel">
+              <h2>Events</h2>
+              <div id="eventList" class="event-list"></div>
+            </div>
+
+            <div class="panel details-panel">
+              <h2>Details</h2>
+              <div id="detailsBody" class="details-body muted">
+                Select an event to see details.
+              </div>
+            </div>
           </div>
 
-          <div class="panel details-panel">
-            <h2>Details</h2>
-            <div id="detailsBody" class="details-body muted">
-              Select an event to see details.
+          <div class="panel-group hidden" data-panel="screenshots">
+            <div class="panel screenshots-panel">
+              <h2>Screenshots</h2>
+              <div id="screenshotsList" class="screenshots-list"></div>
+              <div id="screenshotsEmpty" class="empty-state muted hidden">
+                No screenshots available for this session.
+              </div>
+            </div>
+            <div class="panel screenshot-preview-panel">
+              <h2>Preview</h2>
+              <div id="screenshotPreview" class="screenshot-preview muted">
+                Select a screenshot to preview.
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-group hidden" data-panel="network">
+            <div class="panel network-panel">
+              <h2>Network</h2>
+              <div id="networkList" class="data-list"></div>
+              <div id="networkEmpty" class="empty-state muted hidden">
+                No network logs available for this session.
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-group hidden" data-panel="console">
+            <div class="panel console-panel">
+              <h2>Console</h2>
+              <div id="consoleList" class="data-list"></div>
+              <div id="consoleEmpty" class="empty-state muted hidden">
+                No console logs available for this session.
+              </div>
             </div>
           </div>
         </section>

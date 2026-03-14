@@ -33,6 +33,17 @@ const summaryErrors = document.getElementById("summaryErrors");
 const summaryScreenshots = document.getElementById("summaryScreenshots");
 const summaryRecording = document.getElementById("summaryRecording");
 const summarySignals = document.getElementById("summarySignals");
+const timelineSummary = document.getElementById("timelineSummary");
+const panelTabs = Array.from(document.querySelectorAll(".tab-button"));
+const panelGroups = Array.from(document.querySelectorAll(".panel-group"));
+const panelsWithFilters = Array.from(document.querySelectorAll(".filters"));
+const screenshotsList = document.getElementById("screenshotsList");
+const screenshotsEmpty = document.getElementById("screenshotsEmpty");
+const screenshotPreview = document.getElementById("screenshotPreview");
+const networkList = document.getElementById("networkList");
+const networkEmpty = document.getElementById("networkEmpty");
+const consoleList = document.getElementById("consoleList");
+const consoleEmpty = document.getElementById("consoleEmpty");
 
 const state = {
   zip: null,
@@ -49,10 +60,23 @@ const state = {
   videoUrl: null,
   videoMissing: false,
   selectedEventId: null,
+  activePanel: "timeline",
+  selectedScreenshotId: null,
+  selectedNetworkId: null,
+  selectedConsoleId: null,
+  currentSeekMs: 0,
+  loadedArtifacts: {
+    network: false,
+    console: false,
+    recording: false,
+    screenshots: false,
+  },
   videoSyncAvailable: false,
   partialMode: false,
   networkIndex: null,
   consoleIndex: null,
+  networkEntries: [],
+  consoleEntries: [],
   loadingNetwork: false,
   loadingConsole: false,
 };
@@ -77,6 +101,14 @@ function formatTime(ms) {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function formatTimeWithMs(ms) {
+  const totalMs = Math.max(0, Math.floor(ms));
+  const minutes = String(Math.floor(totalMs / 60000)).padStart(2, "0");
+  const seconds = String(Math.floor((totalMs % 60000) / 1000)).padStart(2, "0");
+  const millis = String(totalMs % 1000).padStart(3, "0");
+  return `${minutes}:${seconds}.${millis}`;
 }
 
 function showError(message, isWarning = false) {
@@ -226,6 +258,16 @@ function applyManifestAvailability(manifest) {
   }
 
   videoPanel.classList.toggle("hidden", !hasRecording);
+
+  if (!hasNetwork) {
+    networkEmpty?.classList.remove("hidden");
+  }
+  if (!hasConsole) {
+    consoleEmpty?.classList.remove("hidden");
+  }
+  if (!hasScreenshots) {
+    screenshotsEmpty?.classList.remove("hidden");
+  }
 }
 
 function renderSummaryFromManifest(manifest) {
@@ -259,6 +301,211 @@ function renderSummaryFromManifest(manifest) {
       ? manifest.summary.topSignals
       : [];
     summarySignals.textContent = signals.length ? signals.join(" • ") : "";
+  }
+}
+
+function updateTimelineSummary(manifest) {
+  if (!timelineSummary) {
+    return;
+  }
+  if (!manifest || !manifest.summary) {
+    timelineSummary.textContent = "";
+    return;
+  }
+  const parts = [];
+  if (typeof manifest.summary.networkRequests === "number") {
+    parts.push(`${manifest.summary.networkRequests} requests`);
+  }
+  if (typeof manifest.summary.consoleErrors === "number") {
+    parts.push(`${manifest.summary.consoleErrors} console errors`);
+  }
+  if (typeof manifest.summary.networkFailures === "number") {
+    parts.push(`${manifest.summary.networkFailures} network failures`);
+  }
+  if (typeof manifest.summary.screenshots === "number") {
+    parts.push(`${manifest.summary.screenshots} screenshots`);
+  }
+  if (typeof manifest.summary.hasRecording === "boolean") {
+    parts.push(manifest.summary.hasRecording ? "recording" : "no recording");
+  }
+  timelineSummary.textContent = parts.join(" • ");
+}
+
+function renderScreenshotsPanel() {
+  if (!screenshotsList || !screenshotsEmpty) {
+    return;
+  }
+  const items = state.manifest?.artifacts?.screenshots?.items || [];
+  screenshotsList.innerHTML = "";
+  if (!items.length) {
+    screenshotsEmpty.classList.remove("hidden");
+    return;
+  }
+  screenshotsEmpty.classList.add("hidden");
+  items.forEach((shot) => {
+    const row = document.createElement("div");
+    row.className = "screenshot-item";
+    if (state.selectedScreenshotId && shot.id === state.selectedScreenshotId) {
+      row.classList.add("active");
+    }
+    const thumb = document.createElement("img");
+    thumb.className = "screenshot-thumb";
+    const baseName = shot.path ? shot.path.split("/").pop() : null;
+    if (baseName && state.screenshotUrls.has(baseName)) {
+      thumb.src = state.screenshotUrls.get(baseName);
+    }
+    const meta = document.createElement("div");
+    const title = document.createElement("div");
+    title.textContent = shot.label || shot.kind || "Screenshot";
+    const subtitle = document.createElement("div");
+    subtitle.className = "muted";
+    subtitle.textContent = formatTimeWithMs(shot.timestampMs || 0);
+    meta.appendChild(title);
+    meta.appendChild(subtitle);
+    row.appendChild(thumb);
+    row.appendChild(meta);
+    row.addEventListener("click", () => {
+      state.selectedScreenshotId = shot.id;
+      handleEventSelection(
+        {
+          id: shot.id,
+          t_ms: shot.timestampMs || 0,
+          type: "screenshot",
+          summary: shot.label || "Screenshot",
+          refs: { ref: shot.id },
+          raw: { type: "screenshot" },
+        },
+        true
+      );
+      renderScreenshotsPanel();
+      renderScreenshotPreview();
+    });
+    screenshotsList.appendChild(row);
+  });
+  renderScreenshotPreview();
+}
+
+function renderScreenshotPreview() {
+  if (!screenshotPreview) {
+    return;
+  }
+  const shot = state.selectedScreenshotId
+    ? state.screenshotById.get(state.selectedScreenshotId)
+    : null;
+  if (!shot) {
+    screenshotPreview.textContent = "Select a screenshot to preview.";
+    return;
+  }
+  screenshotPreview.innerHTML = "";
+  const img = document.createElement("img");
+  const baseName = shot.path ? shot.path.split("/").pop() : null;
+  if (baseName && state.screenshotUrls.has(baseName)) {
+    img.src = state.screenshotUrls.get(baseName);
+  }
+  const meta = document.createElement("div");
+  meta.className = "muted";
+  const pieces = [
+    shot.kind ? `Kind: ${shot.kind}` : null,
+    typeof shot.timestampMs === "number"
+      ? `Time: ${formatTimeWithMs(shot.timestampMs)}`
+      : null,
+  ].filter(Boolean);
+  meta.textContent = pieces.join(" • ");
+  screenshotPreview.appendChild(img);
+  screenshotPreview.appendChild(meta);
+}
+
+function renderNetworkPanel() {
+  if (!networkList || !networkEmpty) {
+    return;
+  }
+  const entries = state.networkEntries || [];
+  networkList.innerHTML = "";
+  if (!entries.length) {
+    networkEmpty.classList.remove("hidden");
+    return;
+  }
+  networkEmpty.classList.add("hidden");
+  const maxRows = 500;
+  const rows = entries.slice(0, maxRows);
+  rows.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "data-row";
+    if (state.selectedNetworkId && entry.id === state.selectedNetworkId) {
+      row.classList.add("active");
+    }
+    const time = document.createElement("div");
+    time.className = "muted";
+    time.textContent = formatTimeWithMs(entry.timestamp_ms || 0);
+    const status = document.createElement("div");
+    status.textContent = entry.response_status || entry.status || "-";
+    const url = document.createElement("div");
+    url.textContent = `${entry.method || ""} ${entry.url || ""}`.trim();
+    row.appendChild(time);
+    row.appendChild(status);
+    row.appendChild(url);
+    row.addEventListener("click", () => {
+      state.selectedNetworkId = entry.id;
+      renderNetworkPanel();
+    });
+    networkList.appendChild(row);
+  });
+  if (entries.length > maxRows) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = `Showing first ${maxRows} entries of ${entries.length}.`;
+    networkList.appendChild(note);
+  }
+  const activeRow = networkList.querySelector(".data-row.active");
+  if (activeRow) {
+    activeRow.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function renderConsolePanel() {
+  if (!consoleList || !consoleEmpty) {
+    return;
+  }
+  const entries = state.consoleEntries || [];
+  consoleList.innerHTML = "";
+  if (!entries.length) {
+    consoleEmpty.classList.remove("hidden");
+    return;
+  }
+  consoleEmpty.classList.add("hidden");
+  const maxRows = 500;
+  const rows = entries.slice(0, maxRows);
+  rows.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "data-row";
+    if (state.selectedConsoleId && entry.id === state.selectedConsoleId) {
+      row.classList.add("active");
+    }
+    const time = document.createElement("div");
+    time.className = "muted";
+    time.textContent = formatTimeWithMs(entry.timestamp_ms || 0);
+    const level = document.createElement("div");
+    level.textContent = (entry.level || "log").toUpperCase();
+    const msg = document.createElement("div");
+    msg.textContent = entry.message || "";
+    row.appendChild(time);
+    row.appendChild(level);
+    row.appendChild(msg);
+    row.addEventListener("click", () => {
+      state.selectedConsoleId = entry.id;
+      renderConsolePanel();
+    });
+    consoleList.appendChild(row);
+  });
+  if (entries.length > maxRows) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = `Showing first ${maxRows} entries of ${entries.length}.`;
+    consoleList.appendChild(note);
+  }
+  const activeRow = consoleList.querySelector(".data-row.active");
+  if (activeRow) {
+    activeRow.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -666,9 +913,12 @@ async function ensureNetworkLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
+    state.networkEntries = entries;
     state.networkIndex = indexEntriesById(entries);
+    state.loadedArtifacts.network = true;
   } catch (error) {
     state.networkIndex = new Map();
+    state.networkEntries = [];
   } finally {
     state.loadingNetwork = false;
   }
@@ -682,9 +932,12 @@ async function ensureConsoleLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
+    state.consoleEntries = entries;
     state.consoleIndex = indexEntriesById(entries);
+    state.loadedArtifacts.console = true;
   } catch (error) {
     state.consoleIndex = new Map();
+    state.consoleEntries = [];
   } finally {
     state.loadingConsole = false;
   }
@@ -709,21 +962,63 @@ async function ensureVideoLoaded() {
   state.videoMissing = false;
 }
 
+function getTimelineMarkerClass(ev) {
+  if (ev.raw && typeof ev.raw.type === "string") {
+    if (ev.raw.type === "screenshot") {
+      return "screenshot";
+    }
+    if (ev.raw.type.startsWith("network")) {
+      return "network";
+    }
+    if (ev.raw.type.startsWith("console")) {
+      return "console";
+    }
+    if (ev.raw.type.startsWith("recording")) {
+      return "recording";
+    }
+  }
+  if (ev.type === "screenshot") {
+    return "screenshot";
+  }
+  if (ev.type === "network") {
+    return "network";
+  }
+  if (ev.type === "console") {
+    return "console";
+  }
+  return ev.isError ? "error" : "marker";
+}
+
 function renderTimelineTicks(events) {
   timelineTicks.innerHTML = "";
   if (!state.durationMs) {
     return;
   }
   events.forEach((ev) => {
-    if (ev.type === "marker" || ev.type === "screenshot" || ev.isError) {
+    const markerClass = getTimelineMarkerClass(ev);
+    if (
+      markerClass === "marker" ||
+      markerClass === "screenshot" ||
+      markerClass === "network" ||
+      markerClass === "console" ||
+      markerClass === "recording" ||
+      ev.isError
+    ) {
       const tick = document.createElement("div");
       tick.className = "timeline-tick";
+      if (markerClass) {
+        tick.classList.add(markerClass);
+      }
       if (ev.isError) {
         tick.classList.add("error");
       }
       const left = (ev.t_ms / state.durationMs) * 100;
       tick.style.left = `${left}%`;
       tick.title = ev.summary;
+      if (state.selectedEventId && ev.id === state.selectedEventId) {
+        tick.classList.add("selected");
+      }
+      tick.addEventListener("click", () => handleEventSelection(ev, true));
       timelineTicks.appendChild(tick);
     }
   });
@@ -735,6 +1030,7 @@ function buildFilters() {
     network: filterNetwork.checked,
     console: filterConsole.checked,
     screenshot: filterScreenshots.checked,
+    recording: true,
     errorsOnly: filterErrors.checked,
     query: searchInput.value.trim().toLowerCase(),
   };
@@ -762,6 +1058,22 @@ function filterEvents(events) {
   });
 }
 
+function getEventBadge(ev) {
+  if (ev.raw && typeof ev.raw.type === "string") {
+    const rawType = ev.raw.type;
+    if (rawType.startsWith("recording")) {
+      return "REC";
+    }
+    if (rawType.startsWith("network")) {
+      return "NET";
+    }
+    if (rawType.startsWith("console")) {
+      return "CON";
+    }
+  }
+  return EVENT_ICONS[ev.type] || ev.type;
+}
+
 function renderEventList() {
   eventList.innerHTML = "";
   state.filtered.forEach((ev, index) => {
@@ -780,7 +1092,7 @@ function renderEventList() {
     summary.className = "event-summary";
     const badge = document.createElement("span");
     badge.className = "event-badge";
-    badge.textContent = EVENT_ICONS[ev.type] || ev.type;
+    badge.textContent = getEventBadge(ev);
     summary.appendChild(badge);
     const text = document.createElement("span");
     text.textContent = ev.summary;
@@ -788,7 +1100,7 @@ function renderEventList() {
 
     item.appendChild(time);
     item.appendChild(summary);
-    item.addEventListener("click", () => selectEvent(ev, true));
+    item.addEventListener("click", () => handleEventSelection(ev, true));
     eventList.appendChild(item);
   });
 }
@@ -889,6 +1201,83 @@ function renderDetails(ev) {
   }
 }
 
+function setActivePanel(panel) {
+  state.activePanel = panel;
+  panelTabs.forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.panel === panel);
+  });
+  panelGroups.forEach((group) => {
+    const active = group.dataset.panel === panel;
+    group.classList.toggle("hidden", !active);
+  });
+  panelsWithFilters.forEach((panelEl) => {
+    const active = panelEl.dataset.panel === panel;
+    panelEl.classList.toggle("hidden", !active);
+  });
+}
+
+function mapEventToPanel(ev) {
+  if (ev.raw && typeof ev.raw.type === "string") {
+    const rawType = ev.raw.type;
+    if (rawType === "screenshot") {
+      return "screenshots";
+    }
+    if (rawType.startsWith("network")) {
+      return "network";
+    }
+    if (rawType.startsWith("console")) {
+      return "console";
+    }
+    if (rawType.startsWith("recording")) {
+      return "timeline";
+    }
+  }
+  if (ev.type === "screenshot") {
+    return "screenshots";
+  }
+  if (ev.type === "network") {
+    return "network";
+  }
+  if (ev.type === "console") {
+    return "console";
+  }
+  return "timeline";
+}
+
+function handleEventSelection(ev, syncTimeline = false) {
+  if (!ev) {
+    return;
+  }
+  state.selectedEventId = ev.id;
+  state.currentSeekMs = ev.t_ms || 0;
+  const panel = mapEventToPanel(ev);
+  setActivePanel(panel);
+  renderDetails(ev);
+  if (panel === "screenshots") {
+    const refId = ev.refs?.ref || null;
+    if (refId) {
+      state.selectedScreenshotId = refId;
+    }
+    renderScreenshotsPanel();
+  }
+  if (panel === "network") {
+    state.selectedNetworkId = ev.refs?.ref || null;
+    ensureNetworkLogsLoaded().then(renderNetworkPanel);
+  }
+  if (panel === "console") {
+    state.selectedConsoleId = ev.refs?.ref || null;
+    ensureConsoleLogsLoaded().then(renderConsolePanel);
+  }
+  if (state.videoSyncAvailable) {
+    ensureVideoLoaded().then(() => syncVideoToTms(state.currentSeekMs));
+  }
+  if (syncTimeline) {
+    setCurrentTms(ev.t_ms, false);
+  } else {
+    refreshView();
+  }
+}
+
 function syncVideoToTms(tms) {
   if (!videoEl || !state.videoSyncAvailable) {
     return;
@@ -910,6 +1299,8 @@ function findNearestEvent(events, tms) {
 
 function setCurrentTms(tms, snap = true) {
   state.currentTms = Math.max(0, tms);
+  state.currentSeekMs = state.currentTms;
+  setActivePanel(state.activePanel || "timeline");
   updateTimeline();
   syncVideoToTms(state.currentTms);
   if (snap) {
@@ -1027,6 +1418,9 @@ async function loadZip(file) {
       "session.json";
     applyManifestAvailability(state.manifest);
     renderSummaryFromManifest(state.manifest);
+    updateTimelineSummary(state.manifest);
+    renderScreenshotsPanel();
+    setActivePanel("timeline");
   } else {
     const sessionLogName = selectSessionLogFile(zip.files);
     const screenshotTimes = screenshotFiles
@@ -1140,6 +1534,9 @@ async function loadZip(file) {
   setLoadedInfo(file.name, sessionLabel);
 
   updateTimeline();
+  if (!state.manifest && timelineSummary) {
+    timelineSummary.textContent = `${state.events.length} events`;
+  }
   const nearest = findNearestEvent(state.events, state.currentTms);
   if (nearest) {
     state.selectedEventId = nearest.id;
@@ -1178,6 +1575,7 @@ function resetState() {
   state.missingScreenshots = [];
   state.videoMissing = false;
   state.selectedEventId = null;
+  state.activePanel = "timeline";
   state.videoSyncAvailable = false;
   state.partialMode = false;
   eventIdCounter = 0;
@@ -1211,6 +1609,10 @@ function resetState() {
   if (summaryPanel) {
     summaryPanel.classList.add("hidden");
   }
+  if (timelineSummary) {
+    timelineSummary.textContent = "";
+  }
+  setActivePanel("timeline");
   clearError();
   clearLoadedInfo();
 }
@@ -1240,6 +1642,22 @@ timeline.addEventListener("input", () => {
   (el) => el.addEventListener("change", refreshView)
 );
 searchInput.addEventListener("input", refreshView);
+
+panelTabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const panel = tab.dataset.panel || "timeline";
+    setActivePanel(panel);
+    if (panel === "screenshots") {
+      renderScreenshotsPanel();
+    }
+    if (panel === "network") {
+      ensureNetworkLogsLoaded().then(renderNetworkPanel);
+    }
+    if (panel === "console") {
+      ensureConsoleLogsLoaded().then(renderConsolePanel);
+    }
+  });
+});
 
 videoPlay.addEventListener("click", async () => {
   await ensureVideoLoaded();
