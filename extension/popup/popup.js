@@ -2612,6 +2612,14 @@ async function handleSessionScreenshot() {
     setLauncherError(statusResponse.error || "Failed to capture screenshot.");
     return;
   }
+  const sessionMode =
+    statusResponse.state.session && statusResponse.state.session.mode
+      ? statusResponse.state.session.mode
+      : null;
+  if (sessionMode !== "session") {
+    handleLauncherCapture("snap");
+    return;
+  }
   const sessionActive =
     statusResponse.state.recordingStatus === "recording" ||
     statusResponse.state.recordingStatus === "paused" ||

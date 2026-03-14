@@ -3666,9 +3666,10 @@ function checkStartMode(mode, options = {}) {
   return { allowed: false, reason: "session_exists", message };
 }
 
-function createSession(mode, tab) {
+function createSession(mode, tab, options = {}) {
   chrome.storage.session.remove(["annotationSettings"]);
   const monotonicBaseline = captureMonotonicBaseline();
+  const lightweight = options.lightweight === true;
   session = {
     session_id: createSessionId(),
     created_at: nowIso(),
@@ -3691,8 +3692,12 @@ function createSession(mode, tab) {
     diagnostics: [],
     monotonic: monotonicBaseline.monotonic,
     monotonic_available: monotonicBaseline.monotonic_available,
+    lightweight,
   };
   try {
+    if (lightweight) {
+      return;
+    }
     const reportConfig = getReportConfig();
     if (
       reportConfig.enabled &&
@@ -3736,7 +3741,7 @@ function createSession(mode, tab) {
   }
 }
 
-function ensureSessionForMode(mode, tab) {
+function ensureSessionForMode(mode, tab, options = {}) {
   if (session) {
     if (session.mode === mode && session.state === "error") {
       session.state = "capturing";
@@ -3746,7 +3751,7 @@ function ensureSessionForMode(mode, tab) {
     }
     throw new Error("A session already exists. Reset to start a new capture.");
   }
-  createSession(mode, tab);
+  createSession(mode, tab, options);
 }
 
 function setSessionState(stateValue) {
@@ -6770,7 +6775,7 @@ async function captureScreenshot() {
     }
     state.screenshot.dataUrl = dataUrl;
     state.screenshot.capturedAt = timestampIso;
-    if (session) {
+    if (session && !session.lightweight) {
       const tMs = computeSessionOffsetMs(timestampIso);
       const index = session.screenshots.length + 1;
       const blob = dataUrlToBlob(dataUrl);
@@ -8193,7 +8198,9 @@ async function startRecording(streamId, tabId, mimeType, options = {}) {
       }
 
       const sessionMode = options.sessionMode === "session" ? "session" : "recording";
-      ensureSessionForMode(sessionMode, tab);
+      ensureSessionForMode(sessionMode, tab, {
+        lightweight: sessionMode === "recording",
+      });
       setSessionState("capturing");
       syncRecordingState(response, { targetTabId: tab.id });
       await updateRecordingSessionRecord(recordingSessionId, { status: "recording" });
