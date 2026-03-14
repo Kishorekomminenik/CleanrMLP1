@@ -8380,6 +8380,9 @@ async function stopRecording() {
       return { ok: true, alreadyStopped: true };
     }
     setRecordingState("stopping", { targetTabId: recordingTabId });
+    if (session && session.mode === "session") {
+      setSessionState("finalizing");
+    }
     logRecordingDiagnostic("stop_begin", {
       stateBefore: "recording",
       stateAfter: "stopping",
@@ -8664,6 +8667,9 @@ async function stopNetworkCapture() {
 
   state.console.active = false;
   state.console.stoppedAt = nowIso();
+  if (session && session.mode === "session") {
+    setSessionState("finalizing");
+  }
   markSessionStopped();
   rotationSuppressed = true;
   finalizePendingNetworkEntries("manual_stop");

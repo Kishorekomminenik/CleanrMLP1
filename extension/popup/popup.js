@@ -1959,6 +1959,7 @@ function updateLauncherSessionUI(context) {
   }
   const {
     sessionMode,
+    sessionState,
     sessionActive,
     sessionPaused,
     sessionCaptured,
@@ -2009,6 +2010,8 @@ function updateLauncherSessionUI(context) {
       } else if (sessionPaused || recordOnlyActive) {
         label = sessionPaused ? "Screen Recording Paused" : "Screen Recording";
       }
+    } else if (sessionState === "finalizing") {
+      label = "Finalizing Session";
     } else if (sessionCaptured) {
       label = "Session Captured";
     } else if (sessionPaused) {
@@ -2028,6 +2031,8 @@ function updateLauncherSessionUI(context) {
       } else if (recordOnlyActive) {
         message = "Recording screen only. Logs are not captured.";
       }
+    } else if (sessionState === "finalizing") {
+      message = "Finalizing session artifacts. Export will unlock shortly.";
     } else if (sessionCaptured) {
       message = "Session captured. Export to inspect in the viewer.";
     } else if (sessionPaused) {
@@ -2141,7 +2146,8 @@ function updateStatusUI(state) {
   const sessionActive =
     sessionState === "capturing" ||
     sessionState === "paused" ||
-    sessionState === "recording";
+    sessionState === "recording" ||
+    sessionState === "finalizing";
   const allowScreenshots = currentMode === "screenshot" ? true : sessionActive;
   const modeLabelMap = {
     recording: "Screen Recording",
@@ -2172,7 +2178,9 @@ function updateStatusUI(state) {
     state.artifacts && state.artifacts.hasAnyArtifacts
   );
   const sessionCaptured =
-    sessionMode === "session" && !sessionActive && hasAnyArtifacts;
+    sessionMode === "session" &&
+    sessionState === "stopped" &&
+    hasAnyArtifacts;
   const recordOnlyActive =
     sessionMode === "recording" &&
     (sessionState === "recording" || sessionState === "paused");
@@ -2182,6 +2190,7 @@ function updateStatusUI(state) {
     Boolean(state.artifacts && state.artifacts.hasRecording);
   updateLauncherSessionUI({
     sessionMode,
+    sessionState,
     sessionActive,
     sessionPaused: sessionState === "paused",
     sessionCaptured,
