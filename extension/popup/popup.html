@@ -39,18 +39,115 @@
           </div>
         </div>
         <div class="launcher-actions">
-          <button class="launcher-btn primary" type="button" data-action="launcher:snap">
-            Screenshot
-          </button>
-          <button class="launcher-btn" type="button" data-action="launcher:full">
-            Full Page
-          </button>
-          <button class="launcher-btn" type="button" data-action="launcher:record">
-            Record Session
-          </button>
-          <button class="launcher-btn" type="button" data-action="launcher:logs">
-            Capture Logs
-          </button>
+          <div class="launcher-section">
+            <div class="launcher-section-title">Session Capture</div>
+            <button
+              id="btn_session_start"
+              class="launcher-btn primary"
+              type="button"
+              data-action="launcher:session_start"
+            >
+              Start Session
+            </button>
+            <div class="launcher-row">
+              <button
+                id="btn_record_screen"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:record_screen"
+              >
+                Record Screen
+              </button>
+              <button
+                id="btn_session_screenshot"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_screenshot"
+              >
+                Screenshot
+              </button>
+            </div>
+            <button
+              id="btn_session_fullpage"
+              class="launcher-btn"
+              type="button"
+              data-action="launcher:session_fullpage"
+            >
+              Full Page
+            </button>
+            <div id="launcher_screenshot_hint" class="launcher-hint">
+              Start a session to add timeline screenshots.
+            </div>
+          </div>
+
+          <div id="launcher_session_status" class="launcher-status is-hidden">
+            <div class="launcher-status-header">
+              <div id="launcher_session_indicator" class="launcher-indicator">
+                <span class="indicator-dot"></span>
+                <span id="launcher_session_label">Session Recording</span>
+              </div>
+              <div id="launcher_session_duration" class="launcher-duration">00:00</div>
+            </div>
+            <div class="launcher-status-grid">
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Network</div>
+                <div id="launcher_count_network" class="launcher-stat-value">0</div>
+              </div>
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Console</div>
+                <div id="launcher_count_console" class="launcher-stat-value">0</div>
+              </div>
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Shots</div>
+                <div id="launcher_count_screenshots" class="launcher-stat-value">0</div>
+              </div>
+            </div>
+            <div id="launcher_session_message" class="launcher-session-message"></div>
+            <div class="launcher-session-controls">
+              <button
+                id="btn_session_pause"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_pause"
+              >
+                Pause
+              </button>
+              <button
+                id="btn_session_resume"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_resume"
+              >
+                Resume
+              </button>
+              <button
+                id="btn_session_stop"
+                class="launcher-btn danger"
+                type="button"
+                data-action="launcher:session_stop"
+              >
+                Stop Session
+              </button>
+            </div>
+            <div class="launcher-session-actions">
+              <button
+                id="btn_session_export"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_export"
+              >
+                Export Session
+              </button>
+              <button
+                id="btn_session_viewer"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_viewer"
+              >
+                Open Viewer
+              </button>
+            </div>
+          </div>
         </div>
         <div id="launcher_error" class="launcher-error is-hidden"></div>
       </div>

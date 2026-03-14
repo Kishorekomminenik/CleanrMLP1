@@ -3625,21 +3625,34 @@ function describeMode(mode) {
   return MODE_LABELS[mode] || mode;
 }
 
-function checkStartMode(mode) {
+function checkStartMode(mode, options = {}) {
   if (!session) {
     return { allowed: true };
   }
   const canonicalRecordingState = recordingController.state || state.recording.status;
+  const recordingActive = ["starting", "recording", "paused", "stopping"].includes(
+    canonicalRecordingState
+  );
+  const allowExistingSession = options.allowExistingSession === true;
   const active =
     session.state === "capturing" ||
     session.state === "paused" ||
-    ["starting", "recording", "paused", "stopping"].includes(canonicalRecordingState) ||
+    recordingActive ||
     state.network.active;
   if (active) {
     if (session.mode === mode) {
       const message = `${describeMode(mode)} capture is already running.`;
       setStatusMessage(message, "info");
       return { allowed: false, reason: "already_running", message };
+    }
+    if (
+      allowExistingSession &&
+      mode === "network_console" &&
+      session.mode === "recording" &&
+      recordingActive &&
+      !state.network.active
+    ) {
+      return { allowed: true, reason: "session_merge" };
     }
     const message = `Another capture (${describeMode(
       session.mode
@@ -8483,7 +8496,7 @@ async function stopRecording() {
   });
 }
 
-async function startNetworkCapture(filters) {
+async function startNetworkCapture(filters, options = {}) {
   if (state.network.active) {
     throw new Error("Network capture is already active.");
   }
@@ -8491,7 +8504,16 @@ async function startNetworkCapture(filters) {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
 
-  ensureSessionForMode("network_console", tab);
+  const allowExistingSession = options.allowExistingSession === true;
+  if (!session) {
+    ensureSessionForMode("network_console", tab);
+  } else if (!allowExistingSession) {
+    ensureSessionForMode("network_console", tab);
+  } else if (session.state === "error") {
+    session.state = "capturing";
+    session.ended_at = null;
+    clearStatusMessage();
+  }
   activeFilters = normalizeFilters(filters);
   if (
     activeFilters.statusMode === "custom" &&
@@ -10225,7 +10247,9 @@ async function handleMessage(message, sender) {
     }
     case "NETWORK_START":
       {
-        const lock = checkStartMode("network_console");
+        const lock = checkStartMode("network_console", {
+          allowExistingSession: normalizedMessage.allowExistingSession === true,
+        });
         if (!lock.allowed) {
           if (lock.reason === "already_running") {
             result = {
@@ -10244,7 +10268,9 @@ async function handleMessage(message, sender) {
         }
       }
       try {
-        const captureResult = await startNetworkCapture(normalizedMessage.filters);
+        const captureResult = await startNetworkCapture(normalizedMessage.filters, {
+          allowExistingSession: normalizedMessage.allowExistingSession === true,
+        });
         result = {
           ok: true,
           consoleEnabled: captureResult.consoleEnabled,

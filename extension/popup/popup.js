@@ -15,6 +15,27 @@ const helpCloseButton = document.getElementById("help_close");
 const launcherHelpButton = document.getElementById("launcher_help_button");
 const launcherHelpModal = document.getElementById("launcher_help_modal");
 const launcherHelpClose = document.getElementById("launcher_help_close");
+const launcherSessionStatus = document.getElementById("launcher_session_status");
+const launcherSessionIndicator = document.getElementById("launcher_session_indicator");
+const launcherSessionLabel = document.getElementById("launcher_session_label");
+const launcherSessionDuration = document.getElementById("launcher_session_duration");
+const launcherCountNetwork = document.getElementById("launcher_count_network");
+const launcherCountConsole = document.getElementById("launcher_count_console");
+const launcherCountScreenshots = document.getElementById("launcher_count_screenshots");
+const launcherSessionMessage = document.getElementById("launcher_session_message");
+const launcherScreenshotHint = document.getElementById("launcher_screenshot_hint");
+
+const launcherButtons = {
+  sessionStart: document.getElementById("btn_session_start"),
+  recordScreen: document.getElementById("btn_record_screen"),
+  sessionScreenshot: document.getElementById("btn_session_screenshot"),
+  sessionFullpage: document.getElementById("btn_session_fullpage"),
+  sessionPause: document.getElementById("btn_session_pause"),
+  sessionResume: document.getElementById("btn_session_resume"),
+  sessionStop: document.getElementById("btn_session_stop"),
+  sessionExport: document.getElementById("btn_session_export"),
+  sessionViewer: document.getElementById("btn_session_viewer"),
+};
 
 const buttons = {
   screenshot: document.getElementById("btn_take_screenshot"),
@@ -146,7 +167,10 @@ const MSG = {
   RECORDING_STOP: "RECORDING_STOP",
   RECORDING_EXPORT_WEBM: "RECORDING_EXPORT_WEBM",
   RECORDING_RESET: "RECORDING_RESET",
+  LOGS_PAUSE: "LOGS_PAUSE",
+  LOGS_RESUME: "LOGS_RESUME",
   CAPTURE_FULLPAGE: "CAPTURE_FULLPAGE",
+  CAPTURE_SCREENSHOT: "CAPTURE_SCREENSHOT",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
   RESET_SESSION: "RESET_SESSION",
@@ -163,6 +187,7 @@ let exportProgressPercent = 0;
 let exportButtonLabel = null;
 let lastExportResultAt = 0;
 let exportProgressState = null;
+let lastExportFilename = null;
 let captureFilters = {
   filter_request_type: "xhr_fetch",
   filter_status_mode: "all",
@@ -1927,6 +1952,116 @@ function formatElapsedFromLiveState(liveState, fallbackSession) {
   return `${minutes}:${seconds}`;
 }
 
+function updateLauncherSessionUI(context) {
+  if (!launcherSessionStatus) {
+    return;
+  }
+  const {
+    sessionActive,
+    sessionPaused,
+    sessionCaptured,
+    durationText,
+    requestCount,
+    logCount,
+    screenshotCount,
+    hasLiveRecording,
+    hasLiveNetwork,
+  } = context;
+
+  const showStatus = sessionActive || sessionCaptured;
+  launcherSessionStatus.classList.toggle("is-hidden", !showStatus);
+
+  if (launcherSessionDuration) {
+    launcherSessionDuration.textContent = durationText || "00:00";
+  }
+  if (launcherCountNetwork) {
+    launcherCountNetwork.textContent = String(requestCount || 0);
+  }
+  if (launcherCountConsole) {
+    launcherCountConsole.textContent = String(logCount || 0);
+  }
+  if (launcherCountScreenshots) {
+    launcherCountScreenshots.textContent = String(screenshotCount || 0);
+  }
+
+  if (launcherSessionIndicator) {
+    launcherSessionIndicator.classList.toggle("paused", Boolean(sessionPaused));
+    launcherSessionIndicator.classList.toggle("ready", Boolean(sessionCaptured));
+    launcherSessionIndicator.classList.toggle(
+      "live",
+      Boolean(sessionActive && !sessionPaused)
+    );
+  }
+  if (launcherSessionLabel) {
+    let label = "Session";
+    if (sessionCaptured) {
+      label = "Session Captured";
+    } else if (sessionPaused) {
+      label = "Session Paused";
+    } else if (sessionActive) {
+      label = "Session Recording";
+    }
+    launcherSessionLabel.textContent = label;
+  }
+  if (launcherSessionMessage) {
+    let message = "";
+    if (sessionCaptured) {
+      message = "Session captured. Export to inspect in the viewer.";
+    } else if (sessionPaused) {
+      message = "Session paused. Resume to continue capturing.";
+    } else if (sessionActive && hasLiveNetwork) {
+      message = "Recording with live network + console capture.";
+    } else if (sessionActive && !hasLiveNetwork) {
+      message = "Recording session. Logs capture unavailable.";
+    }
+    launcherSessionMessage.textContent = message;
+  }
+
+  if (launcherButtons.sessionStart) {
+    launcherButtons.sessionStart.disabled = sessionActive || !recordingAvailable;
+    launcherButtons.sessionStart.classList.toggle("is-hidden", sessionActive);
+  }
+  if (launcherButtons.recordScreen) {
+    launcherButtons.recordScreen.disabled = sessionActive || !recordingAvailable;
+  }
+  if (launcherButtons.sessionScreenshot) {
+    launcherButtons.sessionScreenshot.disabled = false;
+  }
+  if (launcherButtons.sessionFullpage) {
+    launcherButtons.sessionFullpage.disabled = false;
+  }
+  if (launcherScreenshotHint) {
+    launcherScreenshotHint.classList.toggle("is-hidden", sessionActive);
+  }
+  if (launcherButtons.sessionPause) {
+    const disablePause = !sessionActive || sessionPaused || !hasLiveRecording;
+    launcherButtons.sessionPause.disabled = disablePause;
+    launcherButtons.sessionPause.classList.toggle(
+      "is-hidden",
+      !sessionActive || sessionPaused
+    );
+  }
+  if (launcherButtons.sessionResume) {
+    const disableResume = !sessionPaused || !hasLiveRecording;
+    launcherButtons.sessionResume.disabled = disableResume;
+    launcherButtons.sessionResume.classList.toggle("is-hidden", !sessionPaused);
+  }
+  if (launcherButtons.sessionStop) {
+    launcherButtons.sessionStop.disabled = !sessionActive;
+    launcherButtons.sessionStop.classList.toggle("is-hidden", !sessionActive);
+  }
+  if (launcherButtons.sessionExport) {
+    launcherButtons.sessionExport.disabled =
+      !sessionCaptured || exportInProgress;
+    launcherButtons.sessionExport.classList.toggle("is-hidden", sessionActive);
+  }
+  if (launcherButtons.sessionViewer) {
+    const viewerReady = Boolean(lastExportFilename);
+    launcherButtons.sessionViewer.disabled = !viewerReady;
+    launcherButtons.sessionViewer.classList.toggle("is-hidden", sessionActive);
+  }
+}
+
 function updateStatusUI(state) {
   buttons.screenshot.disabled = false;
   getModeButtons().forEach((button) => {
@@ -1972,16 +2107,37 @@ function updateStatusUI(state) {
   statusElements.mode.textContent = modeLabel;
   statusElements.state.textContent = sessionState || "idle";
 
-  statusElements.timer.textContent = formatElapsedFromLiveState(
+  const durationText = formatElapsedFromLiveState(
     recordingLiveState,
     state.session
   );
+  statusElements.timer.textContent = durationText;
 
   const counts = state.session ? state.session.counts : null;
   const requestCount = counts ? counts.network_requests : 0;
   const logCount = counts ? counts.console_entries : 0;
   const errorCount = counts ? counts.errors : 0;
+  const screenshotCount =
+    state.session && Array.isArray(state.session.screenshots)
+      ? state.session.screenshots.length
+      : 0;
   statusElements.counts.textContent = `${requestCount} requests, ${logCount} logs, ${errorCount} errors`;
+  const hasAnyArtifacts = Boolean(
+    state.artifacts && state.artifacts.hasAnyArtifacts
+  );
+  const sessionCaptured =
+    !sessionActive && hasAnyArtifacts && Boolean(state.session);
+  updateLauncherSessionUI({
+    sessionActive,
+    sessionPaused: sessionState === "paused",
+    sessionCaptured,
+    durationText,
+    requestCount,
+    logCount,
+    screenshotCount,
+    hasLiveRecording,
+    hasLiveNetwork,
+  });
   if (partProgressStatus) {
     if (state.part && state.part.partNumber) {
       const partNumber = state.part.partNumber || 1;
@@ -2274,6 +2430,210 @@ async function handleLauncherCapture(mode) {
   beginCaptureAfterDismissal(mode, { tabId });
 }
 
+async function handleSessionStart() {
+  setLauncherError(null);
+  clearStatusError();
+  if (recordingControlInFlight) {
+    return;
+  }
+  if (!recordingAvailable) {
+    setLauncherError(
+      "Recording unavailable due to browser or enterprise policy."
+    );
+    showToast("Recording unavailable.", "error");
+    return;
+  }
+  if (recordingBlockedReason === "invalid_tab") {
+    setLauncherError(
+      "Capture is not supported on browser or store pages. Open a website tab."
+    );
+    showToast("Recording unavailable on this tab.", "error");
+    return;
+  }
+  if (recordingBlockedReason === "policy") {
+    setLauncherError(
+      "Recording unavailable due to browser or enterprise policy."
+    );
+    showToast("Recording unavailable.", "error");
+    return;
+  }
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to read session status.");
+    return;
+  }
+  const state = statusResponse.state || {};
+  const hasActiveRecording =
+    ["starting", "recording", "paused", "stopping"].includes(
+      state.recordingStatus
+    );
+  const hasActiveSession =
+    state.session &&
+    (state.session.state === "capturing" || state.session.state === "paused");
+  if (hasActiveRecording || state.networkActive || hasActiveSession) {
+    setLauncherError("A capture is already running.");
+    return;
+  }
+
+  await handleRecordingStart({ force: true });
+  const recordingStatus = await send(MSG.GET_STATUS);
+  if (!recordingStatus.ok) {
+    setLauncherError(
+      recordingStatus.error || "Failed to confirm recording start."
+    );
+    return;
+  }
+  const recordingLive =
+    recordingStatus.state.recordingStatus === "recording" ||
+    recordingStatus.state.recordingStatus === "paused";
+  if (!recordingLive) {
+    setLauncherError("Recording did not start.");
+    return;
+  }
+  const networkResponse = await handleNetworkStart({
+    allowExistingSession: true,
+    suppressGuidance: true,
+  });
+  if (networkResponse && networkResponse.ok === false) {
+    showToast("Recording started. Logs capture unavailable.", "error");
+  } else {
+    showToast("Session recording started.");
+  }
+  await refreshStatus();
+}
+
+async function handleSessionPause() {
+  setLauncherError(null);
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to pause session.");
+    return;
+  }
+  if (statusResponse.state.recordingStatus === "recording") {
+    await handleRecordingPause({ force: true });
+  }
+  if (statusResponse.state.networkActive) {
+    const logsPause = await send(MSG.LOGS_PAUSE);
+    if (!logsPause.ok) {
+      showToast(logsPause.error || "Failed to pause logs.", "error");
+    }
+  }
+  showToast("Session paused.");
+  await refreshStatus();
+}
+
+async function handleSessionResume() {
+  setLauncherError(null);
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to resume session.");
+    return;
+  }
+  if (statusResponse.state.recordingStatus === "paused") {
+    await handleRecordingResume({ force: true });
+  }
+  if (statusResponse.state.networkActive) {
+    const logsResume = await send(MSG.LOGS_RESUME);
+    if (!logsResume.ok) {
+      showToast(logsResume.error || "Failed to resume logs.", "error");
+    }
+  }
+  showToast("Session resumed.");
+  await refreshStatus();
+}
+
+async function handleSessionStop() {
+  setLauncherError(null);
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to stop session.");
+    return;
+  }
+  const hasRecording =
+    statusResponse.state.recordingStatus === "recording" ||
+    statusResponse.state.recordingStatus === "paused";
+  if (hasRecording) {
+    await handleRecordingStop({ force: true });
+  }
+  if (statusResponse.state.networkActive) {
+    await handleNetworkStop();
+  }
+  showToast("Session stopped.");
+  await refreshStatus();
+}
+
+async function handleSessionScreenshot() {
+  setLauncherError(null);
+  const statusResponse = await send(MSG.GET_STATUS);
+  if (!statusResponse.ok) {
+    setLauncherError(statusResponse.error || "Failed to capture screenshot.");
+    return;
+  }
+  const sessionActive =
+    statusResponse.state.recordingStatus === "recording" ||
+    statusResponse.state.recordingStatus === "paused" ||
+    (statusResponse.state.session &&
+      (statusResponse.state.session.state === "capturing" ||
+        statusResponse.state.session.state === "paused"));
+  if (!sessionActive) {
+    handleLauncherCapture("snap");
+    return;
+  }
+  const response = await send(MSG.CAPTURE_SCREENSHOT);
+  if (!response.ok) {
+    setLauncherError(response.error || "Screenshot capture failed.");
+    showToast(response.error || "Screenshot capture failed.", "error");
+    return;
+  }
+  showToast("Screenshot added to timeline.");
+  await refreshStatus();
+}
+
+async function handleSessionExport() {
+  await handleDownload({ allowAnyMode: true });
+}
+
+async function handleSessionViewer() {
+  setLauncherError(null);
+  if (!lastExportFilename) {
+    showToast("Export a session first.", "error");
+    return;
+  }
+  if (!chrome.downloads?.search) {
+    showToast("Downloads API unavailable.", "error");
+    return;
+  }
+  const escaped = lastExportFilename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const results = await new Promise((resolve) => {
+    chrome.downloads.search(
+      { filenameRegex: `${escaped}$`, limit: 20 },
+      (items) => resolve(items || [])
+    );
+  });
+  if (results.length > 0) {
+    const sorted = results
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.startTime || 0).getTime() -
+          new Date(a.startTime || 0).getTime()
+      );
+    const target = sorted[0];
+    if (chrome.downloads.open) {
+      chrome.downloads.open(target.id);
+    }
+    if (chrome.downloads.show) {
+      chrome.downloads.show(target.id);
+    }
+    showToast("Open the ZIP and launch viewer/index.html.");
+    return;
+  }
+  if (chrome.tabs?.create) {
+    chrome.tabs.create({ url: "chrome://downloads" });
+  }
+  showToast("Open the exported ZIP and launch viewer/index.html.");
+}
+
 function beginCaptureAfterDismissal(mode, payload) {
   console.log("[CAPTURE][POPUP][REQUESTED]", { mode });
   const port = chrome.runtime.connect({ name: "capture-request" });
@@ -2333,8 +2693,8 @@ async function loadFullpageArtifactRecords(artifactKey) {
   return { artifact, blobRecord, blob };
 }
 
-async function handleRecordingStart() {
-  if (currentMode !== "recording") {
+async function handleRecordingStart(options = {}) {
+  if (currentMode !== "recording" && !options.force) {
     return;
   }
   clearStatusError();
@@ -2440,8 +2800,8 @@ async function handleRecordingStart() {
   await refreshStatus();
 }
 
-async function handleRecordingPause() {
-  if (currentMode !== "recording") {
+async function handleRecordingPause(options = {}) {
+  if (currentMode !== "recording" && !options.force) {
     return;
   }
   if (recordingControlInFlight) {
@@ -2463,8 +2823,8 @@ async function handleRecordingPause() {
   await refreshStatus();
 }
 
-async function handleRecordingResume() {
-  if (currentMode !== "recording") {
+async function handleRecordingResume(options = {}) {
+  if (currentMode !== "recording" && !options.force) {
     return;
   }
   if (recordingControlInFlight) {
@@ -2486,8 +2846,8 @@ async function handleRecordingResume() {
   await refreshStatus();
 }
 
-async function handleRecordingStop() {
-  if (currentMode !== "recording") {
+async function handleRecordingStop(options = {}) {
+  if (currentMode !== "recording" && !options.force) {
     return;
   }
   if (recordingControlInFlight) {
@@ -2536,7 +2896,7 @@ async function handleRecordingStop() {
   }
 }
 
-async function handleNetworkStart() {
+async function handleNetworkStart(options = {}) {
   setStatus(statusElements.download, "Starting network capture...");
   const filterPayload = getFiltersPayload();
   if (!filterPayload.ok) {
@@ -2546,10 +2906,11 @@ async function handleNetworkStart() {
       "error"
     );
     showToast("Fix filter settings before starting capture.", "error");
-    return;
+    return { ok: false, error: "Invalid filter settings." };
   }
   const response = await send("NETWORK_START", {
     filters: filterPayload.filters,
+    allowExistingSession: options.allowExistingSession === true,
   });
   if (!response.ok) {
     await handleFailedResponse(response);
@@ -2562,22 +2923,25 @@ async function handleNetworkStart() {
       );
     }
     await refreshStatus();
-    return;
+    return response;
   }
-    const baseMessage =
+  const baseMessage =
     "Capture started - now Refresh (Ctrl+R) or click a link to capture requests.";
   const warningSuffix =
     response.consoleEnabled === false
       ? " Console capture unavailable (policy blocked). Network capture still running."
       : "";
   const message = `${baseMessage}${warningSuffix}`;
-  setStatus(statusElements.message, message, "success");
-  if (networkGuidance) {
-    networkGuidance.textContent = message;
-    networkGuidance.classList.remove("is-hidden");
+  if (!options.suppressGuidance) {
+    setStatus(statusElements.message, message, "success");
+    if (networkGuidance) {
+      networkGuidance.textContent = message;
+      networkGuidance.classList.remove("is-hidden");
+    }
   }
   setStatus(statusElements.download, "Network capture started.", "success");
   await refreshStatus();
+  return response;
 }
 
 async function handleNetworkStop() {
@@ -2691,11 +3055,11 @@ async function addZipItemsInChunks(zip, items, options = {}) {
   }
 }
 
-async function handleDownload() {
+async function handleDownload(options = {}) {
   if (exportInProgress) {
     return;
   }
-  if (currentMode !== "network_console") {
+  if (!options.allowAnyMode && currentMode !== "network_console") {
     return;
   }
   let hadError = false;
@@ -3142,6 +3506,33 @@ function routeAction(action, el) {
     case "launcher:logs":
       handleOpenLogsPanel();
       break;
+    case "launcher:session_start":
+      handleSessionStart();
+      break;
+    case "launcher:session_pause":
+      handleSessionPause();
+      break;
+    case "launcher:session_resume":
+      handleSessionResume();
+      break;
+    case "launcher:session_stop":
+      handleSessionStop();
+      break;
+    case "launcher:session_screenshot":
+      handleSessionScreenshot();
+      break;
+    case "launcher:session_fullpage":
+      handleLauncherCapture("full");
+      break;
+    case "launcher:session_export":
+      handleSessionExport();
+      break;
+    case "launcher:session_viewer":
+      handleSessionViewer();
+      break;
+    case "launcher:record_screen":
+      handleOpenRecordingPanel();
+      break;
     case "help:open":
       openHelp();
       break;
@@ -3345,6 +3736,27 @@ async function loadLastSelectedMode() {
   return result.lastSelectedMode || "screenshot";
 }
 
+async function loadLastExportFilename() {
+  try {
+    const result = await chrome.storage.local.get({
+      lastExportFilename: null,
+    });
+    lastExportFilename =
+      result && result.lastExportFilename ? result.lastExportFilename : null;
+  } catch (error) {
+    lastExportFilename = null;
+  }
+}
+
+async function setLastExportFilename(filename) {
+  lastExportFilename = filename || null;
+  try {
+    await chrome.storage.local.set({ lastExportFilename });
+  } catch (error) {
+    // Ignore storage failures; keep in-memory value.
+  }
+}
+
 document.addEventListener("click", (event) => {
   const target = event.target;
   const actionEl =
@@ -3546,6 +3958,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       setStatus(statusElements.download, "Export complete.", "success");
     }
     showToast("Exported");
+    if (message.filename) {
+      setLastExportFilename(message.filename);
+    }
     refreshCompletedParts();
     lastExportResultAt = Date.now();
     exportProgressState = null;
@@ -3667,6 +4082,7 @@ async function initPopup() {
   const lastMode = await loadLastSelectedMode();
   currentMode = lastMode;
   setMode(currentMode);
+  await loadLastExportFilename();
   await loadRedactionSetting();
   await loadCaptureSettings();
   await loadFiltersSettings();

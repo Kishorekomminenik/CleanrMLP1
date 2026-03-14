@@ -362,10 +362,134 @@ h2 {
 }
 
 .launcher-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.launcher-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.launcher-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.launcher-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.launcher-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.launcher-status {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.launcher-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.launcher-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.launcher-indicator.paused {
+  color: #b45309;
+}
+
+.launcher-indicator.paused .indicator-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.launcher-indicator.ready {
+  color: #047857;
+}
+
+.launcher-indicator.ready .indicator-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+}
+
+.indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
+
+.launcher-duration {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.launcher-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.launcher-stat {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.launcher-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.launcher-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.launcher-session-message {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.launcher-session-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.launcher-session-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .launcher-help-modal {
@@ -492,6 +616,18 @@ body.help-open {
   background: var(--accent);
   color: #ffffff;
   border-color: var(--accent);
+}
+
+.launcher-btn.danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.launcher-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .launcher-error {
