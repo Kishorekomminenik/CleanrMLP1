@@ -2009,16 +2009,18 @@ function updateLauncherSessionUI(context) {
       message = "Session captured. Export to inspect in the viewer.";
     } else if (sessionPaused) {
       message = "Session paused. Resume to continue capturing.";
-    } else if (sessionActive && hasLiveNetwork) {
+    } else if (sessionActive && hasLiveNetwork && hasLiveRecording) {
       message = "Recording with live network + console capture.";
-    } else if (sessionActive && !hasLiveNetwork) {
+    } else if (sessionActive && hasLiveNetwork && !hasLiveRecording) {
+      message = "Logs capture active. Recording unavailable.";
+    } else if (sessionActive && !hasLiveNetwork && hasLiveRecording) {
       message = "Recording session. Logs capture unavailable.";
     }
     launcherSessionMessage.textContent = message;
   }
 
   if (launcherButtons.sessionStart) {
-    launcherButtons.sessionStart.disabled = sessionActive || !recordingAvailable;
+    launcherButtons.sessionStart.disabled = sessionActive;
     launcherButtons.sessionStart.classList.toggle("is-hidden", sessionActive);
   }
   if (launcherButtons.recordScreen) {
@@ -2034,7 +2036,8 @@ function updateLauncherSessionUI(context) {
     launcherScreenshotHint.classList.toggle("is-hidden", sessionActive);
   }
   if (launcherButtons.sessionPause) {
-    const disablePause = !sessionActive || sessionPaused || !hasLiveRecording;
+    const canPause = hasLiveRecording || hasLiveNetwork;
+    const disablePause = !sessionActive || sessionPaused || !canPause;
     launcherButtons.sessionPause.disabled = disablePause;
     launcherButtons.sessionPause.classList.toggle(
       "is-hidden",
@@ -2042,7 +2045,8 @@ function updateLauncherSessionUI(context) {
     );
   }
   if (launcherButtons.sessionResume) {
-    const disableResume = !sessionPaused || !hasLiveRecording;
+    const canResume = hasLiveRecording || hasLiveNetwork;
+    const disableResume = !sessionPaused || !canResume;
     launcherButtons.sessionResume.disabled = disableResume;
     launcherButtons.sessionResume.classList.toggle("is-hidden", !sessionPaused);
   }
@@ -2436,25 +2440,14 @@ async function handleSessionStart() {
   if (recordingControlInFlight) {
     return;
   }
-  if (!recordingAvailable) {
-    setLauncherError(
-      "Recording unavailable due to browser or enterprise policy."
-    );
-    showToast("Recording unavailable.", "error");
-    return;
-  }
-  if (recordingBlockedReason === "invalid_tab") {
-    setLauncherError(
-      "Capture is not supported on browser or store pages. Open a website tab."
-    );
-    showToast("Recording unavailable on this tab.", "error");
-    return;
-  }
-  if (recordingBlockedReason === "policy") {
-    setLauncherError(
-      "Recording unavailable due to browser or enterprise policy."
-    );
-    showToast("Recording unavailable.", "error");
+  const canRecord =
+    recordingAvailable &&
+    recordingBlockedReason !== "invalid_tab" &&
+    recordingBlockedReason !== "policy";
+  const canLogs = networkAvailable;
+  if (!canRecord && !canLogs) {
+    setLauncherError("Recording and logs capture are unavailable.");
+    showToast("Capture unavailable.", "error");
     return;
   }
   const statusResponse = await send(MSG.GET_STATUS);
@@ -2475,29 +2468,42 @@ async function handleSessionStart() {
     return;
   }
 
-  await handleRecordingStart({ force: true });
-  const recordingStatus = await send(MSG.GET_STATUS);
-  if (!recordingStatus.ok) {
-    setLauncherError(
-      recordingStatus.error || "Failed to confirm recording start."
-    );
+  let recordingLive = false;
+  let mergeAllowed = false;
+  if (canRecord) {
+    await handleRecordingStart({ force: true });
+    const recordingStatus = await send(MSG.GET_STATUS);
+    if (recordingStatus.ok) {
+      mergeAllowed =
+        recordingStatus.state.session &&
+        recordingStatus.state.session.mode === "recording";
+      recordingLive =
+        recordingStatus.state.recordingStatus === "recording" ||
+        recordingStatus.state.recordingStatus === "paused";
+    }
+  }
+
+  let networkLive = false;
+  if (canLogs) {
+    const networkResponse = await handleNetworkStart({
+      allowExistingSession: mergeAllowed || recordingLive,
+      suppressGuidance: true,
+    });
+    networkLive = Boolean(networkResponse && networkResponse.ok);
+  }
+
+  if (!recordingLive && !networkLive) {
+    setLauncherError("Session could not start.");
+    showToast("Session could not start.", "error");
+    await refreshStatus();
     return;
   }
-  const recordingLive =
-    recordingStatus.state.recordingStatus === "recording" ||
-    recordingStatus.state.recordingStatus === "paused";
-  if (!recordingLive) {
-    setLauncherError("Recording did not start.");
-    return;
-  }
-  const networkResponse = await handleNetworkStart({
-    allowExistingSession: true,
-    suppressGuidance: true,
-  });
-  if (networkResponse && networkResponse.ok === false) {
-    showToast("Recording started. Logs capture unavailable.", "error");
-  } else {
+  if (recordingLive && networkLive) {
     showToast("Session recording started.");
+  } else if (recordingLive) {
+    showToast("Recording started. Logs capture unavailable.", "error");
+  } else if (networkLive) {
+    showToast("Logs capture started. Recording unavailable.");
   }
   await refreshStatus();
 }

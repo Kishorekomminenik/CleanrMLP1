@@ -3649,8 +3649,8 @@ function checkStartMode(mode, options = {}) {
       allowExistingSession &&
       mode === "network_console" &&
       session.mode === "recording" &&
-      recordingActive &&
-      !state.network.active
+      !state.network.active &&
+      (recordingActive || session.state === "error")
     ) {
       return { allowed: true, reason: "session_merge" };
     }
@@ -3773,8 +3773,15 @@ function isLogsCapturing() {
   return getLogsCaptureState() === "capturing";
 }
 
-function markSessionStopped() {
+function markSessionStopped(options = {}) {
   if (!session) {
+    return;
+  }
+  const recordingState = recordingController.state || state.recording.status || "idle";
+  const recordingActive = ["starting", "recording", "paused", "stopping"].includes(
+    recordingState
+  );
+  if (!options.force && (recordingActive || state.network.active)) {
     return;
   }
   if (session.pause_started_at) {
