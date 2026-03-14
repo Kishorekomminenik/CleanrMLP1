@@ -492,6 +492,10 @@ h2 {
   gap: 8px;
 }
 
+.launcher-session-actions .launcher-btn {
+  min-height: 36px;
+}
+
 .launcher-status.record-only .launcher-status-grid,
 .launcher-status.record-only .launcher-session-actions {
   display: none;

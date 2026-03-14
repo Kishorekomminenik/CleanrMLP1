@@ -35,6 +35,7 @@ const launcherButtons = {
   sessionStop: document.getElementById("btn_session_stop"),
   sessionExport: document.getElementById("btn_session_export"),
   sessionViewer: document.getElementById("btn_session_viewer"),
+  sessionReset: document.getElementById("btn_session_reset"),
 };
 
 const buttons = {
@@ -2089,6 +2090,20 @@ function updateLauncherSessionUI(context) {
     const canShowViewer = sessionMode === "session" && !sessionActive;
     launcherButtons.sessionViewer.disabled = !viewerReady || !canShowViewer;
     launcherButtons.sessionViewer.classList.toggle("is-hidden", !canShowViewer);
+    if (!viewerReady) {
+      launcherButtons.sessionViewer.title =
+        "Export a session to enable Open Viewer.";
+    } else {
+      launcherButtons.sessionViewer.title = "";
+    }
+  }
+  if (launcherButtons.sessionReset) {
+    const canResetSession = sessionMode === "session" && sessionCaptured;
+    launcherButtons.sessionReset.disabled = !canResetSession;
+    launcherButtons.sessionReset.classList.toggle(
+      "is-hidden",
+      !canResetSession
+    );
   }
 }
 
@@ -2477,6 +2492,7 @@ async function handleSessionStart() {
   if (recordingControlInFlight) {
     return;
   }
+  await setLastExportFilename(null);
   const canRecord =
     recordingAvailable &&
     recordingBlockedReason !== "invalid_tab" &&
@@ -2695,6 +2711,23 @@ async function handleSessionViewer() {
     chrome.tabs.create({ url: "chrome://downloads" });
   }
   showToast("Open the exported ZIP and launch viewer/index.html.");
+}
+
+async function handleSessionReset() {
+  const confirmed = window.confirm(
+    "Reset this session in DebugDuck? Downloaded files will remain on disk."
+  );
+  if (!confirmed) {
+    return;
+  }
+  const response = await send(MSG.RESET_SESSION);
+  if (!response.ok) {
+    showToast(response.error || "Failed to reset session.", "error");
+    return;
+  }
+  await setLastExportFilename(null);
+  showToast("Session reset.");
+  await refreshStatus();
 }
 
 function beginCaptureAfterDismissal(mode, payload) {
@@ -3593,6 +3626,9 @@ function routeAction(action, el) {
       break;
     case "launcher:session_viewer":
       handleSessionViewer();
+      break;
+    case "launcher:session_reset":
+      handleSessionReset();
       break;
     case "launcher:record_screen":
       handleOpenRecordingPanel();
