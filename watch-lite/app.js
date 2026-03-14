@@ -634,6 +634,12 @@ function seekTo(targetTimeMs, source, options = {}) {
     const nearest = findNearestMarker(next, markers);
     state.playhead.nearestMarkerId = nearest ? nearest.id : null;
   }
+  if (options.nearestEvent) {
+    const nearestEvent = findNearestTimelineEvent(next, state.events);
+    if (nearestEvent) {
+      options.selectedEventId = nearestEvent.id;
+    }
+  }
   applyPlayhead(next, {
     ...options,
     source,
@@ -2692,6 +2698,9 @@ function handleVideoTimeUpdate() {
   if (!videoEl) {
     return;
   }
+  if (state.playhead.isSeeking) {
+    return;
+  }
   const tms = Math.floor((videoEl.currentTime || 0) * 1000);
   const now = Date.now();
   const shouldRefresh =
@@ -2741,7 +2750,11 @@ function findNearestEvent(events, tms) {
 }
 
 function setCurrentTms(tms, snap = true) {
-  seekTo(tms, "timeline", { refresh: false, snap: state.playhead.isSeeking });
+  seekTo(tms, "timeline", {
+    refresh: false,
+    snap: state.playhead.isSeeking,
+    nearestEvent: true,
+  });
   if (snap) {
     const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
     if (nearest) {
