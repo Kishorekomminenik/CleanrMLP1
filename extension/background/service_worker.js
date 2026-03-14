@@ -389,6 +389,36 @@ function formatZipTimestamp(date) {
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
 }
 
+function formatSessionIdTimestamp(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+}
+
+function createDebugDuckSessionId(date = new Date()) {
+  const stamp = formatSessionIdTimestamp(date);
+  let rand = "";
+  try {
+    if (crypto && typeof crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(3);
+      crypto.getRandomValues(bytes);
+      rand = Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    }
+  } catch (error) {
+    rand = "";
+  }
+  if (!rand) {
+    rand = Math.random().toString(16).slice(2, 8);
+  }
+  return `dd_${stamp}_${rand}`;
+}
+
 function computeSessionOffsetMs(timestampIso) {
   if (!session || !session.created_at) {
     return 0;
@@ -2318,6 +2348,13 @@ async function buildNdjsonBlobFromEntries(options) {
 
 function formatNetworkPrettyEntry(entry) {
   return {
+    id: entry.id || null,
+    timestamp_ms:
+      typeof entry.timestamp_ms === "number"
+        ? entry.timestamp_ms
+        : typeof entry.t_ms === "number"
+          ? entry.t_ms
+          : null,
     request_id: entry.request_id || null,
     timestamp: entry.timestamp || null,
     timestamp_epoch_ms: entry.timestamp_epoch_ms || null,
@@ -2756,6 +2793,13 @@ function buildPostmanCollection(entries, sourceName) {
 
 function formatConsolePrettyEntry(entry) {
   return {
+    id: entry.id || null,
+    timestamp_ms:
+      typeof entry.timestamp_ms === "number"
+        ? entry.timestamp_ms
+        : typeof entry.t_ms === "number"
+          ? entry.t_ms
+          : null,
     timestamp: entry.timestamp || null,
     timestamp_epoch_ms: entry.timestamp_epoch_ms || null,
     level: entry.level || "log",
@@ -4107,6 +4151,288 @@ function buildPartSummaryText(partInfo, truncationNote) {
   return lines.join("\n");
 }
 
+function resolveOrigin(url) {
+  if (!url) {
+    return "";
+  }
+  try {
+    return new URL(url).origin || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function getRelativeMs(timestampIso, startIso) {
+  if (!timestampIso || !startIso) {
+    return 0;
+  }
+  const startMs = Date.parse(startIso);
+  const eventMs = Date.parse(timestampIso);
+  if (Number.isNaN(startMs) || Number.isNaN(eventMs)) {
+    return 0;
+  }
+  return Math.max(0, eventMs - startMs);
+}
+
+function buildSessionManifest(options) {
+  const {
+    data,
+    manifestSessionId,
+    exportTimestamp,
+    screenshotCandidates,
+    recordingFileName,
+    recordingSizeBytes,
+    recordingDurationMs,
+    ndjsonStats,
+    usePartExport,
+  } = options;
+  const sessionExport = data.session || {};
+  const environment = data.environment || {};
+  const createdAt = sessionExport.created_at || data.exportMetadata?.zip_created_at_utc || nowIso();
+  const startedAt = sessionExport.created_at || createdAt;
+  const endedAt = sessionExport.ended_at || data.exportMetadata?.zip_created_at_utc || nowIso();
+  const durationMs = Number.isFinite(Date.parse(startedAt)) && Number.isFinite(Date.parse(endedAt))
+    ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt))
+    : recordingDurationMs || 0;
+
+  const networkEntries = data.networkLogs?.entries || [];
+  const consoleEntries = data.consoleLogs?.entries || [];
+  const hasRecording =
+    Boolean(recordingFileName && recordingSizeBytes !== null) ||
+    Boolean(data.video) ||
+    Boolean(data.recordingDataUrl) ||
+    Boolean(data.recordingMimeType);
+  const hasScreenshots = Array.isArray(screenshotCandidates) && screenshotCandidates.length > 0;
+  const hasNetwork = Boolean(ndjsonStats?.network?.count) || networkEntries.length > 0;
+  const hasConsole = Boolean(ndjsonStats?.console?.count) || consoleEntries.length > 0;
+  const hasFullPage = screenshotCandidates?.some((shot) => shot && shot.fullPage);
+
+  const screenshotItems = (screenshotCandidates || []).map((shot, index) => {
+    const fileName =
+      shot && shot.fileName ? shot.fileName : `debugduck-screenshot-${exportTimestamp}.png`;
+    const dims = shot && shot.dataUrl ? readPngDimensionsFromDataUrl(shot.dataUrl) : null;
+    const blob = shot && shot.dataUrl ? dataUrlToBlob(shot.dataUrl) : null;
+    return {
+      id: `snap_${String(index + 1).padStart(4, "0")}`,
+      path: `screenshots/${fileName}`,
+      timestampMs:
+        shot && typeof shot.t_ms === "number"
+          ? shot.t_ms
+          : getRelativeMs(shot?.timestampIso, startedAt),
+      kind: shot && shot.fullPage ? "fullpage" : "viewport",
+      width: dims && dims.width ? dims.width : null,
+      height: dims && dims.height ? dims.height : null,
+      sizeBytes: blob ? blob.size : null,
+      label: shot && shot.label ? shot.label : null,
+    };
+  });
+
+  let eventCounter = 0;
+  const nextEventId = () => `evt_${String(++eventCounter).padStart(4, "0")}`;
+  const timelineEvents = [];
+
+  if (hasRecording && !usePartExport) {
+    timelineEvents.push({
+      id: nextEventId(),
+      type: "recording-start",
+      timestampMs: 0,
+    });
+    if (durationMs > 0) {
+      timelineEvents.push({
+        id: nextEventId(),
+        type: "recording-stop",
+        timestampMs: durationMs,
+      });
+    }
+  }
+
+  screenshotItems.forEach((shot) => {
+    timelineEvents.push({
+      id: nextEventId(),
+      type: "screenshot",
+      timestampMs: typeof shot.timestampMs === "number" ? shot.timestampMs : 0,
+      ref: shot.id,
+      label: shot.label || "Screenshot",
+    });
+  });
+
+  networkEntries.forEach((entry) => {
+    const status = entry.response_status || entry.status;
+    const hasError =
+      typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
+    if (!hasError) {
+      return;
+    }
+    const severity = typeof status === "number" && status >= 500 ? "error" : "warning";
+    timelineEvents.push({
+      id: nextEventId(),
+      type: severity === "error" ? "network-error" : "network-warning",
+      timestampMs:
+        typeof entry.timestamp_ms === "number"
+          ? entry.timestamp_ms
+          : getRelativeMs(entry.timestamp, startedAt),
+      ref: entry.id || entry.request_id || null,
+      severity,
+      label: `${entry.method || ""} ${entry.url || ""}`.trim(),
+    });
+  });
+
+  consoleEntries.forEach((entry) => {
+    if (entry.level !== "error") {
+      return;
+    }
+    timelineEvents.push({
+      id: nextEventId(),
+      type: "console-error",
+      timestampMs:
+        typeof entry.timestamp_ms === "number"
+          ? entry.timestamp_ms
+          : getRelativeMs(entry.timestamp, startedAt),
+      ref: entry.id || null,
+      severity: "error",
+      label: entry.message || "Console error",
+    });
+  });
+
+  const networkFailures = networkEntries.filter((entry) => {
+    const status = entry.response_status || entry.status;
+    return typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
+  }).length;
+  const consoleErrors = consoleEntries.filter((entry) => entry.level === "error").length;
+  const topSignals = [];
+  if (networkFailures > 0) {
+    topSignals.push("Network failures detected");
+  }
+  if (consoleErrors > 0) {
+    topSignals.push("Console errors detected");
+  }
+  if (screenshotItems.length > 0) {
+    topSignals.push(`${screenshotItems.length} screenshots captured`);
+  }
+  if (hasRecording) {
+    topSignals.push("Recording captured");
+  }
+
+  const truncationReport = data.exportTruncationReport || null;
+  const integrityWarnings = [];
+  if (truncationReport) {
+    integrityWarnings.push("Export truncated due to capture limits.");
+  }
+
+  return {
+    schemaVersion: "1.1.0",
+    manifestType: "debugduck-session",
+    session: {
+      id: manifestSessionId,
+      title: "DebugDuck Session",
+      createdAt,
+      startedAt,
+      endedAt,
+      durationMs,
+      timezone: environment.timezone || environment.timezone_iana || "",
+      source: {
+        product: "DebugDuck",
+        version: environment.extension_version || getExtensionVersion() || "1.1.0",
+        build: "local-dev",
+        platform: "chrome-extension-mv3",
+      },
+      captureMode: {
+        screenshot: hasScreenshots,
+        fullPage: Boolean(hasFullPage),
+        recording: hasRecording,
+        network: hasNetwork,
+        console: hasConsole,
+      },
+    },
+    environment: {
+      page: {
+        url: environment.captured_url || "",
+        title: environment.captured_title || "",
+        origin: resolveOrigin(environment.captured_url || ""),
+      },
+      browser: {
+        name: environment.browser || "",
+        version: environment.browser_version || "",
+        userAgent: environment.user_agent || "",
+      },
+      viewport: {
+        width:
+          environment.viewport && typeof environment.viewport.w === "number"
+            ? environment.viewport.w
+            : 0,
+        height:
+          environment.viewport && typeof environment.viewport.h === "number"
+            ? environment.viewport.h
+            : 0,
+        devicePixelRatio:
+          typeof environment.device_pixel_ratio === "number"
+            ? environment.device_pixel_ratio
+            : 0,
+      },
+      os: {
+        name: environment.platform || "",
+        version: "",
+      },
+    },
+    artifacts: {
+      recording: {
+        present: hasRecording,
+        path: recordingFileName || "",
+        mimeType: "video/webm",
+        durationMs: recordingDurationMs || durationMs || 0,
+        sizeBytes: typeof recordingSizeBytes === "number" ? recordingSizeBytes : null,
+      },
+      network: {
+        present: hasNetwork,
+        path: "logs/debugduck-logs-network.ndjson",
+        format: "ndjson",
+        entryCount: ndjsonStats?.network?.count || networkEntries.length,
+        sizeBytes: ndjsonStats?.network?.size || null,
+      },
+      console: {
+        present: hasConsole,
+        path: "logs/debugduck-logs-console.ndjson",
+        format: "ndjson",
+        entryCount: ndjsonStats?.console?.count || consoleEntries.length,
+        sizeBytes: ndjsonStats?.console?.size || null,
+      },
+      screenshots: {
+        present: hasScreenshots,
+        basePath: "screenshots/",
+        count: screenshotItems.length,
+        items: screenshotItems,
+      },
+    },
+    timeline: {
+      timebase: "relative-ms",
+      startOffsetMs: 0,
+      endOffsetMs: Math.max(durationMs || 0, ...timelineEvents.map((e) => e.timestampMs || 0)),
+      events: timelineEvents,
+    },
+    summary: {
+      networkRequests: networkEntries.length,
+      consoleMessages: consoleEntries.length,
+      consoleErrors,
+      networkFailures,
+      screenshots: screenshotItems.length,
+      hasRecording,
+      topSignals,
+    },
+    integrity: {
+      complete: true,
+      missingArtifacts: [],
+      warnings: integrityWarnings,
+    },
+    viewerHints: {
+      defaultTab: "timeline",
+      initialSeekMs: 0,
+      highlightEventIds: [],
+      preferredPanels: ["video", "network", "console", "screenshots"],
+    },
+    extensions: {},
+  };
+}
+
 async function buildPartExportData(context) {
   if (!isIdbAvailable()) {
     throw new Error("IndexedDB unavailable.");
@@ -4127,6 +4453,10 @@ async function buildPartExportData(context) {
       ? environment.extension_version
       : getExtensionVersion();
   const exportCreatedAt = new Date();
+  const manifestSessionId =
+    context && context.manifestSessionId
+      ? context.manifestSessionId
+      : createDebugDuckSessionId(exportCreatedAt);
   let sessionExport = buildSessionExport();
   if (!sessionExport && hasExportableArtifacts()) {
     const tab = await getActiveTab();
@@ -4353,6 +4683,7 @@ async function buildPartExportData(context) {
       (sessionExport && sessionExport.filters) ||
       activeFilters,
     exportTimestamp,
+    manifestSessionId,
     session: sessionExport,
     environment,
     qaSessionLog,
@@ -4378,6 +4709,10 @@ async function buildEvidenceExportData(context) {
       ? environment.extension_version
       : getExtensionVersion();
   const exportCreatedAt = new Date();
+  const manifestSessionId =
+    context && context.manifestSessionId
+      ? context.manifestSessionId
+      : createDebugDuckSessionId(exportCreatedAt);
   const exportMetadata = {
     zip_created_at_utc: exportCreatedAt.toISOString(),
     zip_created_at_local: exportCreatedAt.toString(),
@@ -4702,6 +5037,10 @@ async function buildEvidenceExportData(context) {
     exportMetadata,
     exportTruncationReport,
     exportTimestamp,
+    manifestSessionId,
+    recordingStartEpochMs: videoStartEpochMs,
+    recordingEndEpochMs: videoEndEpochMs,
+    recordingDurationMs: videoDurationMs,
   };
 }
 
@@ -4819,6 +5158,7 @@ async function runEvidenceZipExport(context) {
       network_json: 0,
       console_json: 0,
       session: 0,
+      session_manifest: 0,
       environment: 0,
       qa_session_log: 0,
       export_metadata: 0,
@@ -4988,6 +5328,7 @@ async function runEvidenceZipExport(context) {
     const metaItems = [];
     const summaryItems = [];
     const automationItems = [];
+    const ndjsonStats = { network: null, console: null };
     const exportSessionId =
       captureState.sessionId ||
       (session && session.session_id) ||
@@ -5017,6 +5358,10 @@ async function runEvidenceZipExport(context) {
         options: { date: zipDate },
       };
     };
+    const exportTimestamp =
+      data.exportTimestamp || formatExportTimestamp(new Date());
+    const manifestSessionId =
+      data.manifestSessionId || createDebugDuckSessionId(new Date());
     if (usePartExport && data.partId) {
       const networkTotal =
         data.partInfo && typeof data.partInfo.requestCount === "number"
@@ -5059,6 +5404,11 @@ async function runEvidenceZipExport(context) {
             }
           );
           trackJsonSize("network_ndjson", result.size);
+          ndjsonStats.network = {
+            size: result.size,
+            count: result.count,
+            truncated: result.truncated,
+          };
           if (result.truncated) {
             logExportPhase("ndjson_truncated", { type: "network" });
           }
@@ -5092,6 +5442,11 @@ async function runEvidenceZipExport(context) {
             }
           );
           trackJsonSize("console_ndjson", result.size);
+          ndjsonStats.console = {
+            size: result.size,
+            count: result.count,
+            truncated: result.truncated,
+          };
           if (result.truncated) {
             logExportPhase("ndjson_truncated", { type: "console" });
           }
@@ -5282,6 +5637,11 @@ async function runEvidenceZipExport(context) {
               },
             });
             trackJsonSize("network_ndjson", result.size);
+            ndjsonStats.network = {
+              size: result.size,
+              count: result.count,
+              truncated: result.truncated,
+            };
             if (result.truncated) {
               logExportPhase("ndjson_truncated", { type: "network" });
             }
@@ -5302,6 +5662,11 @@ async function runEvidenceZipExport(context) {
             },
           });
           trackJsonSize("network_ndjson", result.size);
+          ndjsonStats.network = {
+            size: result.size,
+            count: result.count,
+            truncated: result.truncated,
+          };
           if (result.truncated) {
             logExportPhase("ndjson_truncated", { type: "network" });
           }
@@ -5420,6 +5785,11 @@ async function runEvidenceZipExport(context) {
               },
             });
             trackJsonSize("console_ndjson", result.size);
+            ndjsonStats.console = {
+              size: result.size,
+              count: result.count,
+              truncated: result.truncated,
+            };
             if (result.truncated) {
               logExportPhase("ndjson_truncated", { type: "console" });
             }
@@ -5440,6 +5810,11 @@ async function runEvidenceZipExport(context) {
             },
           });
           trackJsonSize("console_ndjson", result.size);
+          ndjsonStats.console = {
+            size: result.size,
+            count: result.count,
+            truncated: result.truncated,
+          };
           if (result.truncated) {
             logExportPhase("ndjson_truncated", { type: "console" });
           }
@@ -5687,9 +6062,39 @@ async function runEvidenceZipExport(context) {
         ...reportMeta,
       };
     }
+    const recordingFileName =
+      data.video && data.video.fileName
+        ? data.video.fileName
+        : `debugduck-recording-${exportTimestamp}.webm`;
+    const manifestItem = {
+      path: "session.json",
+      getData: () =>
+        toJsonWithSize(
+          buildSessionManifest({
+            data,
+            manifestSessionId,
+            exportTimestamp,
+            screenshotCandidates,
+            recordingFileName:
+              data.video || data.recordingDataUrl ? recordingFileName : "",
+            recordingSizeBytes:
+              data.video && typeof data.video.byteLength === "number"
+                ? data.video.byteLength
+                : data.recordingDataUrl
+                  ? estimateDataUrlBytes(data.recordingDataUrl)
+                  : null,
+            recordingDurationMs: data.recordingDurationMs,
+            ndjsonStats,
+            usePartExport,
+          }),
+          "session_manifest"
+        ),
+      options: { date: zipDate },
+    };
     baseItems = [
       ...logItems,
       ...metaItems,
+      manifestItem,
       ...summaryItems,
       ...automationItems,
       ...reportItems,
@@ -5739,8 +6144,6 @@ async function runEvidenceZipExport(context) {
     }
 
     if (!usePartExport) {
-      const exportTimestamp =
-        data.exportTimestamp || formatExportTimestamp(new Date());
       let recordingBlob = null;
       let recordingFileName = `debugduck-recording-${exportTimestamp}.webm`;
       if (data.video && data.video.blobUrl) {
@@ -5817,7 +6220,7 @@ async function runEvidenceZipExport(context) {
     logExportPhase("zip_generate_done", { bytes: zipBytes.byteLength });
     reportExportProgress(96, "zip_generate_done", { bytes: zipBytes.byteLength });
 
-    const filename = `debugduck-session-${formatZipTimestamp(new Date())}.zip`;
+    const filename = `debugduck-session-${manifestSessionId}.zip`;
     const stored = await storeExportArtifact(zipArrayBuffer, {
       filename,
       mimeType: "application/zip",
@@ -8731,7 +9134,11 @@ function buildNetworkStorageRecord(entry) {
   const responseBodyMeta = skipBody
     ? { value: null, truncated: false, originalBytes: null }
     : decodeResponseBodyWithLimit(entry, captureState.maxBodyBytes);
+  const recordId = `net_${captureState.partId}_${entry.id || crypto.randomUUID()}`;
+  const relativeMs = computeSessionOffsetMs(timestampIso);
   const exportEntry = {
+    id: recordId,
+    timestamp_ms: relativeMs,
     request_id: entry.id || null,
     timestamp: timestampIso,
     timestamp_epoch_ms: timestampEpochMs,
@@ -8772,11 +9179,11 @@ function buildNetworkStorageRecord(entry) {
   };
   const entryBytes = getByteLength(JSON.stringify(exportEntry));
   return {
-    id: `net_${captureState.partId}_${entry.id || crypto.randomUUID()}`,
+    id: recordId,
     sessionId: captureState.sessionId,
     partId: captureState.partId,
     partNumber: captureState.partNumber,
-    t_ms: computeSessionOffsetMs(timestampIso),
+    t_ms: relativeMs,
     entry: exportEntry,
     entry_bytes: entryBytes,
     createdAtMs: Date.now(),
@@ -8789,7 +9196,11 @@ function buildConsoleStorageRecord(entry) {
   }
   const timestampIso = entry.timestamp || nowIso();
   const timestampEpochMs = parseEpochMs(timestampIso);
+  const recordId = `con_${captureState.partId}_${crypto.randomUUID()}`;
+  const relativeMs = computeSessionOffsetMs(timestampIso);
   const exportEntry = {
+    id: recordId,
+    timestamp_ms: relativeMs,
     timestamp: timestampIso,
     timestamp_epoch_ms: timestampEpochMs,
     time_missing: timestampEpochMs === null ? true : undefined,
@@ -8804,11 +9215,11 @@ function buildConsoleStorageRecord(entry) {
   };
   const entryBytes = getByteLength(JSON.stringify(exportEntry));
   return {
-    id: `con_${captureState.partId}_${crypto.randomUUID()}`,
+    id: recordId,
     sessionId: captureState.sessionId,
     partId: captureState.partId,
     partNumber: captureState.partNumber,
-    t_ms: computeSessionOffsetMs(timestampIso),
+    t_ms: relativeMs,
     level: exportEntry.level,
     entry: exportEntry,
     entry_bytes: entryBytes,
@@ -9088,10 +9499,13 @@ function addConsoleEntry(entry) {
 }
 
 function buildConsoleExportEntries() {
-  return state.console.logs.map((entry) => {
+  return state.console.logs.map((entry, index) => {
     const timestampIso = entry.timestamp || nowIso();
     const timestampEpochMs = parseEpochMs(timestampIso);
+    const relativeMs = computeSessionOffsetMs(timestampIso);
     return {
+      id: `con_${String(index + 1).padStart(4, "0")}`,
+      timestamp_ms: relativeMs,
       timestamp: timestampIso,
       timestamp_epoch_ms: timestampEpochMs,
       time_missing: timestampEpochMs === null ? true : undefined,
@@ -9134,7 +9548,7 @@ function buildNetworkExportEntries() {
     addDiagnostic("warning", `Network entries capped at ${MAX_NETWORK_ENTRIES}`);
     state.network.capped = false;
   }
-  return sliceIds.map((id) => {
+  return sliceIds.map((id, index) => {
     const entry = state.network.requests[id] || {};
     const hasRequestHeaders =
       entry.requestHeaders && Object.keys(entry.requestHeaders).length > 0;
@@ -9144,10 +9558,13 @@ function buildNetworkExportEntries() {
     const skipBody = shouldSkipResponseBody(responseHeaders);
     const timestampIso = entry.timestampIso || nowIso();
     const timestampEpochMs = parseEpochMs(timestampIso);
+    const relativeMs = computeSessionOffsetMs(timestampIso);
     const hasRequestBody = typeof entry.requestBody === "string";
     const hasResponseBody =
       !skipBody && typeof entry.responseBody === "string";
     return {
+      id: `net_${String(index + 1).padStart(4, "0")}`,
+      timestamp_ms: relativeMs,
       request_id: entry.id || null,
       timestamp: timestampIso,
       timestamp_epoch_ms: timestampEpochMs,

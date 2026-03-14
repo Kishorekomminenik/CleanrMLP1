@@ -26,22 +26,35 @@ const filterConsole = document.getElementById("filterConsole");
 const filterScreenshots = document.getElementById("filterScreenshots");
 const filterErrors = document.getElementById("filterErrors");
 const searchInput = document.getElementById("searchInput");
+const summaryPanel = document.getElementById("summaryPanel");
+const summaryNetwork = document.getElementById("summaryNetwork");
+const summaryConsole = document.getElementById("summaryConsole");
+const summaryErrors = document.getElementById("summaryErrors");
+const summaryScreenshots = document.getElementById("summaryScreenshots");
+const summaryRecording = document.getElementById("summaryRecording");
+const summarySignals = document.getElementById("summarySignals");
 
 const state = {
   zip: null,
   zipFiles: null,
   sessionLog: null,
+  manifest: null,
   events: [],
   filtered: [],
   currentTms: 0,
   durationMs: 0,
   screenshotUrls: new Map(),
   missingScreenshots: [],
+  screenshotById: new Map(),
   videoUrl: null,
   videoMissing: false,
   selectedEventId: null,
   videoSyncAvailable: false,
   partialMode: false,
+  networkIndex: null,
+  consoleIndex: null,
+  loadingNetwork: false,
+  loadingConsole: false,
 };
 
 const EVENT_ICONS = {
@@ -126,6 +139,127 @@ function parseTimestampFromName(name) {
   const minute = rawTime.slice(2, 4);
   const second = rawTime.slice(4, 6);
   return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).getTime();
+}
+
+function findSessionManifestFile(zipFiles) {
+  if (!zipFiles) {
+    return null;
+  }
+  if (zipFiles["session.json"]) {
+    return "session.json";
+  }
+  return Object.keys(zipFiles).find((name) => /^session\.json$/i.test(name)) || null;
+}
+
+function buildEventsFromManifest(manifest) {
+  const events = [];
+  if (!manifest || !manifest.timeline || !Array.isArray(manifest.timeline.events)) {
+    return events;
+  }
+  manifest.timeline.events.forEach((ev) => {
+    const rawType = ev.type || "marker";
+    let type = rawType;
+    if (rawType.startsWith("recording")) {
+      type = "marker";
+    } else if (rawType.startsWith("network")) {
+      type = "network";
+    } else if (rawType.startsWith("console")) {
+      type = "console";
+    } else if (rawType === "screenshot") {
+      type = "screenshot";
+    }
+    const summary =
+      ev.label ||
+      (rawType === "recording-start"
+        ? "Recording started"
+        : rawType === "recording-stop"
+          ? "Recording stopped"
+          : rawType.replace(/-/g, " "));
+    events.push({
+      id: ev.id || createEventId(),
+      t_ms: typeof ev.timestampMs === "number" ? ev.timestampMs : 0,
+      type,
+      summary,
+      payload: {},
+      refs: {
+        ref: ev.ref || null,
+      },
+      isError: ev.severity === "error",
+      raw: ev,
+    });
+  });
+  return events;
+}
+
+function buildScreenshotIndexFromManifest(manifest) {
+  const map = new Map();
+  if (!manifest || !manifest.artifacts || !manifest.artifacts.screenshots) {
+    return map;
+  }
+  const items = manifest.artifacts.screenshots.items || [];
+  items.forEach((shot) => {
+    if (shot && shot.id) {
+      map.set(shot.id, shot);
+    }
+  });
+  return map;
+}
+
+function applyManifestAvailability(manifest) {
+  const artifacts = manifest?.artifacts || {};
+  const hasNetwork = Boolean(artifacts.network?.present);
+  const hasConsole = Boolean(artifacts.console?.present);
+  const hasScreenshots = Boolean(artifacts.screenshots?.present);
+  const hasRecording = Boolean(artifacts.recording?.present);
+
+  filterNetwork.disabled = !hasNetwork;
+  if (!hasNetwork) {
+    filterNetwork.checked = false;
+  }
+  filterConsole.disabled = !hasConsole;
+  if (!hasConsole) {
+    filterConsole.checked = false;
+  }
+  filterScreenshots.disabled = !hasScreenshots;
+  if (!hasScreenshots) {
+    filterScreenshots.checked = false;
+  }
+
+  videoPanel.classList.toggle("hidden", !hasRecording);
+}
+
+function renderSummaryFromManifest(manifest) {
+  if (!summaryPanel) {
+    return;
+  }
+  if (!manifest || !manifest.summary) {
+    summaryPanel.classList.add("hidden");
+    return;
+  }
+  summaryPanel.classList.remove("hidden");
+  if (summaryNetwork) {
+    summaryNetwork.textContent = String(manifest.summary.networkRequests || 0);
+  }
+  if (summaryConsole) {
+    summaryConsole.textContent = String(manifest.summary.consoleMessages || 0);
+  }
+  if (summaryErrors) {
+    summaryErrors.textContent = String(
+      (manifest.summary.consoleErrors || 0) + (manifest.summary.networkFailures || 0)
+    );
+  }
+  if (summaryScreenshots) {
+    summaryScreenshots.textContent = String(manifest.summary.screenshots || 0);
+  }
+  if (summaryRecording) {
+    summaryRecording.textContent = manifest.summary.hasRecording ? "Yes" : "No";
+  }
+  if (summarySignals) {
+    const signals = Array.isArray(manifest.summary.topSignals)
+      ? manifest.summary.topSignals
+      : [];
+    summarySignals.textContent = signals.length ? signals.join(" • ") : "";
+  }
 }
 
 function pickNewestByZipDate(names, zipFiles) {
@@ -491,6 +625,90 @@ async function loadVideo(zip) {
   }
 }
 
+async function loadNdjsonEntries(path) {
+  if (!path || !state.zip) {
+    return [];
+  }
+  const entry = state.zip.file(path);
+  if (!entry) {
+    return [];
+  }
+  const raw = await entry.async("string");
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch (error) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function indexEntriesById(entries) {
+  const map = new Map();
+  entries.forEach((entry) => {
+    if (entry && entry.id) {
+      map.set(entry.id, entry);
+    }
+  });
+  return map;
+}
+
+async function ensureNetworkLogsLoaded() {
+  if (state.loadingNetwork || state.networkIndex) {
+    return;
+  }
+  state.loadingNetwork = true;
+  try {
+    const manifestPath = state.manifest?.artifacts?.network?.path || null;
+    const entries = await loadNdjsonEntries(manifestPath);
+    state.networkIndex = indexEntriesById(entries);
+  } catch (error) {
+    state.networkIndex = new Map();
+  } finally {
+    state.loadingNetwork = false;
+  }
+}
+
+async function ensureConsoleLogsLoaded() {
+  if (state.loadingConsole || state.consoleIndex) {
+    return;
+  }
+  state.loadingConsole = true;
+  try {
+    const manifestPath = state.manifest?.artifacts?.console?.path || null;
+    const entries = await loadNdjsonEntries(manifestPath);
+    state.consoleIndex = indexEntriesById(entries);
+  } catch (error) {
+    state.consoleIndex = new Map();
+  } finally {
+    state.loadingConsole = false;
+  }
+}
+
+async function ensureVideoLoaded() {
+  if (!state.zip || state.videoUrl || !state.manifest?.artifacts?.recording?.present) {
+    return;
+  }
+  const path = state.manifest.artifacts.recording.path;
+  if (!path) {
+    return;
+  }
+  const entry = state.zip.file(path);
+  if (!entry) {
+    return;
+  }
+  const blob = await entry.async("blob");
+  state.videoUrl = URL.createObjectURL(blob);
+  videoEl.src = state.videoUrl;
+  videoPanel.classList.remove("hidden");
+  state.videoMissing = false;
+}
+
 function renderTimelineTicks(events) {
   timelineTicks.innerHTML = "";
   if (!state.durationMs) {
@@ -589,7 +807,10 @@ function renderDetails(ev) {
     note.textContent = ev.payload?.note || "(no note)";
     detailsBody.appendChild(note);
   } else if (ev.type === "screenshot") {
-    const name = ev.refs?.screenshotFile;
+    const manifestShot = ev.refs?.ref ? state.screenshotById.get(ev.refs.ref) : null;
+    const name = manifestShot?.path
+      ? manifestShot.path.split("/").pop()
+      : ev.refs?.screenshotFile;
     const img = document.createElement("img");
     if (name && state.screenshotUrls.has(name)) {
       img.src = state.screenshotUrls.get(name);
@@ -601,6 +822,18 @@ function renderDetails(ev) {
       detailsBody.appendChild(message);
     }
   } else if (ev.type === "network") {
+    if (!ev.payload || !Object.keys(ev.payload).length) {
+      if (!state.networkIndex) {
+        const loading = document.createElement("div");
+        loading.textContent = "Loading network logs…";
+        detailsBody.appendChild(loading);
+        ensureNetworkLogsLoaded().then(() => renderDetails(ev));
+        return;
+      }
+      if (ev.refs?.ref && state.networkIndex.has(ev.refs.ref)) {
+        ev.payload = state.networkIndex.get(ev.refs.ref);
+      }
+    }
     const fields = [
       ["Method", ev.payload?.method],
       ["URL", ev.payload?.url],
@@ -622,6 +855,18 @@ function renderDetails(ev) {
       detailsBody.appendChild(row);
     });
   } else if (ev.type === "console") {
+    if (!ev.payload || !Object.keys(ev.payload).length) {
+      if (!state.consoleIndex) {
+        const loading = document.createElement("div");
+        loading.textContent = "Loading console logs…";
+        detailsBody.appendChild(loading);
+        ensureConsoleLogsLoaded().then(() => renderDetails(ev));
+        return;
+      }
+      if (ev.refs?.ref && state.consoleIndex.has(ev.refs.ref)) {
+        ev.payload = state.consoleIndex.get(ev.refs.ref);
+      }
+    }
     const fields = [
       ["Level", ev.payload?.level],
       ["Message", ev.payload?.message || ev.payload?.msg],
@@ -683,6 +928,9 @@ function selectEvent(ev, syncTimeline = false) {
   }
   state.selectedEventId = ev.id;
   renderDetails(ev);
+  if (ev.raw && typeof ev.raw.type === "string" && ev.raw.type.startsWith("recording")) {
+    ensureVideoLoaded().then(() => syncVideoToTms(ev.t_ms));
+  }
   if (syncTimeline) {
     setCurrentTms(ev.t_ms, false);
   } else {
@@ -733,112 +981,161 @@ async function loadZip(file) {
   state.zipFiles = zip.files;
   state.partialMode = false;
 
-  const sessionLogName = selectSessionLogFile(zip.files);
-  const screenshotFiles = listScreenshotFiles(zip.files);
-  const screenshotTimes = screenshotFiles
-    .map((name) => parseScreenshotTimestamp(name.split("/").pop()))
-    .filter(Boolean);
-  let sessionLabel = sessionLogName || "partial logs";
+  const manifestName = findSessionManifestFile(zip.files);
+  const screenshotFilesFromZip = listScreenshotFiles(zip.files);
+  let sessionLabel = "partial logs";
   let networkLogs = null;
   let consoleLogs = null;
   let environment = null;
-
   let sessionStartIso = null;
-  if (sessionLogName) {
-    let sessionLogRaw = "";
+  let screenshotFiles = screenshotFilesFromZip;
+
+  if (manifestName) {
+    let manifestRaw = "";
     try {
-      sessionLogRaw = await zip.file(sessionLogName).async("string");
+      manifestRaw = await zip.file(manifestName).async("string");
     } catch (error) {
-      showError("Unable to read session log JSON from ZIP.");
+      showError("Unable to read session.json from ZIP.");
       return;
     }
     try {
-      state.sessionLog = JSON.parse(sessionLogRaw);
+      state.manifest = JSON.parse(manifestRaw);
     } catch (error) {
-      showError("Invalid session log JSON. Re-export the evidence ZIP.");
+      showError("Invalid session.json. Re-export the evidence ZIP.");
       return;
     }
 
-    sessionStartIso = state.sessionLog?.session?.startedAt || null;
-    const normalized = state.sessionLog.normalizedEvents || [];
-    state.events = normalized.length
-      ? buildEventsFromNormalized(normalized)
-      : buildEventsFromRaw(state.sessionLog);
-  } else {
-    const networkName = findFile(zip.files, /network_logs\.json$/i);
-    const consoleName = findFile(zip.files, /console_logs\.json$/i);
-    const environmentName = findFile(zip.files, /environment\.json$/i);
-    if (!networkName && !consoleName) {
-      const found = Object.keys(zip.files)
-        .filter((name) => name.endsWith(".json"))
-        .slice(0, 5)
-        .join(", ");
-      const foundText = found ? `Found JSON: ${found}` : "No JSON files found.";
-      showError(
-        `This ZIP does not look like a DebugDuck export (missing session log). ${foundText}`
-      );
-      return;
-    }
-    state.partialMode = true;
-    try {
-      if (networkName) {
-        const raw = await zip.file(networkName).async("string");
-        networkLogs = JSON.parse(raw);
-      }
-      if (consoleName) {
-        const raw = await zip.file(consoleName).async("string");
-        consoleLogs = JSON.parse(raw);
-      }
-      if (environmentName) {
-        const raw = await zip.file(environmentName).async("string");
-        environment = JSON.parse(raw);
-      }
-    } catch (error) {
-      showError("Unable to read logs JSON from ZIP.");
-      return;
-    }
-    sessionStartIso = deriveSessionStartIso({
-      sessionLog: null,
-      networkEntries: networkLogs?.entries || [],
-      consoleEntries: consoleLogs?.entries || [],
-      screenshotTimes,
-      environmentTimestamp: environment?.timestamp,
-    });
-    state.events = buildEventsFromSupplemental({
-      networkLogs,
-      consoleLogs,
-      sessionStartIso,
-    });
-    state.events = state.events.concat(
-      buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
-    );
-    state.sessionLog = {
-      session: { startedAt: sessionStartIso, endedAt: null, mode: null },
-      raw: {
-        network: networkLogs?.entries || [],
-        console: consoleLogs?.entries || [],
-        markers: [],
-        screenshots: [],
-      },
-    };
-    sessionLabel = "partial logs";
-  }
-
-  state.events.sort((a, b) => a.t_ms - b.t_ms);
-  state.durationMs = computeDurationMs(state.sessionLog, state.events);
-  state.currentTms = state.durationMs;
-  state.videoSyncAvailable = state.durationMs > 0;
-
-  const referencedShots =
-    state.sessionLog?.raw?.screenshots?.map((s) => s.fileName) || [];
-  if (!referencedShots.length && screenshotFiles.length) {
-    state.events = state.events.concat(
-      buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
-    );
+    state.screenshotById = buildScreenshotIndexFromManifest(state.manifest);
+    const manifestShots = state.manifest?.artifacts?.screenshots?.items || [];
+    screenshotFiles = manifestShots.length
+      ? manifestShots
+          .map((shot) => (shot && shot.path ? shot.path : null))
+          .filter(Boolean)
+      : screenshotFilesFromZip;
+    state.events = buildEventsFromManifest(state.manifest);
     state.events.sort((a, b) => a.t_ms - b.t_ms);
+    state.durationMs =
+      (state.manifest.timeline && state.manifest.timeline.endOffsetMs) ||
+      state.manifest.session?.durationMs ||
+      computeDurationMs(state.sessionLog, state.events);
+    state.currentTms = state.durationMs;
+    state.videoSyncAvailable =
+      Boolean(state.manifest?.artifacts?.recording?.present) && state.durationMs > 0;
+    sessionLabel =
+      state.manifest.session?.title ||
+      state.manifest.session?.id ||
+      "session.json";
+    applyManifestAvailability(state.manifest);
+    renderSummaryFromManifest(state.manifest);
+  } else {
+    const sessionLogName = selectSessionLogFile(zip.files);
+    const screenshotTimes = screenshotFiles
+      .map((name) => parseScreenshotTimestamp(name.split("/").pop()))
+      .filter(Boolean);
+    if (sessionLogName) {
+      let sessionLogRaw = "";
+      try {
+        sessionLogRaw = await zip.file(sessionLogName).async("string");
+      } catch (error) {
+        showError("Unable to read session log JSON from ZIP.");
+        return;
+      }
+      try {
+        state.sessionLog = JSON.parse(sessionLogRaw);
+      } catch (error) {
+        showError("Invalid session log JSON. Re-export the evidence ZIP.");
+        return;
+      }
+
+      sessionStartIso = state.sessionLog?.session?.startedAt || null;
+      const normalized = state.sessionLog.normalizedEvents || [];
+      state.events = normalized.length
+        ? buildEventsFromNormalized(normalized)
+        : buildEventsFromRaw(state.sessionLog);
+      sessionLabel = sessionLogName;
+    } else {
+      const networkName = findFile(zip.files, /network_logs\.json$/i);
+      const consoleName = findFile(zip.files, /console_logs\.json$/i);
+      const environmentName = findFile(zip.files, /environment\.json$/i);
+      if (!networkName && !consoleName) {
+        const found = Object.keys(zip.files)
+          .filter((name) => name.endsWith(".json"))
+          .slice(0, 5)
+          .join(", ");
+        const foundText = found ? `Found JSON: ${found}` : "No JSON files found.";
+        showError(
+          `This ZIP does not look like a DebugDuck export (missing session log). ${foundText}`
+        );
+        return;
+      }
+      state.partialMode = true;
+      try {
+        if (networkName) {
+          const raw = await zip.file(networkName).async("string");
+          networkLogs = JSON.parse(raw);
+        }
+        if (consoleName) {
+          const raw = await zip.file(consoleName).async("string");
+          consoleLogs = JSON.parse(raw);
+        }
+        if (environmentName) {
+          const raw = await zip.file(environmentName).async("string");
+          environment = JSON.parse(raw);
+        }
+      } catch (error) {
+        showError("Unable to read logs JSON from ZIP.");
+        return;
+      }
+      sessionStartIso = deriveSessionStartIso({
+        sessionLog: null,
+        networkEntries: networkLogs?.entries || [],
+        consoleEntries: consoleLogs?.entries || [],
+        screenshotTimes,
+        environmentTimestamp: environment?.timestamp,
+      });
+      state.events = buildEventsFromSupplemental({
+        networkLogs,
+        consoleLogs,
+        sessionStartIso,
+      });
+      state.events = state.events.concat(
+        buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
+      );
+      state.sessionLog = {
+        session: { startedAt: sessionStartIso, endedAt: null, mode: null },
+        raw: {
+          network: networkLogs?.entries || [],
+          console: consoleLogs?.entries || [],
+          markers: [],
+          screenshots: [],
+        },
+      };
+      sessionLabel = "partial logs";
+    }
   }
-  await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
-  await loadVideo(zip);
+
+  if (!state.manifest) {
+    state.events.sort((a, b) => a.t_ms - b.t_ms);
+    state.durationMs = computeDurationMs(state.sessionLog, state.events);
+    state.currentTms = state.durationMs;
+    state.videoSyncAvailable = state.durationMs > 0;
+
+    const referencedShots =
+      state.sessionLog?.raw?.screenshots?.map((s) => s.fileName) || [];
+    if (!referencedShots.length && screenshotFiles.length) {
+      state.events = state.events.concat(
+        buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
+      );
+      state.events.sort((a, b) => a.t_ms - b.t_ms);
+    }
+    await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
+    await loadVideo(zip);
+  } else {
+    const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
+    await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
+    const hasRecording = Boolean(state.manifest?.artifacts?.recording?.present);
+    videoPanel.classList.toggle("hidden", !hasRecording);
+  }
 
   setLoadedInfo(file.name, sessionLabel);
 
@@ -855,6 +1152,9 @@ async function loadZip(file) {
   if (state.partialMode) {
     warnings.push("Loaded partial logs (no session log). Some details may be missing.");
   }
+  if (state.manifest?.integrity?.warnings?.length) {
+    warnings.push(state.manifest.integrity.warnings.join(" "));
+  }
   if (state.missingScreenshots.length) {
     warnings.push("Some screenshots referenced in the log are missing from this ZIP.");
   }
@@ -870,6 +1170,7 @@ function resetState() {
   state.zip = null;
   state.zipFiles = null;
   state.sessionLog = null;
+  state.manifest = null;
   state.events = [];
   state.filtered = [];
   state.currentTms = 0;
@@ -880,6 +1181,11 @@ function resetState() {
   state.videoSyncAvailable = false;
   state.partialMode = false;
   eventIdCounter = 0;
+  state.screenshotById.clear();
+  state.networkIndex = null;
+  state.consoleIndex = null;
+  state.loadingNetwork = false;
+  state.loadingConsole = false;
   if (state.videoUrl) {
     URL.revokeObjectURL(state.videoUrl);
   }
@@ -902,6 +1208,9 @@ function resetState() {
   }
   emptyState.textContent =
     "Open an evidence ZIP exported from DebugDuck to replay a session locally.";
+  if (summaryPanel) {
+    summaryPanel.classList.add("hidden");
+  }
   clearError();
   clearLoadedInfo();
 }
@@ -932,7 +1241,8 @@ timeline.addEventListener("input", () => {
 );
 searchInput.addEventListener("input", refreshView);
 
-videoPlay.addEventListener("click", () => {
+videoPlay.addEventListener("click", async () => {
+  await ensureVideoLoaded();
   if (videoEl.paused) {
     videoEl.play();
     videoPlay.textContent = "Pause";

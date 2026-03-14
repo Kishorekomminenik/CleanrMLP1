@@ -90,6 +90,41 @@ body {
   box-shadow: var(--shadow);
 }
 
+.summary-panel.hidden {
+  display: none;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.summary-item {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.summary-value {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.summary-signals {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
 .panel h2 {
   margin: 0 0 10px;
   font-size: 14px;
