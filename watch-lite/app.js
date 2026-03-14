@@ -11,9 +11,21 @@ const emptyState = document.getElementById("emptyState");
 const banner = document.getElementById("howtoBanner");
 const bannerClose = document.getElementById("bannerClose");
 const timeline = document.getElementById("timeline");
-const timelineTicks = document.getElementById("timelineTicks");
+const timelineCursor = document.getElementById("timelineCursor");
+const timelineLanes = document.getElementById("timelineLanes");
 const currentTimeLabel = document.getElementById("currentTime");
 const durationLabel = document.getElementById("durationLabel");
+const playToggleBtn = document.getElementById("playToggleBtn");
+const playheadTime = document.getElementById("playheadTime");
+const playheadDuration = document.getElementById("playheadDuration");
+const prevIncidentBtn = document.getElementById("prevIncidentBtn");
+const nextIncidentBtn = document.getElementById("nextIncidentBtn");
+const followPlayheadToggle = document.getElementById("followPlayheadToggle");
+const timeWindowSelect = document.getElementById("timeWindowSelect");
+const contextIncident = document.getElementById("contextIncident");
+const contextScreenshot = document.getElementById("contextScreenshot");
+const contextNetworkCount = document.getElementById("contextNetworkCount");
+const contextConsoleCount = document.getElementById("contextConsoleCount");
 const eventList = document.getElementById("eventList");
 const detailsBody = document.getElementById("detailsBody");
 const videoPanel = document.getElementById("videoPanel");
@@ -52,8 +64,12 @@ const incidentList = document.getElementById("incidentList");
 const incidentEmpty = document.getElementById("incidentEmpty");
 const errorOnlyToggle = document.getElementById("errorOnlyToggle");
 const networkFilterChips = Array.from(document.querySelectorAll("[data-net-filter]"));
+const networkModeChips = Array.from(document.querySelectorAll("[data-net-mode]"));
 const consoleLevelChips = Array.from(
   document.querySelectorAll("[data-console-level]")
+);
+const consoleModeChips = Array.from(
+  document.querySelectorAll("[data-console-mode]")
 );
 
 const state = {
@@ -65,26 +81,36 @@ const state = {
   packageBaseUrl: null,
   events: [],
   filtered: [],
-  currentTms: 0,
-  durationMs: 0,
   screenshotUrls: new Map(),
   missingScreenshots: [],
   screenshotById: new Map(),
   videoUrl: null,
   videoMissing: false,
-  selectedEventId: null,
-  activePanel: "timeline",
-  selectedScreenshotId: null,
   selectedNetworkId: null,
   selectedConsoleId: null,
-  currentSeekMs: 0,
   filters: {
     errorOnly: false,
     networkStatusBucket: "all",
     consoleLevels: ["error", "warning", "info", "log", "debug"],
-    selectedIncidentId: null,
     incidentSourcePanel: null,
     showIncidentRail: true,
+  },
+  playhead: {
+    currentTimeMs: 0,
+    durationMs: 0,
+    isPlaying: false,
+    isSeeking: false,
+    followPlayhead: true,
+    timeWindowMs: 5000,
+    selectedEventId: null,
+    selectedIncidentId: null,
+    selectedScreenshotId: null,
+    activePanel: "timeline",
+    lastSeekSource: null,
+  },
+  panelModes: {
+    network: "near",
+    console: "near",
   },
   incidents: [],
   incidentSourcePanel: null,
@@ -217,7 +243,7 @@ function setLoadedInfo(zipName, sessionLogName) {
     return;
   }
   loadedInfo.textContent = `Loaded: ${zipName} • ${sessionLogName} • ${formatTime(
-    state.durationMs
+    state.playhead.durationMs
   )}`;
   loadedInfo.classList.remove("hidden");
 }
@@ -244,6 +270,212 @@ function parseTimestampFromName(name) {
   const minute = rawTime.slice(2, 4);
   const second = rawTime.slice(4, 6);
   return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`).getTime();
+}
+
+function clampToDuration(tms) {
+  const duration = state.playhead.durationMs || 0;
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return Math.max(0, tms);
+  }
+  return Math.min(Math.max(0, tms), duration);
+}
+
+function setPlayState(isPlaying) {
+  state.playhead.isPlaying = Boolean(isPlaying);
+  if (playToggleBtn) {
+    playToggleBtn.textContent = state.playhead.isPlaying ? "Pause" : "Play";
+  }
+  if (videoPlay) {
+    videoPlay.textContent = state.playhead.isPlaying ? "Pause" : "Play";
+  }
+}
+
+function updatePlayheadDisplay() {
+  const current = state.playhead.currentTimeMs || 0;
+  const duration = state.playhead.durationMs || 0;
+  if (timeline) {
+    timeline.max = String(duration || 0);
+    timeline.value = String(current || 0);
+  }
+  if (currentTimeLabel) {
+    currentTimeLabel.textContent = formatTime(current);
+  }
+  if (playheadTime) {
+    playheadTime.textContent = formatTime(current);
+  }
+  if (playheadDuration) {
+    playheadDuration.textContent = formatTime(duration);
+  }
+  if (durationLabel) {
+    durationLabel.textContent = `Duration: ${formatTime(duration)}`;
+  }
+  if (videoTime) {
+    videoTime.textContent = formatTime(current);
+  }
+  if (timelineCursor && duration > 0) {
+    const left = (current / duration) * 100;
+    timelineCursor.style.left = `${left}%`;
+  } else if (timelineCursor) {
+    timelineCursor.style.left = "0%";
+  }
+}
+
+function getEntriesNearTime(entries, tms, windowMs) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [];
+  }
+  const min = tms - windowMs;
+  const max = tms + windowMs;
+  return entries.filter((entry) => {
+    const ts =
+      typeof entry.timestamp_ms === "number"
+        ? entry.timestamp_ms
+        : typeof entry.timestampMs === "number"
+          ? entry.timestampMs
+          : null;
+    return typeof ts === "number" && ts >= min && ts <= max;
+  });
+}
+
+function findNearestIncident(incidents, tms) {
+  if (!incidents.length) {
+    return null;
+  }
+  let nearest = incidents[0];
+  let best = Math.abs((nearest.timestampMs || 0) - tms);
+  incidents.forEach((inc) => {
+    const delta = Math.abs((inc.timestampMs || 0) - tms);
+    if (delta < best) {
+      best = delta;
+      nearest = inc;
+    }
+  });
+  return nearest;
+}
+
+function findNearestScreenshot(tms) {
+  let shots = state.manifest?.artifacts?.screenshots?.items || [];
+  if (!shots.length) {
+    shots = state.events
+      .filter((ev) => ev.type === "screenshot")
+      .map((ev) => ({
+        id: ev.id,
+        timestampMs: ev.t_ms || 0,
+        label: ev.summary || "Screenshot",
+        kind: "screenshot",
+      }));
+  }
+  if (!shots.length) {
+    return null;
+  }
+  let nearest = shots[0];
+  let best = Math.abs((nearest.timestampMs || 0) - tms);
+  shots.forEach((shot) => {
+    const delta = Math.abs((shot.timestampMs || 0) - tms);
+    if (delta < best) {
+      best = delta;
+      nearest = shot;
+    }
+  });
+  return nearest;
+}
+
+function updateCurrentTimeContext() {
+  if (!contextIncident || !contextScreenshot) {
+    return;
+  }
+  const tms = state.playhead.currentTimeMs || 0;
+  const incidents = getFilteredIncidents();
+  const nearestIncident = findNearestIncident(incidents, tms);
+  contextIncident.textContent = nearestIncident
+    ? `${buildIncidentTitle(nearestIncident)} (${formatTimeWithMs(
+        nearestIncident.timestampMs || 0
+      )})`
+    : "None";
+  const nearestShot = findNearestScreenshot(tms);
+  contextScreenshot.textContent = nearestShot
+    ? `${nearestShot.label || nearestShot.kind || "Screenshot"} (${formatTimeWithMs(
+        nearestShot.timestampMs || 0
+      )})`
+    : "None";
+  if (contextNetworkCount) {
+    if (state.loadedArtifacts.network) {
+      const near = getEntriesNearTime(
+        state.networkEntries,
+        tms,
+        state.playhead.timeWindowMs
+      );
+      contextNetworkCount.textContent = String(near.length);
+    } else {
+      contextNetworkCount.textContent = "-";
+    }
+  }
+  if (contextConsoleCount) {
+    if (state.loadedArtifacts.console) {
+      const near = getEntriesNearTime(
+        state.consoleEntries,
+        tms,
+        state.playhead.timeWindowMs
+      );
+      contextConsoleCount.textContent = String(near.length);
+    } else {
+      contextConsoleCount.textContent = "-";
+    }
+  }
+}
+
+function updateTimeAwarePanels() {
+  if (state.loadedArtifacts.network && state.panelModes.network === "near") {
+    renderNetworkPanel();
+  }
+  if (state.loadedArtifacts.console && state.panelModes.console === "near") {
+    renderConsolePanel();
+  }
+}
+
+function applyPlayhead(tms, options = {}) {
+  const next = clampToDuration(tms);
+  state.playhead.currentTimeMs = next;
+  if (options.source) {
+    state.playhead.lastSeekSource = options.source;
+  }
+  if (typeof options.isPlaying === "boolean") {
+    state.playhead.isPlaying = options.isPlaying;
+  }
+  if (typeof options.isSeeking === "boolean") {
+    state.playhead.isSeeking = options.isSeeking;
+  }
+  if ("selectedEventId" in options) {
+    state.playhead.selectedEventId = options.selectedEventId;
+  }
+  if ("selectedIncidentId" in options) {
+    state.playhead.selectedIncidentId = options.selectedIncidentId;
+  }
+  if ("selectedScreenshotId" in options) {
+    state.playhead.selectedScreenshotId = options.selectedScreenshotId;
+  }
+  if (options.activePanel) {
+    setActivePanel(options.activePanel);
+  }
+  updatePlayheadDisplay();
+  if (options.updateContext !== false) {
+    updateCurrentTimeContext();
+  }
+  if (
+    options.syncVideo !== false &&
+    state.videoSyncAvailable &&
+    options.source !== "video"
+  ) {
+    ensureVideoLoaded().then(() => syncVideoToTms(next));
+  }
+  if (options.updatePanels !== false) {
+    if (state.playhead.followPlayhead || options.source !== "video") {
+      updateTimeAwarePanels();
+    }
+  }
+  if (options.refresh !== false) {
+    refreshView();
+  }
 }
 
 function setPackageMode(enabled, baseUrl = null) {
@@ -378,12 +610,14 @@ async function initFromManifest(manifest, options = {}) {
         : [];
   state.events = buildEventsFromManifest(manifest);
   state.events.sort((a, b) => a.t_ms - b.t_ms);
-  state.durationMs =
+  state.playhead.durationMs =
     (manifest.timeline && manifest.timeline.endOffsetMs) ||
     manifest.session?.durationMs ||
     computeDurationMs(state.sessionLog, state.events);
-  state.currentTms = state.durationMs;
-  state.videoSyncAvailable = Boolean(manifest?.artifacts?.recording?.present) && state.durationMs > 0;
+  state.playhead.currentTimeMs = 0;
+  state.videoSyncAvailable =
+    Boolean(manifest?.artifacts?.recording?.present) &&
+    state.playhead.durationMs > 0;
 
   applyManifestAvailability(manifest);
   renderSummaryFromManifest(manifest);
@@ -393,6 +627,8 @@ async function initFromManifest(manifest, options = {}) {
   state.incidents = buildIncidentsFromManifest(manifest);
   renderIncidentRail();
   applySummaryInteractions();
+  updatePlayheadDisplay();
+  updateCurrentTimeContext();
 
   const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
   if (options.baseUrl) {
@@ -423,6 +659,12 @@ function applyManifestAvailability(manifest) {
   }
 
   videoPanel.classList.toggle("hidden", !hasRecording);
+  if (playToggleBtn) {
+    playToggleBtn.disabled = !hasRecording;
+  }
+  if (videoPlay) {
+    videoPlay.disabled = !hasRecording;
+  }
 
   if (!hasNetwork) {
     networkEmpty?.classList.remove("hidden");
@@ -437,7 +679,13 @@ function applyManifestAvailability(manifest) {
   networkFilterChips.forEach((chip) => {
     chip.disabled = !hasNetwork;
   });
+  networkModeChips.forEach((chip) => {
+    chip.disabled = !hasNetwork;
+  });
   consoleLevelChips.forEach((chip) => {
+    chip.disabled = !hasConsole;
+  });
+  consoleModeChips.forEach((chip) => {
     chip.disabled = !hasConsole;
   });
 }
@@ -570,7 +818,7 @@ function applySummaryInteractions() {
         errorOnlyToggle.checked = true;
       }
       renderIncidentRail();
-      renderTimelineTicks(state.events);
+      renderTimelineLanes(state.events);
     } else if (key === "Network") {
       setActivePanel("network");
       state.filters.networkStatusBucket = "errors";
@@ -592,6 +840,7 @@ function applySummaryInteractions() {
       setActivePanel("timeline");
     }
     renderIncidentRail();
+    updateCurrentTimeContext();
   });
 }
 
@@ -705,7 +954,7 @@ function renderIncidentRail() {
   incidents.forEach((inc) => {
     const row = document.createElement("div");
     row.className = "incident-item";
-    if (state.filters.selectedIncidentId === inc.id) {
+    if (state.playhead.selectedIncidentId === inc.id) {
       row.classList.add("active");
     }
     const dot = document.createElement("div");
@@ -724,6 +973,45 @@ function renderIncidentRail() {
     row.addEventListener("click", () => handleIncidentSelection(inc));
     incidentList.appendChild(row);
   });
+  updateIncidentNavControls();
+}
+
+function updateIncidentNavControls() {
+  if (!prevIncidentBtn || !nextIncidentBtn) {
+    return;
+  }
+  const incidents = getFilteredIncidents();
+  const disabled = incidents.length === 0;
+  prevIncidentBtn.disabled = disabled;
+  nextIncidentBtn.disabled = disabled;
+}
+
+function navigateIncident(direction) {
+  const incidents = getFilteredIncidents();
+  if (!incidents.length) {
+    return;
+  }
+  const currentId = state.playhead.selectedIncidentId;
+  let index = incidents.findIndex((inc) => inc.id === currentId);
+  if (index === -1) {
+    const tms = state.playhead.currentTimeMs || 0;
+    if (direction > 0) {
+      index = incidents.findIndex((inc) => (inc.timestampMs || 0) > tms);
+      if (index === -1) {
+        index = incidents.length - 1;
+      }
+    } else {
+      index = incidents.reduce((acc, inc, idx) => {
+        return (inc.timestampMs || 0) < tms ? idx : acc;
+      }, -1);
+      if (index === -1) {
+        index = 0;
+      }
+    }
+  } else {
+    index = Math.min(Math.max(index + direction, 0), incidents.length - 1);
+  }
+  handleIncidentSelection(incidents[index]);
 }
 
 function renderScreenshotsPanel() {
@@ -740,7 +1028,7 @@ function renderScreenshotsPanel() {
   items.forEach((shot) => {
     const row = document.createElement("div");
     row.className = "screenshot-item";
-    if (state.selectedScreenshotId && shot.id === state.selectedScreenshotId) {
+    if (state.playhead.selectedScreenshotId && shot.id === state.playhead.selectedScreenshotId) {
       row.classList.add("active");
     }
     const thumb = document.createElement("img");
@@ -760,7 +1048,7 @@ function renderScreenshotsPanel() {
     row.appendChild(thumb);
     row.appendChild(meta);
     row.addEventListener("click", () => {
-      state.selectedScreenshotId = shot.id;
+      state.playhead.selectedScreenshotId = shot.id;
       const baseName = shot.path ? shot.path.split("/").pop() : null;
       const linkedEvent = state.events.find(
         (ev) =>
@@ -776,7 +1064,7 @@ function renderScreenshotsPanel() {
           refs: { ref: shot.id, screenshotFile: baseName },
           raw: { type: "screenshot" },
         },
-        true
+        "screenshot"
       );
       renderScreenshotsPanel();
       renderScreenshotPreview();
@@ -790,8 +1078,8 @@ function renderScreenshotPreview() {
   if (!screenshotPreview) {
     return;
   }
-  const shot = state.selectedScreenshotId
-    ? state.screenshotById.get(state.selectedScreenshotId)
+  const shot = state.playhead.selectedScreenshotId
+    ? state.screenshotById.get(state.playhead.selectedScreenshotId)
     : null;
   if (!shot) {
     screenshotPreview.textContent = "Select a screenshot to preview.";
@@ -821,7 +1109,14 @@ function renderNetworkPanel() {
     return;
   }
   const entries = state.networkEntries || [];
-  const filtered = entries.filter((entry) => {
+  const base = state.panelModes.network === "near"
+    ? getEntriesNearTime(
+        entries,
+        state.playhead.currentTimeMs,
+        state.playhead.timeWindowMs
+      )
+    : entries;
+  const filtered = base.filter((entry) => {
     if (state.filters.errorOnly && !isNetworkError(entry)) {
       return false;
     }
@@ -845,6 +1140,11 @@ function renderNetworkPanel() {
   }
   networkEmpty.classList.add("hidden");
   networkFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
+  if (networkFilteredEmpty && filtered.length === 0 && state.panelModes.network === "near") {
+    networkFilteredEmpty.textContent = "No network entries near current time.";
+  } else if (networkFilteredEmpty) {
+    networkFilteredEmpty.textContent = "No network entries match current filter.";
+  }
   const maxRows = 500;
   const rows = filtered.slice(0, maxRows);
   rows.forEach((entry) => {
@@ -855,7 +1155,11 @@ function renderNetworkPanel() {
     }
     const time = document.createElement("div");
     time.className = "muted";
-    time.textContent = formatTimeWithMs(entry.timestamp_ms || 0);
+    const entryTime =
+      typeof entry.timestamp_ms === "number"
+        ? entry.timestamp_ms
+        : entry.timestampMs || 0;
+    time.textContent = formatTimeWithMs(entryTime);
     const status = document.createElement("div");
     status.textContent = entry.response_status || entry.status || "-";
     const url = document.createElement("div");
@@ -865,6 +1169,12 @@ function renderNetworkPanel() {
     row.appendChild(url);
     row.addEventListener("click", () => {
       state.selectedNetworkId = entry.id;
+      if (typeof entryTime === "number") {
+        applyPlayhead(entryTime, {
+          source: "network",
+          selectedEventId: state.playhead.selectedEventId,
+        });
+      }
       renderNetworkPanel();
     });
     networkList.appendChild(row);
@@ -886,8 +1196,15 @@ function renderConsolePanel() {
     return;
   }
   const entries = state.consoleEntries || [];
+  const base = state.panelModes.console === "near"
+    ? getEntriesNearTime(
+        entries,
+        state.playhead.currentTimeMs,
+        state.playhead.timeWindowMs
+      )
+    : entries;
   const allowedLevels = getEffectiveConsoleLevels();
-  const filtered = entries.filter((entry) =>
+  const filtered = base.filter((entry) =>
     allowedLevels.includes(normalizeConsoleLevel(entry.level))
   );
   consoleList.innerHTML = "";
@@ -898,6 +1215,11 @@ function renderConsolePanel() {
   }
   consoleEmpty.classList.add("hidden");
   consoleFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
+  if (consoleFilteredEmpty && filtered.length === 0 && state.panelModes.console === "near") {
+    consoleFilteredEmpty.textContent = "No console entries near current time.";
+  } else if (consoleFilteredEmpty) {
+    consoleFilteredEmpty.textContent = "No console entries match current filter.";
+  }
   const maxRows = 500;
   const rows = filtered.slice(0, maxRows);
   rows.forEach((entry) => {
@@ -908,7 +1230,11 @@ function renderConsolePanel() {
     }
     const time = document.createElement("div");
     time.className = "muted";
-    time.textContent = formatTimeWithMs(entry.timestamp_ms || 0);
+    const entryTime =
+      typeof entry.timestamp_ms === "number"
+        ? entry.timestamp_ms
+        : entry.timestampMs || 0;
+    time.textContent = formatTimeWithMs(entryTime);
     const level = document.createElement("div");
     level.textContent = (entry.level || "log").toUpperCase();
     const msg = document.createElement("div");
@@ -918,6 +1244,12 @@ function renderConsolePanel() {
     row.appendChild(msg);
     row.addEventListener("click", () => {
       state.selectedConsoleId = entry.id;
+      if (typeof entryTime === "number") {
+        applyPlayhead(entryTime, {
+          source: "console",
+          selectedEventId: state.playhead.selectedEventId,
+        });
+      }
       renderConsolePanel();
     });
     consoleList.appendChild(row);
@@ -1464,43 +1796,91 @@ function getTimelineMarkerClass(ev) {
   return ev.isError ? "error" : "marker";
 }
 
-function renderTimelineTicks(events) {
-  timelineTicks.innerHTML = "";
-  if (!state.durationMs) {
+function renderTimelineLanes(events) {
+  if (!timelineLanes) {
     return;
   }
-  events.forEach((ev) => {
-    const markerClass = getTimelineMarkerClass(ev);
-    const isErrorEvent =
-      ev.isError ||
-      (ev.raw && typeof ev.raw.type === "string" && ev.raw.type.includes("error"));
-    if (
-      markerClass === "marker" ||
-      markerClass === "screenshot" ||
-      markerClass === "network" ||
-      markerClass === "console" ||
-      markerClass === "recording" ||
-      ev.isError
-    ) {
-      if (state.filters.errorOnly && !isErrorEvent) {
+  const duration = state.playhead.durationMs || 0;
+  const tracks = Array.from(timelineLanes.querySelectorAll(".lane-track"));
+  tracks.forEach((track) => {
+    track.innerHTML = "";
+  });
+  if (!duration) {
+    return;
+  }
+  const screenshots = events.filter((ev) => ev.type === "screenshot");
+  const networkErrors = events.filter((ev) => {
+    const rawType = ev.raw?.type || "";
+    return (
+      rawType.startsWith("network") &&
+      (rawType.includes("error") || rawType.includes("warning") || ev.isError)
+    );
+  });
+  const consoleErrors = events.filter((ev) => {
+    const rawType = ev.raw?.type || "";
+    return (
+      rawType.startsWith("console") &&
+      (rawType.includes("error") || rawType.includes("warning") || ev.isError)
+    );
+  });
+  const markerEvents = events.filter((ev) => {
+    const rawType = ev.raw?.type || "";
+    const isMarker =
+      ev.type === "marker" || rawType.startsWith("recording") || ev.isError;
+    if (state.filters.errorOnly) {
+      return isMarker && ev.isError;
+    }
+    return isMarker;
+  });
+  const laneMap = {
+    screenshots,
+    network: networkErrors,
+    console: consoleErrors,
+    markers: markerEvents,
+  };
+  Object.entries(laneMap).forEach(([laneName, items]) => {
+    const track = timelineLanes.querySelector(
+      `[data-lane="${laneName}"] .lane-track`
+    );
+    if (!track) {
+      return;
+    }
+    items.forEach((ev) => {
+      if (state.filters.errorOnly && !ev.isError && laneName !== "markers") {
         return;
       }
-      const tick = document.createElement("div");
-      tick.className = "timeline-tick";
-      if (markerClass) {
-        tick.classList.add(markerClass);
-      }
+      const marker = document.createElement("div");
+      marker.className = "lane-marker";
+      marker.classList.add(laneName === "markers" ? "marker" : laneName);
       if (ev.isError) {
-        tick.classList.add("error");
+        marker.classList.add("error");
       }
-      const left = (ev.t_ms / state.durationMs) * 100;
-      tick.style.left = `${left}%`;
-      tick.title = ev.summary;
-      if (state.selectedEventId && ev.id === state.selectedEventId) {
-        tick.classList.add("selected");
+      const left = (ev.t_ms / duration) * 100;
+      marker.style.left = `${left}%`;
+      marker.title = ev.summary;
+      if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
+        marker.classList.add("selected");
       }
-      tick.addEventListener("click", () => handleEventSelection(ev, true));
-      timelineTicks.appendChild(tick);
+      marker.addEventListener("click", () => handleEventSelection(ev, "timeline"));
+      track.appendChild(marker);
+    });
+    if (laneName === "markers") {
+      const incidents = getFilteredIncidents();
+      incidents.forEach((inc) => {
+        const marker = document.createElement("div");
+        marker.className = "lane-marker incident";
+        if (inc.severity === "error") {
+          marker.classList.add("error");
+        }
+        const left = ((inc.timestampMs || 0) / duration) * 100;
+        marker.style.left = `${left}%`;
+        marker.title = buildIncidentTitle(inc);
+        if (state.playhead.selectedIncidentId === inc.id) {
+          marker.classList.add("selected");
+        }
+        marker.addEventListener("click", () => handleIncidentSelection(inc));
+        track.appendChild(marker);
+      });
     }
   });
 }
@@ -1520,7 +1900,7 @@ function buildFilters() {
 function filterEvents(events) {
   const filters = buildFilters();
   return events.filter((ev) => {
-    if (ev.t_ms > state.currentTms) {
+    if (ev.t_ms > state.playhead.currentTimeMs) {
       return false;
     }
     if (!filters[ev.type]) {
@@ -1561,7 +1941,7 @@ function renderEventList() {
     const item = document.createElement("div");
     item.className = "event-item";
     item.dataset.index = String(index);
-    if (state.selectedEventId && ev.id === state.selectedEventId) {
+    if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
       item.classList.add("active");
     }
 
@@ -1581,7 +1961,7 @@ function renderEventList() {
 
     item.appendChild(time);
     item.appendChild(summary);
-    item.addEventListener("click", () => handleEventSelection(ev, true));
+    item.addEventListener("click", () => handleEventSelection(ev, "timeline"));
     eventList.appendChild(item);
   });
 }
@@ -1683,7 +2063,7 @@ function renderDetails(ev) {
 }
 
 function setActivePanel(panel) {
-  state.activePanel = panel;
+  state.playhead.activePanel = panel;
   panelTabs.forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.panel === panel);
   });
@@ -1725,26 +2105,25 @@ function mapEventToPanel(ev) {
   return "timeline";
 }
 
-function handleEventSelection(ev, syncTimeline = false) {
+function handleEventSelection(ev, source = "timeline") {
   if (!ev) {
     return;
   }
-  state.selectedEventId = ev.id;
-  state.currentSeekMs = ev.t_ms || 0;
-  if (ev.refs?.ref) {
-    const matched = state.incidents.find((inc) => inc.sourceRef === ev.refs.ref);
-    if (matched) {
-      state.filters.selectedIncidentId = matched.id;
-    }
-  }
   const panel = mapEventToPanel(ev);
-  setActivePanel(panel);
+  const matched = ev.refs?.ref
+    ? state.incidents.find((inc) => inc.sourceRef === ev.refs.ref)
+    : null;
+  const screenshotId =
+    panel === "screenshots" && ev.refs?.ref ? ev.refs.ref : state.playhead.selectedScreenshotId;
+  applyPlayhead(ev.t_ms || 0, {
+    source,
+    activePanel: panel,
+    selectedEventId: ev.id,
+    selectedIncidentId: matched ? matched.id : state.playhead.selectedIncidentId,
+    selectedScreenshotId: screenshotId,
+  });
   renderDetails(ev);
   if (panel === "screenshots") {
-    const refId = ev.refs?.ref || null;
-    if (refId) {
-      state.selectedScreenshotId = refId;
-    }
     renderScreenshotsPanel();
   }
   if (panel === "network") {
@@ -1755,26 +2134,24 @@ function handleEventSelection(ev, syncTimeline = false) {
     state.selectedConsoleId = ev.refs?.ref || null;
     ensureConsoleLogsLoaded().then(renderConsolePanel);
   }
-  if (state.videoSyncAvailable) {
-    ensureVideoLoaded().then(() => syncVideoToTms(state.currentSeekMs));
-  }
   renderIncidentRail();
-  if (syncTimeline) {
-    setCurrentTms(ev.t_ms, false);
-  } else {
-    refreshView();
-  }
 }
 
 function handleIncidentSelection(incident) {
   if (!incident) {
     return;
   }
-  state.filters.selectedIncidentId = incident.id;
-  state.currentSeekMs = incident.timestampMs || 0;
-  if (state.videoSyncAvailable) {
-    ensureVideoLoaded().then(() => syncVideoToTms(state.currentSeekMs));
-  }
+  const eventMatch = state.events.find(
+    (ev) =>
+      ev.id === incident.sourceRef ||
+      (ev.refs?.ref && ev.refs.ref === incident.sourceRef)
+  );
+  applyPlayhead(incident.timestampMs || 0, {
+    source: "incident",
+    activePanel: incident.panelTarget,
+    selectedIncidentId: incident.id,
+    selectedEventId: eventMatch ? eventMatch.id : state.playhead.selectedEventId,
+  });
   if (incident.panelTarget === "network") {
     setActivePanel("network");
     state.selectedNetworkId = incident.sourceRef;
@@ -1786,8 +2163,8 @@ function handleIncidentSelection(incident) {
   } else {
     setActivePanel("timeline");
   }
-  if (incident.timestampMs != null) {
-    setCurrentTms(incident.timestampMs, false);
+  if (eventMatch) {
+    renderDetails(eventMatch);
   }
   renderIncidentRail();
 }
@@ -1797,6 +2174,46 @@ function syncVideoToTms(tms) {
     return;
   }
   videoEl.currentTime = Math.max(0, tms / 1000);
+}
+
+let lastVideoSyncAt = 0;
+
+function handleVideoTimeUpdate() {
+  if (!videoEl) {
+    return;
+  }
+  const tms = Math.floor((videoEl.currentTime || 0) * 1000);
+  const now = Date.now();
+  const shouldRefresh =
+    state.playhead.followPlayhead && now - lastVideoSyncAt > 250;
+  applyPlayhead(tms, {
+    source: "video",
+    syncVideo: false,
+    refresh: shouldRefresh,
+    updatePanels: shouldRefresh,
+    updateContext: shouldRefresh,
+  });
+  if (shouldRefresh) {
+    lastVideoSyncAt = now;
+  }
+}
+
+async function togglePlayback(source = "video") {
+  if (!state.videoSyncAvailable) {
+    return;
+  }
+  await ensureVideoLoaded();
+  if (!videoEl) {
+    return;
+  }
+  if (videoEl.paused) {
+    await videoEl.play();
+    setPlayState(true);
+    applyPlayhead(state.playhead.currentTimeMs, { source, refresh: false });
+  } else {
+    videoEl.pause();
+    setPlayState(false);
+  }
 }
 
 function findNearestEvent(events, tms) {
@@ -1812,15 +2229,11 @@ function findNearestEvent(events, tms) {
 }
 
 function setCurrentTms(tms, snap = true) {
-  state.currentTms = Math.max(0, tms);
-  state.currentSeekMs = state.currentTms;
-  setActivePanel(state.activePanel || "timeline");
-  updateTimeline();
-  syncVideoToTms(state.currentTms);
+  applyPlayhead(tms, { source: "timeline", refresh: false });
   if (snap) {
-    const nearest = findNearestEvent(state.events, state.currentTms);
+    const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
     if (nearest) {
-      state.selectedEventId = nearest.id;
+      state.playhead.selectedEventId = nearest.id;
       renderDetails(nearest);
     }
   }
@@ -1831,7 +2244,7 @@ function selectEvent(ev, syncTimeline = false) {
   if (!ev) {
     return;
   }
-  state.selectedEventId = ev.id;
+  state.playhead.selectedEventId = ev.id;
   renderDetails(ev);
   if (ev.raw && typeof ev.raw.type === "string" && ev.raw.type.startsWith("recording")) {
     ensureVideoLoaded().then(() => syncVideoToTms(ev.t_ms));
@@ -1844,10 +2257,7 @@ function selectEvent(ev, syncTimeline = false) {
 }
 
 function updateTimeline() {
-  timeline.max = String(state.durationMs || 0);
-  timeline.value = String(state.currentTms || 0);
-  currentTimeLabel.textContent = formatTime(state.currentTms);
-  durationLabel.textContent = `Duration: ${formatTime(state.durationMs)}`;
+  updatePlayheadDisplay();
   if (videoSyncNote) {
     videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
   }
@@ -1856,13 +2266,13 @@ function updateTimeline() {
 function refreshView() {
   state.filtered = filterEvents(state.events);
   if (
-    state.selectedEventId &&
-    !state.filtered.some((ev) => ev.id === state.selectedEventId)
+    state.playhead.selectedEventId &&
+    !state.filtered.some((ev) => ev.id === state.playhead.selectedEventId)
   ) {
-    state.selectedEventId = null;
+    state.playhead.selectedEventId = null;
   }
   renderEventList();
-  renderTimelineTicks(state.events);
+  renderTimelineLanes(state.events);
 }
 
 async function loadZip(file) {
@@ -2007,9 +2417,9 @@ async function loadZip(file) {
 
   if (!state.manifest) {
     state.events.sort((a, b) => a.t_ms - b.t_ms);
-    state.durationMs = computeDurationMs(state.sessionLog, state.events);
-    state.currentTms = state.durationMs;
-    state.videoSyncAvailable = state.durationMs > 0;
+    state.playhead.durationMs = computeDurationMs(state.sessionLog, state.events);
+    state.playhead.currentTimeMs = 0;
+    state.videoSyncAvailable = state.playhead.durationMs > 0;
 
     const referencedShots =
       state.sessionLog?.raw?.screenshots?.map((s) => s.fileName) || [];
@@ -2021,6 +2431,13 @@ async function loadZip(file) {
     }
     await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
     await loadVideo(zip);
+    state.videoSyncAvailable = !state.videoMissing && state.playhead.durationMs > 0;
+    if (playToggleBtn) {
+      playToggleBtn.disabled = !state.videoSyncAvailable;
+    }
+    if (videoPlay) {
+      videoPlay.disabled = !state.videoSyncAvailable;
+    }
   } else {
     const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
     await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
@@ -2034,12 +2451,13 @@ async function loadZip(file) {
   if (!state.manifest && timelineSummary) {
     timelineSummary.textContent = `${state.events.length} events`;
   }
-  const nearest = findNearestEvent(state.events, state.currentTms);
+  const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
   if (nearest) {
-    state.selectedEventId = nearest.id;
+    state.playhead.selectedEventId = nearest.id;
     renderDetails(nearest);
   }
   refreshView();
+  updateCurrentTimeContext();
   emptyState.textContent = "";
 
   const warnings = [];
@@ -2075,6 +2493,12 @@ async function tryLoadPackageSession() {
     updateTimeline();
     refreshView();
     emptyState.textContent = "";
+    const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
+    if (nearest) {
+      state.playhead.selectedEventId = nearest.id;
+      renderDetails(nearest);
+    }
+    updateCurrentTimeContext();
     const warnings = [];
     if (manifest.integrity?.warnings?.length) {
       warnings.push(manifest.integrity.warnings.join(" "));
@@ -2098,23 +2522,33 @@ function resetState() {
   state.manifest = null;
   state.events = [];
   state.filtered = [];
-  state.currentTms = 0;
-  state.durationMs = 0;
+  state.playhead = {
+    currentTimeMs: 0,
+    durationMs: 0,
+    isPlaying: false,
+    isSeeking: false,
+    followPlayhead: true,
+    timeWindowMs: 5000,
+    selectedEventId: null,
+    selectedIncidentId: null,
+    selectedScreenshotId: null,
+    activePanel: "timeline",
+    lastSeekSource: null,
+  };
   state.missingScreenshots = [];
   state.videoMissing = false;
-  state.selectedEventId = null;
-  state.activePanel = "timeline";
-  state.selectedScreenshotId = null;
   state.selectedNetworkId = null;
   state.selectedConsoleId = null;
-  state.currentSeekMs = 0;
   state.filters = {
     errorOnly: false,
     networkStatusBucket: "all",
     consoleLevels: ["error", "warning", "info", "log", "debug"],
-    selectedIncidentId: null,
     incidentSourcePanel: null,
     showIncidentRail: true,
+  };
+  state.panelModes = {
+    network: "near",
+    console: "near",
   };
   state.incidents = [];
   state.videoSyncAvailable = false;
@@ -2134,14 +2568,35 @@ function resetState() {
 
   eventList.innerHTML = "";
   detailsBody.textContent = "Select an event to see details.";
-  timelineTicks.innerHTML = "";
+  if (timelineLanes) {
+    const tracks = Array.from(timelineLanes.querySelectorAll(".lane-track"));
+    tracks.forEach((track) => {
+      track.innerHTML = "";
+    });
+  }
   timeline.value = "0";
   timeline.max = "0";
   currentTimeLabel.textContent = "00:00";
   durationLabel.textContent = "Duration: 00:00";
+  if (playheadTime) {
+    playheadTime.textContent = "00:00";
+  }
+  if (playheadDuration) {
+    playheadDuration.textContent = "00:00";
+  }
+  if (timelineCursor) {
+    timelineCursor.style.left = "0%";
+  }
   videoPanel.classList.add("hidden");
   videoEl.removeAttribute("src");
   videoPlay.textContent = "Play";
+  if (playToggleBtn) {
+    playToggleBtn.disabled = true;
+  }
+  if (videoPlay) {
+    videoPlay.disabled = true;
+  }
+  setPlayState(false);
   if (videoSyncNote) {
     videoSyncNote.classList.add("hidden");
   }
@@ -2159,6 +2614,18 @@ function resetState() {
   if (errorOnlyToggle) {
     errorOnlyToggle.checked = false;
   }
+  if (followPlayheadToggle) {
+    followPlayheadToggle.checked = true;
+  }
+  if (timeWindowSelect) {
+    timeWindowSelect.value = "5000";
+  }
+  networkModeChips.forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.netMode === "near");
+  });
+  consoleModeChips.forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.consoleMode === "near");
+  });
   networkFilterChips.forEach((chip) => {
     chip.classList.toggle("active", chip.dataset.netFilter === "all");
   });
@@ -2200,6 +2667,18 @@ tryLoadPackageSession().catch(() => {});
 timeline.addEventListener("input", () => {
   setCurrentTms(Number(timeline.value), true);
 });
+timeline.addEventListener("mousedown", () => {
+  state.playhead.isSeeking = true;
+});
+timeline.addEventListener("mouseup", () => {
+  state.playhead.isSeeking = false;
+});
+timeline.addEventListener("touchstart", () => {
+  state.playhead.isSeeking = true;
+});
+timeline.addEventListener("touchend", () => {
+  state.playhead.isSeeking = false;
+});
 
 [filterMarkers, filterNetwork, filterConsole, filterScreenshots, filterErrors].forEach(
   (el) => el.addEventListener("change", refreshView)
@@ -2229,14 +2708,46 @@ if (errorOnlyToggle) {
       filterErrors.checked = state.filters.errorOnly || filterErrors.checked;
     }
     renderIncidentRail();
-    renderTimelineTicks(state.events);
+    renderTimelineLanes(state.events);
     if (state.loadedArtifacts.network) {
       renderNetworkPanel();
     }
     if (state.loadedArtifacts.console) {
       renderConsolePanel();
     }
+    updateCurrentTimeContext();
   });
+}
+
+if (followPlayheadToggle) {
+  followPlayheadToggle.addEventListener("change", () => {
+    state.playhead.followPlayhead = followPlayheadToggle.checked;
+    updateTimeAwarePanels();
+    updateCurrentTimeContext();
+  });
+}
+
+if (timeWindowSelect) {
+  timeWindowSelect.addEventListener("change", () => {
+    const value = Number(timeWindowSelect.value);
+    if (Number.isFinite(value)) {
+      state.playhead.timeWindowMs = value;
+      updateTimeAwarePanels();
+      updateCurrentTimeContext();
+    }
+  });
+}
+
+if (prevIncidentBtn) {
+  prevIncidentBtn.addEventListener("click", () => navigateIncident(-1));
+}
+
+if (nextIncidentBtn) {
+  nextIncidentBtn.addEventListener("click", () => navigateIncident(1));
+}
+
+if (playToggleBtn) {
+  playToggleBtn.addEventListener("click", () => togglePlayback("video"));
 }
 
 networkFilterChips.forEach((chip) => {
@@ -2248,6 +2759,20 @@ networkFilterChips.forEach((chip) => {
     chip.classList.add("active");
     state.filters.networkStatusBucket = chip.dataset.netFilter || "all";
     renderIncidentRail();
+    if (state.loadedArtifacts.network) {
+      renderNetworkPanel();
+    }
+  });
+});
+
+networkModeChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.disabled) {
+      return;
+    }
+    networkModeChips.forEach((btn) => btn.classList.remove("active"));
+    chip.classList.add("active");
+    state.panelModes.network = chip.dataset.netMode || "near";
     if (state.loadedArtifacts.network) {
       renderNetworkPanel();
     }
@@ -2279,21 +2804,30 @@ consoleLevelChips.forEach((chip) => {
   });
 });
 
-videoPlay.addEventListener("click", async () => {
-  await ensureVideoLoaded();
-  if (videoEl.paused) {
-    videoEl.play();
-    videoPlay.textContent = "Pause";
-  } else {
-    videoEl.pause();
-    videoPlay.textContent = "Play";
-  }
+consoleModeChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (chip.disabled) {
+      return;
+    }
+    consoleModeChips.forEach((btn) => btn.classList.remove("active"));
+    chip.classList.add("active");
+    state.panelModes.console = chip.dataset.consoleMode || "near";
+    if (state.loadedArtifacts.console) {
+      renderConsolePanel();
+    }
+  });
 });
 
-videoEl.addEventListener("timeupdate", () => {
-  const t = Math.floor((videoEl.currentTime || 0) * 1000);
-  videoTime.textContent = formatTime(t);
-});
+if (videoPlay) {
+  videoPlay.addEventListener("click", () => togglePlayback("video"));
+}
+
+if (videoEl) {
+  videoEl.addEventListener("timeupdate", handleVideoTimeUpdate);
+  videoEl.addEventListener("play", () => setPlayState(true));
+  videoEl.addEventListener("pause", () => setPlayState(false));
+  videoEl.addEventListener("ended", () => setPlayState(false));
+}
 
 if (errorClose) {
   errorClose.addEventListener("click", clearError);
@@ -2309,3 +2843,29 @@ if (bannerClose && banner) {
     localStorage.setItem("watchLiteBannerDismissed", "1");
   });
 }
+
+window.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (
+    target &&
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (event.code === "Space") {
+    event.preventDefault();
+    togglePlayback("keyboard");
+  } else if (event.code === "ArrowLeft") {
+    event.preventDefault();
+    applyPlayhead(state.playhead.currentTimeMs - 5000, { source: "keyboard" });
+  } else if (event.code === "ArrowRight") {
+    event.preventDefault();
+    applyPlayhead(state.playhead.currentTimeMs + 5000, { source: "keyboard" });
+  } else if (event.key === "[") {
+    navigateIncident(-1);
+  } else if (event.key === "]") {
+    navigateIncident(1);
+  }
+});

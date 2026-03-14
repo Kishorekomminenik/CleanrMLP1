@@ -171,21 +171,47 @@ body {
   width: 100%;
 }
 
+.timeline-cursor {
+  position: absolute;
+  top: 8px;
+  width: 2px;
+  height: 22px;
+  background: var(--accent);
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+
 .timeline-summary {
   font-size: 12px;
   margin-bottom: 6px;
 }
 
-.timeline-ticks {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 10px;
-  height: 10px;
-  pointer-events: auto;
+.timeline-lanes {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
 }
 
-.timeline-tick {
+.timeline-lane {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.lane-label {
+  color: var(--muted);
+}
+
+.lane-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+}
+
+.lane-marker {
   position: absolute;
   top: 0;
   width: 2px;
@@ -195,29 +221,33 @@ body {
   cursor: pointer;
 }
 
-.timeline-tick.selected {
+.lane-marker.selected {
   opacity: 1;
   height: 14px;
 }
 
-.timeline-tick.error {
+.lane-marker.error {
   background: var(--danger);
 }
 
-.timeline-tick.screenshot {
+.lane-marker.screenshot {
   background: #0ea5e9;
 }
 
-.timeline-tick.network {
+.lane-marker.network {
   background: #f97316;
 }
 
-.timeline-tick.console {
+.lane-marker.console {
   background: #8b5cf6;
 }
 
-.timeline-tick.recording {
+.lane-marker.recording {
   background: #22c55e;
+}
+
+.lane-marker.incident {
+  background: #f43f5e;
 }
 
 .video-panel video {
@@ -232,6 +262,38 @@ body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.playback-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.playback-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.toggle,
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.select select {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 4px 6px;
+  font-size: 12px;
+  background: #fff;
 }
 
 .filter-row {
@@ -327,6 +389,28 @@ body {
 .details-kv {
   display: grid;
   gap: 2px;
+}
+
+.current-context {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.context-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.context-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .panel-tabs {
