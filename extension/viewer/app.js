@@ -2195,7 +2195,15 @@ if (zipInput) {
   });
 }
 
-tryLoadPackageSession().catch(() => {});
+tryLoadPackageSession()
+  .then((loaded) => {
+    if (!loaded && emptyState) {
+      emptyState.textContent =
+        "Unable to load session.json. Ensure this folder is the exported DebugDuck package.";
+      showError("Session package missing session.json.", true);
+    }
+  })
+  .catch(() => {});
 
 timeline.addEventListener("input", () => {
   setCurrentTms(Number(timeline.value), true);

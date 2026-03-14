@@ -4318,6 +4318,35 @@ function buildSessionManifest(options) {
   if (truncationReport) {
     integrityWarnings.push("Export truncated due to capture limits.");
   }
+  const ensureRelative = (value) => {
+    if (!value || typeof value !== "string") {
+      return true;
+    }
+    if (value.startsWith("/") || value.startsWith("\\")) {
+      return false;
+    }
+    return !/^[a-z]+:\/\//i.test(value);
+  };
+  const invalidPaths = [];
+  if (recordingFileName && !ensureRelative(recordingFileName)) {
+    invalidPaths.push(recordingFileName);
+  }
+  if (!ensureRelative("logs/debugduck-logs-network.ndjson")) {
+    invalidPaths.push("logs/debugduck-logs-network.ndjson");
+  }
+  if (!ensureRelative("logs/debugduck-logs-console.ndjson")) {
+    invalidPaths.push("logs/debugduck-logs-console.ndjson");
+  }
+  screenshotItems.forEach((shot) => {
+    if (shot && shot.path && !ensureRelative(shot.path)) {
+      invalidPaths.push(shot.path);
+    }
+  });
+  if (invalidPaths.length) {
+    integrityWarnings.push(
+      `Manifest contains non-relative paths: ${invalidPaths.slice(0, 3).join(", ")}`
+    );
+  }
 
   return {
     schemaVersion: "1.1.0",
@@ -6091,10 +6120,52 @@ async function runEvidenceZipExport(context) {
         ),
       options: { date: zipDate },
     };
+    const viewerItems = [];
+    const loadViewerAsset = async (assetPath) => {
+      try {
+        const response = await fetch(chrome.runtime.getURL(assetPath));
+        if (!response.ok) {
+          return null;
+        }
+        const text = await response.text();
+        return {
+          path: assetPath,
+          getData: () => text,
+          options: { date: zipDate },
+        };
+      } catch (error) {
+        return null;
+      }
+    };
+    if (!usePartExport) {
+      const viewerAssets = [
+        "viewer/index.html",
+        "viewer/app.js",
+        "viewer/styles.css",
+      ];
+      for (const assetPath of viewerAssets) {
+        const item = await loadViewerAsset(assetPath);
+        if (item) {
+          viewerItems.push(item);
+        }
+      }
+      viewerItems.push({
+        path: "OPEN_VIEWER.txt",
+        getData: () =>
+          [
+            "DebugDuck Session Package",
+            "",
+            "Open viewer/index.html in a browser to inspect this session offline.",
+            "All files are local. No server or install required.",
+          ].join("\n"),
+        options: { date: zipDate },
+      });
+    }
     baseItems = [
       ...logItems,
       ...metaItems,
       manifestItem,
+      ...viewerItems,
       ...summaryItems,
       ...automationItems,
       ...reportItems,

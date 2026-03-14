@@ -3550,7 +3550,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     lastExportResultAt = Date.now();
     exportProgressState = null;
     updateExportProgressUI();
-    setDownloadBanner(null);
+    setDownloadBanner(
+      "Export complete. Unzip and open viewer/index.html to inspect offline.",
+      "info"
+    );
     sendResponse({ ok: true });
     return true;
   }

@@ -3,35 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DebugDuck Watch Lite</title>
+    <title>DebugDuck Session Viewer</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app">
-      <div id="howtoBanner" class="banner">
-        <div>
-          <strong>How to use:</strong>
-          Open watch-lite/index.html → Load Evidence ZIP → Scrub timeline or click events.
-        </div>
-        <button id="bannerClose" class="icon-button" type="button">×</button>
-      </div>
       <header class="header">
         <div class="header-title">
-          <h1>DebugDuck Watch Lite</h1>
-          <p class="header-subtitle">Local-only QA evidence capture</p>
+          <h1>DebugDuck Session Viewer</h1>
+          <p class="header-subtitle">Offline evidence package</p>
           <p id="packageNotice" class="loaded-info muted hidden"></p>
           <p id="loadedInfo" class="loaded-info muted hidden"></p>
         </div>
-        <div class="header-actions">
+        <div class="header-actions hidden">
           <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
           <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
           <button id="resetBtn" class="secondary">Reset</button>
-          <input
-            id="zipInput"
-            type="file"
-            accept=".zip"
-            class="hidden"
-          />
+          <input id="zipInput" type="file" accept=".zip" class="hidden" />
         </div>
       </header>
 
@@ -39,16 +27,7 @@
         <section class="left">
           <div class="panel loader">
             <h2>Evidence Loader</h2>
-            <p id="emptyState" class="muted">
-              Open an evidence ZIP exported from DebugDuck to replay a session locally.
-            </p>
-            <p id="loaderHint" class="muted">
-              All data stays on your machine. Nothing is uploaded.
-            </p>
-            <p id="repoNote" class="note">
-              This viewer uses JSZip from the repo (../extension/lib). For
-              standalone sharing, bundle JSZip into watch-lite/vendor.
-            </p>
+            <p id="emptyState" class="muted">Loading session package…</p>
             <div id="errorPanel" class="error-panel hidden" role="alert">
               <div>
                 <div class="error-title">There was a problem</div>
@@ -57,7 +36,6 @@
               <button id="errorClose" class="icon-button" type="button">×</button>
             </div>
           </div>
-
           <div id="videoPanel" class="panel video-panel hidden">
             <div class="video-header">
               <h2>Video</h2>
@@ -254,7 +232,6 @@
       </main>
     </div>
 
-    <script src="./vendor/jszip.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
