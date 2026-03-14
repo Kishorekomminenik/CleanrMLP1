@@ -4207,25 +4207,27 @@ function buildSessionManifest(options) {
   const hasConsole = Boolean(ndjsonStats?.console?.count) || consoleEntries.length > 0;
   const hasFullPage = screenshotCandidates?.some((shot) => shot && shot.fullPage);
 
-  const screenshotItems = (screenshotCandidates || []).map((shot, index) => {
-    const fileName =
-      shot && shot.fileName ? shot.fileName : `debugduck-screenshot-${exportTimestamp}.png`;
-    const dims = shot && shot.dataUrl ? readPngDimensionsFromDataUrl(shot.dataUrl) : null;
-    const blob = shot && shot.dataUrl ? dataUrlToBlob(shot.dataUrl) : null;
-    return {
-      id: `snap_${String(index + 1).padStart(4, "0")}`,
-      path: `screenshots/${fileName}`,
-      timestampMs:
-        shot && typeof shot.t_ms === "number"
-          ? shot.t_ms
-          : getRelativeMs(shot?.timestampIso, startedAt),
-      kind: shot && shot.fullPage ? "fullpage" : "viewport",
-      width: dims && dims.width ? dims.width : null,
-      height: dims && dims.height ? dims.height : null,
-      sizeBytes: blob ? blob.size : null,
-      label: shot && shot.label ? shot.label : null,
-    };
-  });
+  const screenshotItems = (screenshotCandidates || [])
+    .filter((shot) => shot && shot.dataUrl)
+    .map((shot, index) => {
+      const fileName =
+        shot && shot.fileName ? shot.fileName : `debugduck-screenshot-${exportTimestamp}.png`;
+      const dims = shot && shot.dataUrl ? readPngDimensionsFromDataUrl(shot.dataUrl) : null;
+      const blob = shot && shot.dataUrl ? dataUrlToBlob(shot.dataUrl) : null;
+      return {
+        id: `snap_${String(index + 1).padStart(4, "0")}`,
+        path: `screenshots/${fileName}`,
+        timestampMs:
+          shot && typeof shot.t_ms === "number"
+            ? shot.t_ms
+            : getRelativeMs(shot?.timestampIso, startedAt),
+        kind: shot && shot.fullPage ? "fullpage" : "viewport",
+        width: dims && dims.width ? dims.width : null,
+        height: dims && dims.height ? dims.height : null,
+        sizeBytes: blob ? blob.size : null,
+        label: shot && shot.label ? shot.label : null,
+      };
+    });
 
   let eventCounter = 0;
   const nextEventId = () => `evt_${String(++eventCounter).padStart(4, "0")}`;
@@ -4460,6 +4462,99 @@ function buildSessionManifest(options) {
     },
     extensions: {},
   };
+}
+
+function validateManifestForExport(manifest) {
+  const errors = [];
+  const warnings = [];
+  if (!manifest || typeof manifest !== "object") {
+    errors.push("Missing session.json payload.");
+    return { errors, warnings };
+  }
+  const requiredKeys = [
+    "schemaVersion",
+    "manifestType",
+    "session",
+    "environment",
+    "artifacts",
+    "timeline",
+    "summary",
+    "integrity",
+    "viewerHints",
+    "extensions",
+  ];
+  requiredKeys.forEach((key) => {
+    if (!(key in manifest)) {
+      errors.push(`Missing manifest key: ${key}`);
+    }
+  });
+  if (!manifest.session || !manifest.session.id) {
+    errors.push("Missing session.id in manifest.");
+  }
+  const ensureRelative = (value) => {
+    if (!value || typeof value !== "string") {
+      return true;
+    }
+    if (value.startsWith("/") || value.startsWith("\\")) {
+      return false;
+    }
+    return !/^[a-z]+:\/\//i.test(value);
+  };
+  const artifacts = manifest.artifacts || {};
+  if (artifacts.recording?.present && !artifacts.recording.path) {
+    errors.push("Recording marked present but path is empty.");
+  }
+  if (artifacts.network?.present && !artifacts.network.path) {
+    errors.push("Network logs marked present but path is empty.");
+  }
+  if (artifacts.console?.present && !artifacts.console.path) {
+    errors.push("Console logs marked present but path is empty.");
+  }
+  if (artifacts.screenshots?.present) {
+    const items = artifacts.screenshots.items || [];
+    if (!artifacts.screenshots.basePath) {
+      warnings.push("Screenshots present but basePath is missing.");
+    }
+    items.forEach((item) => {
+      if (!item || !item.id || !item.path) {
+        errors.push("Screenshot item missing id or path.");
+      } else if (!ensureRelative(item.path)) {
+        errors.push(`Screenshot path is not relative: ${item.path}`);
+      }
+    });
+  }
+  if (artifacts.network?.path && !ensureRelative(artifacts.network.path)) {
+    errors.push(`Network path is not relative: ${artifacts.network.path}`);
+  }
+  if (artifacts.console?.path && !ensureRelative(artifacts.console.path)) {
+    errors.push(`Console path is not relative: ${artifacts.console.path}`);
+  }
+  if (artifacts.recording?.path && !ensureRelative(artifacts.recording.path)) {
+    errors.push(`Recording path is not relative: ${artifacts.recording.path}`);
+  }
+  const timeline = manifest.timeline || {};
+  if (timeline.timebase && timeline.timebase !== "relative-ms") {
+    warnings.push("Timeline timebase is not relative-ms.");
+  }
+  if (
+    typeof timeline.startOffsetMs === "number" &&
+    typeof timeline.endOffsetMs === "number" &&
+    timeline.endOffsetMs < timeline.startOffsetMs
+  ) {
+    errors.push("Timeline endOffsetMs is before startOffsetMs.");
+  }
+  const events = Array.isArray(timeline.events) ? timeline.events : [];
+  const maxEvent = events.reduce(
+    (acc, ev) => Math.max(acc, typeof ev.timestampMs === "number" ? ev.timestampMs : 0),
+    0
+  );
+  if (
+    typeof timeline.endOffsetMs === "number" &&
+    maxEvent > timeline.endOffsetMs + 1000
+  ) {
+    warnings.push("Timeline endOffsetMs is below last event timestamp.");
+  }
+  return { errors, warnings };
 }
 
 async function buildPartExportData(context) {
@@ -6095,29 +6190,39 @@ async function runEvidenceZipExport(context) {
       data.video && data.video.fileName
         ? data.video.fileName
         : `debugduck-recording-${exportTimestamp}.webm`;
+    const manifestPayload = buildSessionManifest({
+      data,
+      manifestSessionId,
+      exportTimestamp,
+      screenshotCandidates,
+      recordingFileName: data.video || data.recordingDataUrl ? recordingFileName : "",
+      recordingSizeBytes:
+        data.video && typeof data.video.byteLength === "number"
+          ? data.video.byteLength
+          : data.recordingDataUrl
+            ? estimateDataUrlBytes(data.recordingDataUrl)
+            : null,
+      recordingDurationMs: data.recordingDurationMs,
+      ndjsonStats,
+      usePartExport,
+    });
+    const manifestValidation = validateManifestForExport(manifestPayload);
+    if (manifestValidation.warnings.length) {
+      manifestPayload.integrity.warnings = Array.from(
+        new Set([
+          ...(manifestPayload.integrity.warnings || []),
+          ...manifestValidation.warnings,
+        ])
+      );
+    }
+    if (manifestValidation.errors.length) {
+      throw new Error(
+        `Export validation failed: ${manifestValidation.errors.join(" ")}`
+      );
+    }
     const manifestItem = {
       path: "session.json",
-      getData: () =>
-        toJsonWithSize(
-          buildSessionManifest({
-            data,
-            manifestSessionId,
-            exportTimestamp,
-            screenshotCandidates,
-            recordingFileName:
-              data.video || data.recordingDataUrl ? recordingFileName : "",
-            recordingSizeBytes:
-              data.video && typeof data.video.byteLength === "number"
-                ? data.video.byteLength
-                : data.recordingDataUrl
-                  ? estimateDataUrlBytes(data.recordingDataUrl)
-                  : null,
-            recordingDurationMs: data.recordingDurationMs,
-            ndjsonStats,
-            usePartExport,
-          }),
-          "session_manifest"
-        ),
+      getData: () => toJsonWithSize(manifestPayload, "session_manifest"),
       options: { date: zipDate },
     };
     const viewerItems = [];
@@ -6148,6 +6253,11 @@ async function runEvidenceZipExport(context) {
         if (item) {
           viewerItems.push(item);
         }
+      }
+      if (viewerItems.length !== viewerAssets.length) {
+        throw new Error(
+          "Export failed: packaged viewer assets missing. Reload DebugDuck and retry."
+        );
       }
       viewerItems.push({
         path: "OPEN_VIEWER.txt",
