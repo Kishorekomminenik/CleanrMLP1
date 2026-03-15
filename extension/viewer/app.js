@@ -2376,6 +2376,12 @@ async function ensureVideoLoaded() {
       file = findArtifact(state.manualFileList, path);
     }
     if (!file) {
+      if (!state.videoMissing) {
+        showError(
+          "Recording artifact declared but file not found in package.",
+          true
+        );
+      }
       state.videoMissing = true;
       console.warn("Recording artifact not found", path);
       return;
