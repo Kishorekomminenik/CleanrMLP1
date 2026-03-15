@@ -91,6 +91,7 @@ const state = {
   packageMode: false,
   packageBaseUrl: null,
   manualFiles: null,
+  manualFileList: null,
   manualBasePrefix: "",
   events: [],
   filtered: [],
@@ -844,6 +845,28 @@ function normalizeManifestPath(path) {
   return path.replace(/^\.?\//, "");
 }
 
+function findArtifact(files, artifactPath) {
+  if (!Array.isArray(files) || !artifactPath) {
+    return null;
+  }
+  const normalized = normalizeManifestPath(artifactPath);
+  const artifactName = normalized.split("/").pop();
+  return (
+    files.find((file) => {
+      const fileName = file.name;
+      const relativeName = file.webkitRelativePath
+        ? file.webkitRelativePath.split("/").pop()
+        : null;
+      return (
+        fileName === artifactPath ||
+        relativeName === artifactPath ||
+        fileName === artifactName ||
+        relativeName === artifactName
+      );
+    }) || null
+  );
+}
+
 function resolveManualFile(path) {
   if (!state.manualFiles) {
     return null;
@@ -858,6 +881,12 @@ function resolveManualFile(path) {
       return state.manualFiles.get(prefixed);
     }
   }
+  if (state.manualFileList) {
+    const fallback = findArtifact(state.manualFileList, normalized);
+    if (fallback) {
+      return fallback;
+    }
+  }
   return null;
 }
 
@@ -868,7 +897,19 @@ function buildManualFileMap(files) {
   files.forEach((file) => {
     const rawPath = file.webkitRelativePath || file.name;
     const normalized = normalizeManifestPath(rawPath);
+    const stripped = normalized.includes("/")
+      ? normalized.split("/").slice(1).join("/")
+      : normalized;
     map.set(normalized, file);
+    map.set(file.name, file);
+    if (stripped) {
+      map.set(stripped, file);
+    }
+    if (stripped.endsWith("session.json")) {
+      sessionFile = file;
+      basePrefix = stripped.slice(0, stripped.length - "session.json".length);
+      return;
+    }
     if (normalized.endsWith("session.json")) {
       sessionFile = file;
       basePrefix = normalized.slice(0, normalized.length - "session.json".length);
@@ -2330,9 +2371,13 @@ async function ensureVideoLoaded() {
     return;
   }
   if (state.manualFiles) {
-    const file = resolveManualFile(path);
+    let file = resolveManualFile(path);
+    if (!file && state.manualFileList) {
+      file = findArtifact(state.manualFileList, path);
+    }
     if (!file) {
       state.videoMissing = true;
+      console.warn("Recording artifact not found", path);
       return;
     }
     state.videoUrl = URL.createObjectURL(file);
@@ -3759,6 +3804,7 @@ function resetState() {
   state.packageMode = false;
   state.packageBaseUrl = null;
   state.manualFiles = null;
+  state.manualFileList = null;
   state.manualBasePrefix = "";
   state.events = [];
   state.filtered = [];
@@ -3953,7 +3999,11 @@ if (sessionFileInput) {
     resetState();
     try {
       const manifest = JSON.parse(await file.text());
-      state.manualFiles = new Map([["session.json", file]]);
+      state.manualFiles = new Map([
+        ["session.json", file],
+        [file.name, file],
+      ]);
+      state.manualFileList = [file];
       state.manualBasePrefix = "";
       setPackageMode(false, null);
       setHeaderActionsVisible(true);
@@ -3996,6 +4046,7 @@ if (sessionFolderInput) {
     try {
       const manifest = JSON.parse(await sessionFile.text());
       state.manualFiles = map;
+      state.manualFileList = files;
       state.manualBasePrefix = basePrefix || "";
       setPackageMode(false, null);
       setHeaderActionsVisible(true);
