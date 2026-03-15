@@ -874,6 +874,17 @@ function artifactCandidates(path) {
   return [normalized, base];
 }
 
+function findSingleVideoFallback(files) {
+  if (!Array.isArray(files) || !files.length) {
+    return null;
+  }
+  const videoFiles = files.filter((file) => /\.webm$/i.test(file.name || ""));
+  if (videoFiles.length === 1) {
+    return videoFiles[0];
+  }
+  return null;
+}
+
 function findArtifact(files, artifactPath) {
   if (!Array.isArray(files) || !artifactPath) {
     return null;
@@ -888,6 +899,58 @@ function findArtifact(files, artifactPath) {
       return candidates.includes(fileName) || candidates.includes(relPath);
     }) || null
   );
+}
+
+function attachVideoDurationReconciliation() {
+  if (!videoEl) {
+    return;
+  }
+  if (videoEl.dataset.durationBound === "true") {
+    return;
+  }
+  videoEl.dataset.durationBound = "true";
+
+  videoEl.addEventListener("loadedmetadata", () => {
+    const mediaDurationMs =
+      Number.isFinite(videoEl.duration) && videoEl.duration > 0
+        ? Math.round(videoEl.duration * 1000)
+        : 0;
+
+    if (!mediaDurationMs) {
+      return;
+    }
+
+    const previousDuration = state.playhead.durationMs || 0;
+    state.playhead.durationMs = mediaDurationMs;
+    state.videoSyncAvailable = true;
+
+    if (state.manifest?.artifacts?.recording) {
+      state.manifest.artifacts.recording.durationMs = mediaDurationMs;
+    }
+    if (state.manifest?.timeline) {
+      state.manifest.timeline.endOffsetMs = mediaDurationMs;
+    }
+    if (state.playhead.currentTimeMs > mediaDurationMs) {
+      state.playhead.currentTimeMs = mediaDurationMs;
+    }
+
+    updatePlayheadDisplay();
+    updateTimeline();
+    updateCurrentTimeContext();
+    refreshView();
+
+    if (loadedInfo && loadedInfo.textContent) {
+      const prefix = loadedInfo.textContent.split(" • ").slice(0, 2).join(" • ");
+      loadedInfo.textContent = `${prefix} • ${formatTime(mediaDurationMs)}`;
+    }
+
+    if (previousDuration && previousDuration !== mediaDurationMs) {
+      console.warn("Viewer duration reconciled to actual media duration", {
+        manifestDurationMs: previousDuration,
+        mediaDurationMs,
+      });
+    }
+  });
 }
 
 function resolveManualFile(path) {
@@ -2390,17 +2453,27 @@ async function ensureConsoleLogsLoaded() {
 }
 
 async function ensureVideoLoaded() {
-  if (state.videoUrl || !state.manifest?.artifacts?.recording?.present) {
-    return;
+  if (!state.manifest?.artifacts?.recording?.present) {
+    state.videoMissing = true;
+    state.videoSyncAvailable = false;
+    return false;
+  }
+  if (state.loadedArtifacts.recording && state.videoUrl) {
+    return true;
   }
   const path = state.manifest.artifacts.recording.path;
   if (!path) {
-    return;
+    state.videoMissing = true;
+    state.videoSyncAvailable = false;
+    return false;
   }
   if (state.manualFiles) {
     let file = resolveManualFile(path);
     if (!file && state.manualFileList) {
       file = findArtifact(state.manualFileList, path);
+      if (!file) {
+        file = findSingleVideoFallback(state.manualFileList);
+      }
     }
     if (!file) {
       if (!state.videoMissing) {
@@ -2410,27 +2483,36 @@ async function ensureVideoLoaded() {
         );
       }
       state.videoMissing = true;
+      state.videoSyncAvailable = false;
       console.warn("Recording artifact not found", path);
-      return;
+      return false;
     }
     state.videoUrl = URL.createObjectURL(file);
     videoEl.src = state.videoUrl;
     videoPanel.classList.remove("hidden");
+    state.loadedArtifacts.recording = true;
     state.videoMissing = false;
+    attachVideoDurationReconciliation();
     return;
   }
   if (!state.zip) {
-    return;
+    return false;
   }
   const entry = state.zip.file(path);
   if (!entry) {
-    return;
+    return false;
   }
   const blob = await entry.async("blob");
+  if (state.videoUrl) {
+    URL.revokeObjectURL(state.videoUrl);
+  }
   state.videoUrl = URL.createObjectURL(blob);
   videoEl.src = state.videoUrl;
   videoPanel.classList.remove("hidden");
+  state.loadedArtifacts.recording = true;
   state.videoMissing = false;
+  attachVideoDurationReconciliation();
+  return true;
 }
 
 function getTimelineMarkerClass(ev) {
