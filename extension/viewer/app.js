@@ -140,6 +140,15 @@ const state = {
     id: null,
   },
   incidents: [],
+  sortedIncidentsByTime: [],
+  sortedScreenshotsByTime: [],
+  sortedScreenshotEvents: [],
+  incidentsVersion: 0,
+  filteredIncidentsCache: {
+    key: "",
+    list: [],
+  },
+  currentMoment: null,
   incidentSourcePanel: null,
   loadedArtifacts: {
     network: false,
@@ -410,59 +419,25 @@ function findNearestIncident(incidents, tms) {
   if (!incidents.length) {
     return null;
   }
-  let nearest = incidents[0];
-  let best = Math.abs((nearest.timestampMs || 0) - tms);
-  incidents.forEach((inc) => {
-    const delta = Math.abs((inc.timestampMs || 0) - tms);
-    if (delta < best) {
-      best = delta;
-      nearest = inc;
-    }
-  });
-  return nearest;
+  return findNearestInSorted(incidents, tms, (inc) => inc.timestampMs || 0);
 }
 
 function findNearestScreenshot(tms) {
-  let shots = state.manifest?.artifacts?.screenshots?.items || [];
-  if (!shots.length) {
-    shots = state.events
-      .filter((ev) => ev.type === "screenshot")
-      .map((ev) => ({
-        id: ev.id,
-        timestampMs: ev.t_ms || 0,
-        label: ev.summary || "Screenshot",
-        kind: "screenshot",
-      }));
-  }
+  const shots =
+    state.sortedScreenshotsByTime.length > 0
+      ? state.sortedScreenshotsByTime
+      : state.sortedScreenshotEvents;
   if (!shots.length) {
     return null;
   }
-  let nearest = shots[0];
-  let best = Math.abs((nearest.timestampMs || 0) - tms);
-  shots.forEach((shot) => {
-    const delta = Math.abs((shot.timestampMs || 0) - tms);
-    if (delta < best) {
-      best = delta;
-      nearest = shot;
-    }
-  });
-  return nearest;
+  return findNearestInSorted(shots, tms, (shot) => shot.timestampMs || 0);
 }
 
 function findNearestTimelineEvent(currentTimeMs, events) {
   if (!Array.isArray(events) || !events.length) {
     return null;
   }
-  let nearest = events[0];
-  let best = Math.abs((nearest.t_ms || 0) - currentTimeMs);
-  events.forEach((ev) => {
-    const delta = Math.abs((ev.t_ms || 0) - currentTimeMs);
-    if (delta < best) {
-      best = delta;
-      nearest = ev;
-    }
-  });
-  return nearest;
+  return findNearestInSorted(events, currentTimeMs, (ev) => ev.t_ms || 0);
 }
 
 function getImportantMarkers() {
@@ -535,6 +510,36 @@ function findNearestMarker(currentTimeMs, markers) {
   return nearest;
 }
 
+function findNearestInSorted(entries, tms, getTime) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return null;
+  }
+  const idx = lowerBoundByTime(entries, tms, getTime);
+  let best = entries[Math.min(idx, entries.length - 1)];
+  let bestDelta = Math.abs(getEntryTimeSafe(best, getTime) - tms);
+  if (idx > 0) {
+    const prev = entries[idx - 1];
+    const delta = Math.abs(getEntryTimeSafe(prev, getTime) - tms);
+    if (delta < bestDelta) {
+      best = prev;
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
+function getWindowSlice(entries, tms, windowMs, getTime) {
+  const min = tms - windowMs;
+  const max = tms + windowMs;
+  const start = lowerBoundByTime(entries, min, getTime);
+  const end = upperBoundByTime(entries, max, getTime);
+  return {
+    start,
+    end,
+    items: entries.slice(start, end),
+  };
+}
+
 function getVisibleNetworkEvents() {
   const entries = state.networkEntries || [];
   const base =
@@ -585,24 +590,57 @@ function getVisibleConsoleEvents() {
 }
 
 function getCurrentMomentContext() {
+  const timeMs = state.playhead.currentTimeMs || 0;
+  const windowMs = state.playhead.timeWindowMs || 0;
+  const incidents = getFilteredIncidents();
+  const nearestIncident = findNearestIncident(incidents, timeMs);
+  const nearestScreenshot = findNearestScreenshot(timeMs);
+
+  const networkWindow = state.loadedArtifacts.network
+    ? getWindowSlice(state.networkEntries, timeMs, windowMs, getNetworkTimestampMs)
+    : { items: [], start: 0, end: 0 };
+  const consoleWindow = state.loadedArtifacts.console
+    ? getWindowSlice(
+        state.consoleEntries,
+        timeMs,
+        windowMs,
+        (entry) =>
+          typeof entry.timestamp_ms === "number" ? entry.timestamp_ms : entry.timestampMs || 0
+      )
+    : { items: [], start: 0, end: 0 };
+
+  const nearestNetwork = networkWindow.items.length
+    ? findNearestInSorted(networkWindow.items, timeMs, getNetworkTimestampMs)
+    : null;
+  const nearestConsole = consoleWindow.items.length
+    ? findNearestInSorted(consoleWindow.items, timeMs, (entry) =>
+        typeof entry.timestamp_ms === "number" ? entry.timestamp_ms : entry.timestampMs || 0
+      )
+    : null;
+
+  const selectedNetwork = state.selectedNetworkId || null;
+  const selectedConsole = state.selectedConsoleId || null;
+  const selectedIncident = state.playhead.selectedIncidentId || null;
+  const selectedScreenshot = state.playhead.selectedScreenshotId || null;
+
   return {
-    nearestIncident: findNearestIncident(getFilteredIncidents(), state.playhead.currentTimeMs),
-    nearestScreenshot: findNearestScreenshot(state.playhead.currentTimeMs),
-    nearbyNetworkCount: state.loadedArtifacts.network
-      ? filterEntriesNearTime(
-          state.networkEntries,
-          state.playhead.currentTimeMs,
-          state.playhead.timeWindowMs,
-          getNetworkTimestampMs
-        ).length
-      : 0,
-    nearbyConsoleCount: state.loadedArtifacts.console
-      ? getEntriesNearTime(
-          state.consoleEntries,
-          state.playhead.currentTimeMs,
-          state.playhead.timeWindowMs
-        ).length
-      : 0,
+    timeMs,
+    timeLabel: formatTimeWithMs(timeMs),
+    windowLabel: `±${Math.round(windowMs / 1000)}s`,
+    nearestIncident,
+    nearestScreenshot,
+    nearestNetwork,
+    nearestConsole,
+    nearbyNetworkCount: networkWindow.items.length,
+    nearbyConsoleCount: consoleWindow.items.length,
+    nearbyNetworkIds: networkWindow.items.map((entry) => entry.id).filter(Boolean),
+    nearbyConsoleIds: consoleWindow.items.map((entry) => entry.id).filter(Boolean),
+    autoHighlight: {
+      incidentId: selectedIncident ? null : nearestIncident ? nearestIncident.id : null,
+      screenshotId: selectedScreenshot ? null : nearestScreenshot ? nearestScreenshot.id : null,
+      networkId: selectedNetwork ? null : nearestNetwork ? nearestNetwork.id : null,
+      consoleId: selectedConsole ? null : nearestConsole ? nearestConsole.id : null,
+    },
   };
 }
 
@@ -610,12 +648,17 @@ function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
-  const tms = state.playhead.currentTimeMs || 0;
   const moment = getCurrentMomentContext();
+  state.currentMoment = moment;
   const nearestIncident = moment.nearestIncident;
   state.playhead.nearestIncidentId = nearestIncident ? nearestIncident.id : null;
+  const incidentSeverity = nearestIncident?.severity
+    ? String(nearestIncident.severity).toUpperCase()
+    : "";
   contextIncident.textContent = nearestIncident
-    ? `${buildIncidentTitle(nearestIncident)} (${formatTimeWithMs(
+    ? `${incidentSeverity ? `${incidentSeverity} ` : ""}${buildIncidentTitle(
+        nearestIncident
+      )} (${formatTimeWithMs(
         nearestIncident.timestampMs || 0
       )})`
     : "None";
@@ -629,15 +672,15 @@ function updateCurrentTimeContext() {
   if (contextNetworkCount) {
     contextNetworkCount.textContent = state.loadedArtifacts.network
       ? String(moment.nearbyNetworkCount)
-      : "-";
+      : "Not loaded";
   }
   if (contextConsoleCount) {
     contextConsoleCount.textContent = state.loadedArtifacts.console
       ? String(moment.nearbyConsoleCount)
-      : "-";
+      : "Not loaded";
   }
   if (contextWindow) {
-    contextWindow.textContent = `±${Math.round(state.playhead.timeWindowMs / 1000)}s`;
+    contextWindow.textContent = moment.windowLabel;
   }
 }
 
@@ -993,7 +1036,11 @@ async function initFromManifest(manifest, options = {}) {
   updateTimelineSummary(manifest);
   renderScreenshotsPanel();
   setActivePanel("timeline");
-  state.incidents = buildIncidentsFromManifest(manifest);
+  setIncidents(buildIncidentsFromManifest(manifest));
+  state.sortedScreenshotsByTime = manifestShots
+    .slice()
+    .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+  state.sortedScreenshotEvents = state.events.filter((ev) => ev.type === "screenshot");
   renderIncidentRail();
   applySummaryInteractions();
   updatePlayheadDisplay();
@@ -1280,8 +1327,30 @@ function mergeIncidents(existing, incoming) {
   return Array.from(map.values());
 }
 
+function setIncidents(nextIncidents) {
+  state.incidents = Array.isArray(nextIncidents) ? nextIncidents : [];
+  state.sortedIncidentsByTime = state.incidents
+    .slice()
+    .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+  state.incidentsVersion += 1;
+  state.filteredIncidentsCache = {
+    key: "",
+    list: [],
+  };
+}
+
 function getFilteredIncidents() {
-  let incidents = state.incidents.slice();
+  const allowedLevels = getEffectiveConsoleLevels();
+  const key = [
+    state.incidentsVersion,
+    state.filters.errorOnly ? "errorOnly" : "all",
+    state.filters.networkStatusBucket || "all",
+    allowedLevels.join(","),
+  ].join("|");
+  if (state.filteredIncidentsCache.key === key) {
+    return state.filteredIncidentsCache.list;
+  }
+  let incidents = state.sortedIncidentsByTime.slice();
   if (state.filters.errorOnly) {
     incidents = incidents.filter((inc) => inc.severity === "error");
   }
@@ -1296,14 +1365,16 @@ function getFilteredIncidents() {
       incidents = incidents.filter((inc) => inc.type === "network-5xx");
     }
   }
-  const allowedLevels = getEffectiveConsoleLevels();
   incidents = incidents.filter((inc) => {
     if (inc.type.startsWith("console")) {
       return allowedLevels.includes(inc.consoleLevel || "");
     }
     return true;
   });
-  incidents.sort((a, b) => a.timestampMs - b.timestampMs);
+  state.filteredIncidentsCache = {
+    key,
+    list: incidents,
+  };
   return incidents;
 }
 
@@ -1506,6 +1577,11 @@ function renderNetworkPanel() {
     row.className = "data-row";
     if (state.selectedNetworkId && entry.id === state.selectedNetworkId) {
       row.classList.add("active");
+    } else if (
+      state.currentMoment?.autoHighlight?.networkId &&
+      entry.id === state.currentMoment.autoHighlight.networkId
+    ) {
+      row.classList.add("nearby");
     }
     const time = document.createElement("div");
     time.className = "muted";
@@ -1573,6 +1649,11 @@ function renderConsolePanel() {
     row.className = "data-row";
     if (state.selectedConsoleId && entry.id === state.selectedConsoleId) {
       row.classList.add("active");
+    } else if (
+      state.currentMoment?.autoHighlight?.consoleId &&
+      entry.id === state.currentMoment.autoHighlight.consoleId
+    ) {
+      row.classList.add("nearby");
     }
     const time = document.createElement("div");
     time.className = "muted";
@@ -2160,10 +2241,10 @@ async function ensureNetworkLogsLoaded() {
     state.networkEntries = normalized;
     state.networkIndex = indexEntriesById(normalized);
     state.loadedArtifacts.network = true;
-    state.incidents = mergeIncidents(
+    setIncidents(mergeIncidents(
       state.incidents,
       buildIncidentsFromNetwork(normalized)
-    );
+    ));
     renderIncidentRail();
   } catch (error) {
     state.networkIndex = new Map();
@@ -2186,10 +2267,10 @@ async function ensureConsoleLogsLoaded() {
     state.consoleEntries = normalized;
     state.consoleIndex = indexEntriesById(normalized);
     state.loadedArtifacts.console = true;
-    state.incidents = mergeIncidents(
+    setIncidents(mergeIncidents(
       state.incidents,
       buildIncidentsFromConsole(normalized)
-    );
+    ));
     renderIncidentRail();
   } catch (error) {
     state.consoleIndex = new Map();
@@ -3080,7 +3161,7 @@ async function loadZip(file) {
             consoleLevel: item.consoleLevel || "",
             url: item.url || "",
           }));
-          state.incidents = mergeIncidents(state.incidents, normalized);
+      setIncidents(mergeIncidents(state.incidents, normalized));
           renderIncidentRail();
         }
       } catch (error) {
@@ -3251,7 +3332,7 @@ async function tryLoadPackageSession() {
     await initFromManifest(manifest, { baseUrl });
     const packageIncidents = await loadIncidentsFromPackage(baseUrl);
     if (packageIncidents.length) {
-      state.incidents = mergeIncidents(state.incidents, packageIncidents);
+      setIncidents(mergeIncidents(state.incidents, packageIncidents));
       renderIncidentRail();
     }
     setLoadedInfo("package", manifest.session?.id || "session.json");
@@ -3334,6 +3415,12 @@ function resetState() {
     id: null,
   };
   state.incidents = [];
+  state.sortedIncidentsByTime = [];
+  state.sortedScreenshotsByTime = [];
+  state.sortedScreenshotEvents = [];
+  state.incidentsVersion = 0;
+  state.filteredIncidentsCache = { key: "", list: [] };
+  state.currentMoment = null;
   state.videoSyncAvailable = false;
   state.partialMode = false;
   eventIdCounter = 0;
@@ -3477,7 +3564,7 @@ if (sessionFileInput) {
       await initFromManifest(manifest, { fileMap: state.manualFiles });
       const incidents = await loadIncidentsFromFileMap();
       if (incidents.length) {
-        state.incidents = mergeIncidents(state.incidents, incidents);
+        setIncidents(mergeIncidents(state.incidents, incidents));
         renderIncidentRail();
       }
       setLoadedInfo("session.json", manifest.session?.id || "session.json");
@@ -3519,7 +3606,7 @@ if (sessionFolderInput) {
       await initFromManifest(manifest, { fileMap: state.manualFiles });
       const incidents = await loadIncidentsFromFileMap();
       if (incidents.length) {
-        state.incidents = mergeIncidents(state.incidents, incidents);
+        setIncidents(mergeIncidents(state.incidents, incidents));
         renderIncidentRail();
       }
       setLoadedInfo("session folder", manifest.session?.id || "session.json");

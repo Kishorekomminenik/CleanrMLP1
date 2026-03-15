@@ -599,6 +599,11 @@ body {
   background: #eff6ff;
 }
 
+.data-row.nearby {
+  border-color: rgba(14, 116, 144, 0.4);
+  background: #f0f9ff;
+}
+
 .data-row .muted {
   color: var(--muted);
 }
