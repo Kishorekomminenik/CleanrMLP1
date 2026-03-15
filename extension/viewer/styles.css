@@ -487,6 +487,44 @@ body {
   gap: 6px;
 }
 
+.inspector-summary {
+  background: #ffffff;
+}
+
+.inspector-headline {
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.inspector-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.inspector-key {
+  font-weight: 600;
+  color: #334155;
+}
+
+.inspector-value {
+  text-align: right;
+  word-break: break-word;
+}
+
+.inspector-preview {
+  display: grid;
+  gap: 6px;
+}
+
+.inspector-preview img {
+  width: 100%;
+  border-radius: 10px;
+}
+
 .inspector-section h3 {
   margin: 0;
   font-size: 12px;
@@ -525,6 +563,10 @@ body {
   padding: 8px;
   max-height: 200px;
   overflow: auto;
+}
+
+.code-block.expanded {
+  max-height: 320px;
 }
 
 .panel-tabs {

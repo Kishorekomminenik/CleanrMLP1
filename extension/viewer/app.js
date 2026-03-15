@@ -138,6 +138,8 @@ const state = {
   inspector: {
     type: null,
     id: null,
+    expandState: {},
+    lastKey: null,
   },
   incidents: [],
   sortedIncidentsByTime: [],
@@ -2673,6 +2675,11 @@ function renderDetails(ev) {
   }
 }
 
+const INSPECTOR_PREVIEW_LIMIT = 1200;
+const INSPECTOR_SUMMARY_LIMIT = 240;
+const INSPECTOR_PREVIEW_DEPTH = 2;
+const INSPECTOR_PREVIEW_ENTRIES = 6;
+
 function truncateText(value, maxLength = 1200) {
   if (typeof value !== "string") {
     return { text: String(value ?? ""), truncated: false };
@@ -2681,6 +2688,149 @@ function truncateText(value, maxLength = 1200) {
     return { text: value, truncated: false };
   }
   return { text: value.slice(0, maxLength), truncated: true };
+}
+
+function getInspectorKey(type, id) {
+  if (!type || !id) {
+    return null;
+  }
+  return `${type}:${id}`;
+}
+
+function hasInspectorValue(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function formatDurationValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `${Math.round(value)}ms`;
+  }
+  if (value || value === 0) {
+    return String(value);
+  }
+  return "-";
+}
+
+function formatHeadersPreview(value) {
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (!item) {
+          return "";
+        }
+        if (Array.isArray(item)) {
+          return `${item[0]}: ${item[1] ?? ""}`.trim();
+        }
+        if (typeof item === "object") {
+          const key = item.name || item.key || item.header || "";
+          const val = item.value ?? item.val ?? "";
+          if (key) {
+            return `${key}: ${val}`.trim();
+          }
+        }
+        return String(item);
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, val]) => `${key}: ${val ?? ""}`.trim())
+      .join("\n");
+  }
+  return String(value);
+}
+
+function buildInspectorPreviewValue(value, depth = INSPECTOR_PREVIEW_DEPTH) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (depth <= 0) {
+    return Array.isArray(value) ? "[…]" : "{…}";
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, INSPECTOR_PREVIEW_ENTRIES);
+    const preview = items
+      .map((item) => buildInspectorPreviewValue(item, depth - 1))
+      .join(", ");
+    return `[${preview}${value.length > INSPECTOR_PREVIEW_ENTRIES ? ", …" : ""}]`;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    const items = keys.slice(0, INSPECTOR_PREVIEW_ENTRIES);
+    const preview = items
+      .map((key) => `${key}: ${buildInspectorPreviewValue(value[key], depth - 1)}`)
+      .join(", ");
+    return `{ ${preview}${keys.length > INSPECTOR_PREVIEW_ENTRIES ? ", …" : ""} }`;
+  }
+  return String(value);
+}
+
+function buildInspectorPreview(value, previewLimit, previewValue) {
+  if (!hasInspectorValue(value)) {
+    return { text: "", truncated: false, expandable: false };
+  }
+  const rawPreview =
+    typeof previewValue === "function"
+      ? previewValue(value)
+      : buildInspectorPreviewValue(value);
+  const truncated = truncateText(rawPreview, previewLimit);
+  const expandable =
+    typeof value === "object" || truncated.truncated || rawPreview.length > previewLimit;
+  return { text: truncated.text, truncated: truncated.truncated, expandable };
+}
+
+function createInspectorRow(label, value, options = {}) {
+  const row = document.createElement("div");
+  row.className = "inspector-row";
+  if (options.muted) {
+    row.classList.add("muted");
+  }
+  const key = document.createElement("span");
+  key.className = "inspector-key";
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.className = "inspector-value";
+  if (options.align) {
+    val.style.textAlign = options.align;
+  }
+  val.textContent = value || value === 0 ? String(value) : "-";
+  row.appendChild(key);
+  row.appendChild(val);
+  return row;
+}
+
+function createInspectorHeadline(text) {
+  const headline = document.createElement("div");
+  headline.className = "inspector-headline";
+  const strong = document.createElement("strong");
+  strong.textContent = text;
+  headline.appendChild(strong);
+  return headline;
 }
 
 function normalizeInspectorValue(value) {
@@ -2703,15 +2853,23 @@ function createCopyButton(label, text) {
   button.className = "copy-button";
   button.textContent = label;
   button.addEventListener("click", async () => {
-    if (!text) {
+    const resolved =
+      typeof text === "function"
+        ? text()
+        : text;
+    if (!resolved) {
+      button.textContent = "Nothing to copy";
+      setTimeout(() => {
+        button.textContent = label;
+      }, 1200);
       return;
     }
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(resolved);
       } else {
         const helper = document.createElement("textarea");
-        helper.value = text;
+        helper.value = resolved;
         helper.style.position = "fixed";
         helper.style.opacity = "0";
         document.body.appendChild(helper);
@@ -2733,37 +2891,48 @@ function createCopyButton(label, text) {
   return button;
 }
 
-function renderExpandableSection(title, value, copyLabel) {
+function renderExpandableSection(title, value, copyLabel, options = {}) {
   const section = document.createElement("div");
   section.className = "inspector-section";
   const header = document.createElement("h3");
   header.textContent = title;
   section.appendChild(header);
-  if (!value) {
+  if (!hasInspectorValue(value)) {
     const empty = document.createElement("div");
     empty.className = "muted";
-    empty.textContent = "Not available.";
+    empty.textContent = options.emptyLabel || "Not available.";
     section.appendChild(empty);
     return section;
   }
-  const normalized = normalizeInspectorValue(value);
-  const truncated = truncateText(normalized);
+  const sectionId = options.sectionId || title;
+  const previewLimit = options.previewLimit || INSPECTOR_PREVIEW_LIMIT;
+  const preview = buildInspectorPreview(value, previewLimit, options.previewValue);
   const code = document.createElement("div");
   code.className = "code-block";
-  code.textContent = truncated.text;
+  const isExpanded = Boolean(state.inspector.expandState[sectionId]);
+  code.textContent = isExpanded
+    ? normalizeInspectorValue(value)
+    : preview.text;
+  code.classList.toggle("expanded", isExpanded);
   section.appendChild(code);
   const actions = document.createElement("div");
   actions.className = "inspector-actions";
-  actions.appendChild(createCopyButton(copyLabel, normalized));
-  if (truncated.truncated) {
+  actions.appendChild(
+    createCopyButton(copyLabel, () => normalizeInspectorValue(value))
+  );
+  if (preview.expandable) {
     const expandBtn = document.createElement("button");
     expandBtn.type = "button";
     expandBtn.className = "expand-toggle";
-    expandBtn.textContent = "Show more";
+    expandBtn.textContent = isExpanded ? "Show less" : "Show more";
     expandBtn.addEventListener("click", () => {
-      const expanded = expandBtn.textContent === "Show more";
+      const expanded = !state.inspector.expandState[sectionId];
+      state.inspector.expandState[sectionId] = expanded;
       expandBtn.textContent = expanded ? "Show less" : "Show more";
-      code.textContent = expanded ? normalized : truncated.text;
+      code.textContent = expanded
+        ? normalizeInspectorValue(value)
+        : preview.text;
+      code.classList.toggle("expanded", expanded);
     });
     actions.appendChild(expandBtn);
   }
@@ -2772,6 +2941,11 @@ function renderExpandableSection(title, value, copyLabel) {
 }
 
 function setInspector(type, id) {
+  const nextKey = getInspectorKey(type, id);
+  if (state.inspector.lastKey !== nextKey) {
+    state.inspector.expandState = {};
+    state.inspector.lastKey = nextKey;
+  }
   state.inspector.type = type;
   state.inspector.id = id;
   renderInspector();
@@ -2799,35 +2973,77 @@ function renderInspector() {
       return;
     }
     const summary = document.createElement("div");
-    summary.className = "inspector-section";
-    summary.innerHTML = `
-      <div><strong>${entry.method || ""} ${entry.url || ""}</strong></div>
-      <div class="muted">Status: ${entry.response_status || entry.status || "-"}</div>
-      <div class="muted">Duration: ${entry.durationMs || entry.timing || "-"}</div>
-    `;
+    summary.className = "inspector-section inspector-summary";
+    const headlineText = `${entry.method || ""} ${entry.url || ""}`.trim();
+    summary.appendChild(
+      createInspectorHeadline(headlineText || "Network request")
+    );
+    summary.appendChild(
+      createInspectorRow(
+        "Status",
+        entry.response_status || entry.status || "-",
+        { muted: true }
+      )
+    );
+    summary.appendChild(
+      createInspectorRow(
+        "Duration",
+        formatDurationValue(entry.durationMs || entry.timing || entry.total_time_ms),
+        { muted: true }
+      )
+    );
+    summary.appendChild(
+      createInspectorRow(
+        "Time",
+        formatTimeWithMs(getNetworkTimestampMs(entry)),
+        { muted: true }
+      )
+    );
     inspectorBody.appendChild(summary);
     const actions = document.createElement("div");
     actions.className = "inspector-actions";
     actions.appendChild(createCopyButton("Copy URL", entry.url || ""));
+    actions.appendChild(
+      createCopyButton("Copy raw entry", () => normalizeInspectorValue(entry))
+    );
     inspectorBody.appendChild(actions);
+    const requestHeaders =
+      entry.request_headers || entry.requestHeaders || entry.request_header;
+    const responseHeaders =
+      entry.response_headers || entry.responseHeaders || entry.response_header;
+    const requestBody =
+      entry.request_post_data ||
+      entry.request_body ||
+      entry.request_body_raw ||
+      entry.requestBody;
+    const responseBody =
+      entry.response_body || entry.responseBody || entry.response_body_raw;
     inspectorBody.appendChild(
-      renderExpandableSection("Request Headers", entry.request_headers, "Copy headers")
+      renderExpandableSection("Request Headers", requestHeaders, "Copy headers", {
+        sectionId: "network-request-headers",
+        previewValue: formatHeadersPreview,
+      })
     );
     inspectorBody.appendChild(
-      renderExpandableSection(
-        "Request Body",
-        entry.request_post_data || entry.request_body || entry.request_body_raw,
-        "Copy request body"
-      )
+      renderExpandableSection("Request Body", requestBody, "Copy request body", {
+        sectionId: "network-request-body",
+      })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Response Headers", entry.response_headers, "Copy headers")
+      renderExpandableSection("Response Headers", responseHeaders, "Copy headers", {
+        sectionId: "network-response-headers",
+        previewValue: formatHeadersPreview,
+      })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Response Body", entry.response_body, "Copy response body")
+      renderExpandableSection("Response Body", responseBody, "Copy response body", {
+        sectionId: "network-response-body",
+      })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Raw Entry", entry, "Copy raw entry")
+      renderExpandableSection("Raw Entry", entry, "Copy raw entry", {
+        sectionId: "network-raw-entry",
+      })
     );
     return;
   }
@@ -2838,18 +3054,49 @@ function renderInspector() {
       inspectorBody.textContent = "Console entry not found.";
       return;
     }
+    const message =
+      entry.message || entry.msg || entry.text || entry.description || "";
+    const summaryMessage = truncateText(message, INSPECTOR_SUMMARY_LIMIT).text;
+    const levelLabel = (entry.level || "log").toUpperCase();
+    const payload =
+      entry.payload ||
+      entry.args ||
+      entry.data ||
+      entry.context ||
+      entry.params ||
+      entry.details;
     const summary = document.createElement("div");
-    summary.className = "inspector-section";
-    summary.innerHTML = `
-      <div><strong>${(entry.level || "log").toUpperCase()}</strong></div>
-      <div>${entry.message || ""}</div>
-    `;
+    summary.className = "inspector-section inspector-summary";
+    summary.appendChild(createInspectorHeadline(levelLabel));
+    summary.appendChild(createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true }));
+    summary.appendChild(
+      createInspectorRow("Message", summaryMessage || "-", {
+        muted: false,
+        align: "left",
+      })
+    );
     inspectorBody.appendChild(summary);
+    const actions = document.createElement("div");
+    actions.className = "inspector-actions";
+    actions.appendChild(createCopyButton("Copy message", message));
+    actions.appendChild(
+      createCopyButton("Copy raw entry", () => normalizeInspectorValue(entry))
+    );
+    inspectorBody.appendChild(actions);
     inspectorBody.appendChild(
-      renderExpandableSection("Stack Trace", entry.stack, "Copy stack")
+      renderExpandableSection("Stack Trace", entry.stack, "Copy stack", {
+        sectionId: "console-stack",
+      })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Raw Entry", entry, "Copy raw entry")
+      renderExpandableSection("Payload", payload, "Copy payload", {
+        sectionId: "console-payload",
+      })
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Raw Entry", entry, "Copy raw entry", {
+        sectionId: "console-raw-entry",
+      })
     );
     return;
   }
@@ -2860,22 +3107,53 @@ function renderInspector() {
       inspectorBody.textContent = "Screenshot not found.";
       return;
     }
-    const img = document.createElement("img");
+    const preview = document.createElement("div");
+    preview.className = "inspector-preview";
     const baseName = shot.path ? shot.path.split("/").pop() : null;
     if (baseName && state.screenshotUrls.has(baseName)) {
+      const img = document.createElement("img");
       img.src = state.screenshotUrls.get(baseName);
+      img.alt = shot.label || "Screenshot preview";
+      preview.appendChild(img);
+    } else {
+      const message = document.createElement("div");
+      message.className = "muted";
+      const hasScreenshotsLoaded =
+        state.screenshotUrls.size > 0 || state.missingScreenshots.length > 0;
+      if (!hasScreenshotsLoaded) {
+        message.textContent = "Loading preview…";
+      } else if (baseName && state.missingScreenshots.includes(baseName)) {
+        message.textContent = "Preview missing from package.";
+      } else {
+        message.textContent = "Preview unavailable.";
+      }
+      preview.appendChild(message);
     }
-    img.style.maxWidth = "100%";
-    img.style.borderRadius = "10px";
-    inspectorBody.appendChild(img);
+    inspectorBody.appendChild(preview);
     const meta = document.createElement("div");
-    meta.className = "inspector-section";
-    meta.innerHTML = `
-      <div>Time: ${formatTimeWithMs(shot.timestampMs || 0)}</div>
-      <div>Kind: ${shot.kind || "-"}</div>
-      <div>Label: ${shot.label || "-"}</div>
-    `;
+    meta.className = "inspector-section inspector-summary";
+    meta.appendChild(
+      createInspectorHeadline(shot.label || "Screenshot capture")
+    );
+    meta.appendChild(
+      createInspectorRow("Time", formatTimeWithMs(shot.timestampMs || 0), { muted: true })
+    );
+    meta.appendChild(createInspectorRow("Kind", shot.kind || "-", { muted: true }));
+    meta.appendChild(
+      createInspectorRow("Label", shot.label || "-", { muted: true, align: "left" })
+    );
+    if (shot.path) {
+      meta.appendChild(
+        createInspectorRow("Path", shot.path, { muted: true, align: "left" })
+      );
+    }
     inspectorBody.appendChild(meta);
+    const actions = document.createElement("div");
+    actions.className = "inspector-actions";
+    actions.appendChild(
+      createCopyButton("Copy metadata", () => normalizeInspectorValue(shot))
+    );
+    inspectorBody.appendChild(actions);
     return;
   }
   if (type === "incident") {
@@ -2886,15 +3164,40 @@ function renderInspector() {
       return;
     }
     const summary = document.createElement("div");
-    summary.className = "inspector-section";
-    summary.innerHTML = `
-      <div><strong>${buildIncidentTitle(incident)}</strong></div>
-      <div class="muted">Severity: ${incident.severity || "-"}</div>
-      <div class="muted">Time: ${formatTimeWithMs(incident.timestampMs || 0)}</div>
-    `;
+    summary.className = "inspector-section inspector-summary";
+    summary.appendChild(
+      createInspectorHeadline(buildIncidentTitle(incident))
+    );
+    summary.appendChild(
+      createInspectorRow("Severity", incident.severity || "-", { muted: true })
+    );
+    summary.appendChild(
+      createInspectorRow("Time", formatTimeWithMs(incident.timestampMs || 0), {
+        muted: true,
+      })
+    );
+    summary.appendChild(
+      createInspectorRow("Type", incident.type || "-", { muted: true })
+    );
+    if (incident.url) {
+      summary.appendChild(
+        createInspectorRow("URL", incident.url, { muted: true, align: "left" })
+      );
+    }
     inspectorBody.appendChild(summary);
+    const actions = document.createElement("div");
+    actions.className = "inspector-actions";
+    actions.appendChild(
+      createCopyButton("Copy title", buildIncidentTitle(incident))
+    );
+    actions.appendChild(
+      createCopyButton("Copy raw incident", () => normalizeInspectorValue(incident))
+    );
+    inspectorBody.appendChild(actions);
     inspectorBody.appendChild(
-      renderExpandableSection("Raw Incident", incident, "Copy raw incident")
+      renderExpandableSection("Raw Incident", incident, "Copy raw incident", {
+        sectionId: "incident-raw-entry",
+      })
     );
   }
 }
@@ -3474,6 +3777,8 @@ function resetState() {
   state.inspector = {
     type: null,
     id: null,
+    expandState: {},
+    lastKey: null,
   };
   state.incidents = [];
   state.sortedIncidentsByTime = [];
