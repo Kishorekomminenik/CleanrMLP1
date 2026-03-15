@@ -4019,8 +4019,23 @@ function resetState() {
   renderInspector();
 }
 
+function clearAllLoaderInputs() {
+  if (zipInput) {
+    zipInput.value = "";
+  }
+  if (sessionFileInput) {
+    sessionFileInput.value = "";
+  }
+  if (sessionFolderInput) {
+    sessionFolderInput.value = "";
+  }
+}
+
 if (openZipBtn && zipInput) {
-  openZipBtn.addEventListener("click", () => zipInput.click());
+  openZipBtn.addEventListener("click", () => {
+    clearAllLoaderInputs();
+    zipInput.click();
+  });
 }
 if (openSessionBtn && sessionFileInput) {
   openSessionBtn.addEventListener("click", () => sessionFileInput.click());
@@ -4031,12 +4046,15 @@ if (openSessionFolderBtn && sessionFolderInput) {
 if (openAnotherBtn && zipInput) {
   openAnotherBtn.addEventListener("click", () => {
     resetState();
-    zipInput.value = "";
+    clearAllLoaderInputs();
     zipInput.click();
   });
 }
 if (resetBtn) {
-  resetBtn.addEventListener("click", resetState);
+  resetBtn.addEventListener("click", () => {
+    resetState();
+    clearAllLoaderInputs();
+  });
 }
 if (zipInput) {
   zipInput.addEventListener("change", (event) => {
