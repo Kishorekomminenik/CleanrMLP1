@@ -865,23 +865,30 @@ function normalizeManifestPath(path) {
   return path.replace(/^\.?\//, "");
 }
 
+function normalizeArtifactToken(value) {
+  return String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .trim()
+    .toLowerCase();
+}
+
 function findArtifact(files, artifactPath) {
   if (!Array.isArray(files) || !artifactPath) {
     return null;
   }
-  const normalized = normalizeManifestPath(artifactPath);
+  const normalized = normalizeArtifactToken(artifactPath);
   const artifactName = normalized.split("/").pop();
   return (
     files.find((file) => {
-      const fileName = file.name;
-      const relativeName = file.webkitRelativePath
-        ? file.webkitRelativePath.split("/").pop()
-        : null;
+      const fileName = normalizeArtifactToken(file.name);
+      const relPath = normalizeArtifactToken(file.webkitRelativePath || "");
+      const relName = relPath ? relPath.split("/").pop() : "";
       return (
-        fileName === artifactPath ||
-        relativeName === artifactPath ||
+        fileName === normalized ||
+        relPath === normalized ||
         fileName === artifactName ||
-        relativeName === artifactName
+        relName === artifactName
       );
     }) || null
   );
@@ -4038,10 +4045,16 @@ if (openZipBtn && zipInput) {
   });
 }
 if (openSessionBtn && sessionFileInput) {
-  openSessionBtn.addEventListener("click", () => sessionFileInput.click());
+  openSessionBtn.addEventListener("click", () => {
+    clearAllLoaderInputs();
+    sessionFileInput.click();
+  });
 }
 if (openSessionFolderBtn && sessionFolderInput) {
-  openSessionFolderBtn.addEventListener("click", () => sessionFolderInput.click());
+  openSessionFolderBtn.addEventListener("click", () => {
+    clearAllLoaderInputs();
+    sessionFolderInput.click();
+  });
 }
 if (openAnotherBtn && zipInput) {
   openAnotherBtn.addEventListener("click", () => {
@@ -4134,7 +4147,14 @@ if (sessionFolderInput) {
         setIncidents(mergeIncidents(state.incidents, incidents));
         renderIncidentRail();
       }
-      setLoadedInfo("session folder", manifest.session?.id || "session.json");
+      setLoadedInfo("session folder", manifest.session?.id || sessionFile.name);
+      await ensureVideoLoaded();
+      if (state.manifest?.artifacts?.network?.present) {
+        await ensureNetworkLogsLoaded();
+      }
+      if (state.manifest?.artifacts?.console?.present) {
+        await ensureConsoleLogsLoaded();
+      }
       updateTimeline();
       refreshView();
       updateCurrentTimeContext();

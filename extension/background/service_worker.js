@@ -4234,6 +4234,18 @@ function buildSessionManifest(options) {
 
   const networkEntries = data.networkLogs?.entries || [];
   const consoleEntries = data.consoleLogs?.entries || [];
+  const exportedNetworkCount =
+    typeof ndjsonStats?.network?.count === "number"
+      ? ndjsonStats.network.count
+      : networkEntries.length;
+  const exportedConsoleCount =
+    typeof ndjsonStats?.console?.count === "number"
+      ? ndjsonStats.console.count
+      : consoleEntries.length;
+  const networkSizeBytes =
+    typeof ndjsonStats?.network?.size === "number" ? ndjsonStats.network.size : null;
+  const consoleSizeBytes =
+    typeof ndjsonStats?.console?.size === "number" ? ndjsonStats.console.size : null;
   const hasRecording =
     Boolean(recordingFileName && recordingSizeBytes !== null) ||
     Boolean(data.video) ||
@@ -4242,6 +4254,21 @@ function buildSessionManifest(options) {
   const hasScreenshots = Array.isArray(screenshotCandidates) && screenshotCandidates.length > 0;
   const hasNetwork = Boolean(ndjsonStats?.network?.count) || networkEntries.length > 0;
   const hasConsole = Boolean(ndjsonStats?.console?.count) || consoleEntries.length > 0;
+  const hasNetworkArtifacts =
+    exportedNetworkCount > 0 || (networkSizeBytes !== null && networkSizeBytes > 0);
+  const hasConsoleArtifacts =
+    exportedConsoleCount > 0 || (consoleSizeBytes !== null && consoleSizeBytes > 0);
+  const sessionMode = sessionExport && sessionExport.mode ? sessionExport.mode : null;
+  const captureModeNetwork = sessionMode
+    ? sessionMode === "session" || sessionMode === "network_console"
+    : hasNetwork;
+  const captureModeConsole = sessionMode
+    ? sessionMode === "session" || sessionMode === "network_console"
+    : hasConsole;
+  const captureModeRecording = sessionMode
+    ? sessionMode === "session" || sessionMode === "recording"
+    : hasRecording;
+  const captureModeScreenshot = sessionMode ? sessionMode === "session" : hasScreenshots;
   const hasFullPage = screenshotCandidates?.some((shot) => shot && shot.fullPage);
 
   const screenshotItems = (screenshotCandidates || [])
@@ -4405,11 +4432,11 @@ function buildSessionManifest(options) {
         platform: "chrome-extension-mv3",
       },
       captureMode: {
-        screenshot: hasScreenshots,
+        screenshot: captureModeScreenshot,
         fullPage: Boolean(hasFullPage),
-        recording: hasRecording,
-        network: hasNetwork,
-        console: hasConsole,
+        recording: captureModeRecording,
+        network: captureModeNetwork,
+        console: captureModeConsole,
       },
     },
     environment: {
@@ -4451,18 +4478,18 @@ function buildSessionManifest(options) {
         sizeBytes: typeof recordingSizeBytes === "number" ? recordingSizeBytes : null,
       },
       network: {
-        present: hasNetwork,
+        present: hasNetworkArtifacts,
         path: "logs/debugduck-logs-network.ndjson",
         format: "ndjson",
-        entryCount: ndjsonStats?.network?.count || networkEntries.length,
-        sizeBytes: ndjsonStats?.network?.size || null,
+        entryCount: exportedNetworkCount,
+        sizeBytes: networkSizeBytes,
       },
       console: {
-        present: hasConsole,
+        present: hasConsoleArtifacts,
         path: "logs/debugduck-logs-console.ndjson",
         format: "ndjson",
-        entryCount: ndjsonStats?.console?.count || consoleEntries.length,
-        sizeBytes: ndjsonStats?.console?.size || null,
+        entryCount: exportedConsoleCount,
+        sizeBytes: consoleSizeBytes,
       },
       screenshots: {
         present: hasScreenshots,
@@ -4478,8 +4505,8 @@ function buildSessionManifest(options) {
       events: timelineEvents,
     },
     summary: {
-      networkRequests: networkEntries.length,
-      consoleMessages: consoleEntries.length,
+      networkRequests: exportedNetworkCount,
+      consoleMessages: exportedConsoleCount,
       consoleErrors,
       networkFailures,
       screenshots: screenshotItems.length,
