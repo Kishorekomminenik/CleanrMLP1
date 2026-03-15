@@ -890,6 +890,14 @@ function findArtifact(files, artifactPath) {
     return null;
   }
 
+  console.group("DEBUGDUCK ARTIFACT COMPARISON");
+  console.log("Manifest artifact path:", artifactPath);
+  files.forEach((file) => {
+    console.log("Candidate file.name:", file.name);
+    console.log("Candidate webkitRelativePath:", file.webkitRelativePath);
+  });
+  console.groupEnd();
+
   const candidates = artifactCandidates(artifactPath);
 
   return (
@@ -958,14 +966,24 @@ function resolveManualFile(path) {
     return null;
   }
 
+  console.group("DEBUGDUCK RESOLVE MANUAL FILE");
+  console.log("Requested path:", path);
   const normalized = normalizeArtifactPath(path);
+  console.log("Normalized manifest path:", normalized);
+  console.log("Manual base prefix:", state.manualBasePrefix);
+  const directLookup = state.manualFiles.get(normalized);
+  console.log("Direct lookup result:", directLookup);
   if (state.manualFiles.has(normalized)) {
+    console.groupEnd();
     return state.manualFiles.get(normalized);
   }
 
   if (state.manualBasePrefix) {
     const prefixed = normalizeArtifactPath(`${state.manualBasePrefix}${normalized}`);
+    console.log("Prefixed path attempt:", prefixed);
+    console.log("Prefixed lookup result:", state.manualFiles.get(prefixed));
     if (state.manualFiles.has(prefixed)) {
+      console.groupEnd();
       return state.manualFiles.get(prefixed);
     }
   }
@@ -973,10 +991,12 @@ function resolveManualFile(path) {
   if (state.manualFileList) {
     const fallback = findArtifact(state.manualFileList, normalized);
     if (fallback) {
+      console.groupEnd();
       return fallback;
     }
   }
 
+  console.groupEnd();
   return null;
 }
 
@@ -2476,6 +2496,18 @@ async function ensureVideoLoaded() {
       }
     }
     if (!file) {
+      console.group("DEBUGDUCK VIDEO RESOLUTION FAILURE");
+      console.error("Recording artifact could not be resolved.");
+      console.log("Manifest recording path:", path);
+      const keys = state.manualFiles
+        ? Array.from(state.manualFiles.keys())
+        : [];
+      console.log("Manual file map keys:", keys.slice(0, 20));
+      const webmFiles = (state.manualFileList || []).filter((entry) =>
+        /\.webm$/i.test(entry.name)
+      );
+      console.log("WebM files detected:", webmFiles);
+      console.groupEnd();
       if (!state.videoMissing) {
         showError(
           "Recording artifact declared but file not found in package.",
@@ -4223,6 +4255,24 @@ if (sessionFolderInput) {
       state.manualBasePrefix = basePrefix || "";
       setPackageMode(false, null);
       setHeaderActionsVisible(true);
+      console.group("DEBUGDUCK RESOLVER TRACE");
+      console.log("Manifest recording artifact:", manifest?.artifacts?.recording);
+      console.log(
+        "Recording path from manifest:",
+        manifest?.artifacts?.recording?.path
+      );
+      console.log("Manual base prefix:", state.manualBasePrefix);
+      console.log(
+        "Session duration (manifest):",
+        manifest?.artifacts?.recording?.durationMs
+      );
+      console.groupEnd();
+      console.group("DEBUGDUCK MANUAL FILE MAP");
+      const mapKeys = Array.from(state.manualFiles.keys());
+      console.log("Manual file count:", mapKeys.length);
+      console.log("First 20 file map keys:", mapKeys.slice(0, 20));
+      console.log("WebM candidates:", mapKeys.filter((key) => /\.webm$/i.test(key)));
+      console.groupEnd();
       await initFromManifest(manifest, { fileMap: state.manualFiles });
       const incidents = await loadIncidentsFromFileMap();
       if (incidents.length) {
