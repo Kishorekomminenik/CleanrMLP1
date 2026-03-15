@@ -1001,6 +1001,12 @@ function resolveManualFile(path) {
   const normalized = normalizeArtifactPath(path);
   console.log("Normalized manifest path:", normalized);
   console.log("Manual base prefix:", state.manualBasePrefix);
+  console.debug("[DD Resolver] compare candidate vs keys");
+  console.debug("[DD Resolver] candidate:", normalized);
+  console.debug(
+    "[DD Resolver] keys sample:",
+    Array.from(state.manualFiles.keys()).slice(0, 20)
+  );
   const directLookup = state.manualFiles.get(normalized);
   console.log("Direct lookup result:", directLookup);
   if (state.manualFiles.has(normalized)) {
@@ -2503,6 +2509,11 @@ async function ensureConsoleLogsLoaded() {
 }
 
 async function ensureVideoLoaded() {
+  console.debug("[DD Video] ensureVideoLoaded called");
+  console.debug(
+    "[DD Video] manifest recording path:",
+    state.manifest?.artifacts?.recording?.path
+  );
   if (!state.manifest?.artifacts?.recording?.present) {
     state.videoMissing = true;
     state.videoSyncAvailable = false;
@@ -2518,6 +2529,13 @@ async function ensureVideoLoaded() {
     return false;
   }
   if (state.manualFiles) {
+    console.debug("[DD Resolver] resolving recording path:", path);
+    console.debug(
+      "[DD Resolver] candidate normalized path:",
+      normalizeArtifactPath(path)
+    );
+    console.debug("[DD Resolver] checking manualFiles map");
+    console.debug("[DD Resolver] manualFiles size:", state.manualFiles?.size);
     let file = resolveManualFile(path);
     if (!file && state.manualFileList) {
       file = findArtifact(state.manualFileList, path);
@@ -4268,6 +4286,17 @@ if (sessionFileInput) {
 
 if (sessionFolderInput) {
   sessionFolderInput.addEventListener("change", async (event) => {
+    console.debug("[DD Folder] change event fired");
+    console.debug(
+      "[DD Folder] files length:",
+      event.target?.files ? event.target.files.length : 0
+    );
+    console.debug(
+      "[DD Folder] first 10 file paths:",
+      Array.from(event.target?.files || [])
+        .slice(0, 10)
+        .map((file) => file.webkitRelativePath)
+    );
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       return;
@@ -4281,6 +4310,11 @@ if (sessionFolderInput) {
     }
     resetState();
     const { map, basePrefix, sessionFile } = buildManualFileMap(files);
+    console.debug("[DD Folder] manual file map size:", map?.size || 0);
+    console.debug(
+      "[DD Folder] manual file map keys sample:",
+      Array.from(map?.keys() || []).slice(0, 10)
+    );
     if (!sessionFile) {
       showError("session.json was not found in the selected folder.");
       return;
@@ -4289,6 +4323,10 @@ if (sessionFolderInput) {
       const manifest = JSON.parse(await sessionFile.text());
       state.manualFiles = map;
       state.manualFileList = files;
+      console.debug(
+        "[DD Folder] manual file list length:",
+        state.manualFileList?.length
+      );
       state.manualBasePrefix = basePrefix || "";
       setPackageMode(false, null);
       setHeaderActionsVisible(true);
