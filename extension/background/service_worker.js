@@ -3670,6 +3670,17 @@ function createSession(mode, tab, options = {}) {
   chrome.storage.session.remove(["annotationSettings"]);
   const monotonicBaseline = captureMonotonicBaseline();
   const lightweight = options.lightweight === true;
+  if (options.resetCounters !== false) {
+    resetCaptureState();
+    state.network.requests = {};
+    state.network.order = [];
+    state.network.capped = false;
+    state.network.startedAt = null;
+    state.network.stoppedAt = null;
+    state.console.logs = [];
+    state.console.startedAt = null;
+    state.console.stoppedAt = null;
+  }
   session = {
     session_id: createSessionId(),
     created_at: nowIso(),

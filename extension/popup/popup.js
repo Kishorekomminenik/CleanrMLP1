@@ -2734,6 +2734,10 @@ async function handleSessionReset() {
     showToast(response.error || "Failed to reset session.", "error");
     return;
   }
+  recordingLiveState = null;
+  if (response.state) {
+    updateStatusUI(response.state);
+  }
   await setLastExportFilename(null);
   showToast("Session reset.");
   await refreshStatus();
