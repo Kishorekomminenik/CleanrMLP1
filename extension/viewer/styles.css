@@ -561,6 +561,11 @@ body {
   background: #eff6ff;
 }
 
+.screenshot-item.nearby {
+  border-color: rgba(14, 116, 144, 0.4);
+  background: #f0f9ff;
+}
+
 .screenshot-thumb {
   width: 64px;
   height: 48px;
@@ -655,6 +660,11 @@ body {
 .incident-item.active {
   border-color: rgba(37, 99, 235, 0.5);
   background: #eff6ff;
+}
+
+.incident-item.nearby {
+  border-color: rgba(14, 116, 144, 0.4);
+  background: #f0f9ff;
 }
 
 .incident-severity {

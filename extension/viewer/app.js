@@ -1399,6 +1399,11 @@ function renderIncidentRail() {
     row.className = "incident-item";
     if (state.playhead.selectedIncidentId === inc.id) {
       row.classList.add("active");
+    } else if (
+      state.currentMoment?.autoHighlight?.incidentId &&
+      inc.id === state.currentMoment.autoHighlight.incidentId
+    ) {
+      row.classList.add("nearby");
     }
     const dot = document.createElement("div");
     dot.className = `incident-severity ${inc.severity}`;
@@ -1476,6 +1481,11 @@ function renderScreenshotsPanel() {
     row.className = "screenshot-item";
     if (state.playhead.selectedScreenshotId && shot.id === state.playhead.selectedScreenshotId) {
       row.classList.add("active");
+    } else if (
+      state.currentMoment?.autoHighlight?.screenshotId &&
+      shot.id === state.currentMoment.autoHighlight.screenshotId
+    ) {
+      row.classList.add("nearby");
     }
     const thumb = document.createElement("img");
     thumb.className = "screenshot-thumb";
@@ -1511,7 +1521,7 @@ function renderScreenshotsPanel() {
           refs: { ref: shot.id, screenshotFile: baseName },
           raw: { type: "screenshot" },
         },
-        "screenshot"
+        "screenshot-click"
       );
       renderScreenshotsPanel();
       renderScreenshotPreview();
@@ -1591,6 +1601,10 @@ function renderNetworkPanel() {
         : typeof entry.timestampMs === "number"
           ? entry.timestampMs
           : entry.timestamp_ms || 0;
+    const hasTimestamp =
+      Number.isFinite(entry.endTimestampMs) ||
+      Number.isFinite(entry.timestampMs) ||
+      Number.isFinite(entry.timestamp_ms);
     time.textContent = formatTimeWithMs(entryTime);
     const status = document.createElement("div");
     status.textContent = entry.response_status || entry.status || "-";
@@ -1602,10 +1616,15 @@ function renderNetworkPanel() {
     row.addEventListener("click", () => {
       state.selectedNetworkId = entry.id;
       setInspector("network", entry.id);
-      if (typeof entryTime === "number") {
-        seekTo(entryTime, "network", {
-          selectedEventId: state.playhead.selectedEventId,
-        });
+      if (hasTimestamp) {
+        const delta = Math.abs(
+          (state.playhead.currentTimeMs || 0) - entryTime
+        );
+        if (delta > 5) {
+          seekTo(entryTime, "network-row", {
+            selectedEventId: state.playhead.selectedEventId,
+          });
+        }
       }
       renderNetworkPanel();
     });
@@ -1661,6 +1680,8 @@ function renderConsolePanel() {
       typeof entry.timestamp_ms === "number"
         ? entry.timestamp_ms
         : entry.timestampMs || 0;
+    const hasTimestamp =
+      Number.isFinite(entry.timestamp_ms) || Number.isFinite(entry.timestampMs);
     time.textContent = formatTimeWithMs(entryTime);
     const level = document.createElement("div");
     level.textContent = (entry.level || "log").toUpperCase();
@@ -1672,10 +1693,15 @@ function renderConsolePanel() {
     row.addEventListener("click", () => {
       state.selectedConsoleId = entry.id;
       setInspector("console", entry.id);
-      if (typeof entryTime === "number") {
-        seekTo(entryTime, "console", {
-          selectedEventId: state.playhead.selectedEventId,
-        });
+      if (hasTimestamp) {
+        const delta = Math.abs(
+          (state.playhead.currentTimeMs || 0) - entryTime
+        );
+        if (delta > 5) {
+          seekTo(entryTime, "console-row", {
+            selectedEventId: state.playhead.selectedEventId,
+          });
+        }
       }
       renderConsolePanel();
     });
