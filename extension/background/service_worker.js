@@ -6629,6 +6629,27 @@ async function clearAllCaptureData() {
   state.console.stoppedAt = null;
   state.screenshot.dataUrl = null;
   state.screenshot.capturedAt = null;
+  state.recording.status = "idle";
+  state.recording.dataUrl = null;
+  state.recording.mimeType = null;
+  state.recording.capturedAt = null;
+  state.recording.error = null;
+  state.recording.hasData = false;
+  state.recording.videoBlobUrl = null;
+  state.recording.videoMime = null;
+  state.recording.videoByteLength = null;
+  state.recording.videoStartEpochMs = null;
+  state.recording.videoEndEpochMs = null;
+  state.recording.sessionId = null;
+  recordingController.state = "idle";
+  recordingController.sessionId = null;
+  recordingController.targetTabId = null;
+  recordingController.lastError = null;
+  recordingOverlayState.startMs = null;
+  recordingOverlayState.paused = false;
+  recordingOverlayState.pauseStartedAt = null;
+  recordingOverlayState.totalPausedMs = 0;
+  recordingOverlayState.tabId = null;
   if (session) {
     session.screenshots = [];
     session.counts = {
@@ -8702,7 +8723,6 @@ async function stopNetworkCapture() {
   if (session && session.mode === "session") {
     setSessionState("finalizing");
   }
-  markSessionStopped();
   rotationSuppressed = true;
   finalizePendingNetworkEntries("manual_stop");
   if (captureState.partId) {
@@ -8775,6 +8795,7 @@ async function stopNetworkCapture() {
     clearStatusMessage();
   }
   await flushQueues();
+  markSessionStopped();
 }
 
 async function pauseLogsCapture() {
@@ -9229,6 +9250,17 @@ async function resetSession() {
   state.recording.videoByteLength = null;
   state.recording.videoStartEpochMs = null;
   state.recording.videoEndEpochMs = null;
+  state.recording.sessionId = null;
+  recordingController.state = "idle";
+  recordingController.sessionId = null;
+  recordingController.targetTabId = null;
+  recordingController.lastError = null;
+  recordingOverlayState.startMs = null;
+  recordingOverlayState.paused = false;
+  recordingOverlayState.pauseStartedAt = null;
+  recordingOverlayState.totalPausedMs = 0;
+  recordingOverlayState.tabId = null;
+  broadcastRecordingState("reset");
 
   resetCaptureState();
   session = null;
@@ -10489,6 +10521,14 @@ async function handleMessage(message, sender) {
         };
         break;
       }
+      if (session && session.mode === "session" && session.state !== "stopped") {
+        result = {
+          ok: false,
+          accepted: false,
+          error: "Session is still active or finalizing. Stop and wait before exporting.",
+        };
+        break;
+      }
       if (!session && !hasExportableArtifacts()) {
         result = { ok: false, accepted: false, error: "No session to export yet." };
         break;
@@ -10513,6 +10553,14 @@ async function handleMessage(message, sender) {
           ok: false,
           accepted: false,
           error: "Session export is unavailable for screen-only recordings.",
+        };
+        break;
+      }
+      if (session && session.mode === "session" && session.state !== "stopped") {
+        result = {
+          ok: false,
+          accepted: false,
+          error: "Session is still active or finalizing. Stop and wait before exporting.",
         };
         break;
       }

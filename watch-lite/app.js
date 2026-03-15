@@ -2640,7 +2640,20 @@ function renderInspector() {
     const entry = state.networkEntries.find((item) => item.id === id);
     inspectorTitle.textContent = "Network request";
     if (!entry) {
-      inspectorBody.textContent = "Network entry not found.";
+      const hasNetwork = Boolean(state.manifest?.artifacts?.network?.present);
+      if (hasNetwork && !state.loadedArtifacts.network) {
+        const loading = document.createElement("div");
+        loading.className = "muted";
+        loading.textContent = state.loadingNetwork
+          ? "Loading network logs…"
+          : "Loading network logs…";
+        inspectorBody.appendChild(loading);
+        ensureNetworkLogsLoaded().then(renderInspector);
+        return;
+      }
+      inspectorBody.textContent = hasNetwork
+        ? "Network entry not found."
+        : "Network logs not available.";
       return;
     }
     const summary = document.createElement("div");
@@ -2722,7 +2735,20 @@ function renderInspector() {
     const entry = state.consoleEntries.find((item) => item.id === id);
     inspectorTitle.textContent = "Console log";
     if (!entry) {
-      inspectorBody.textContent = "Console entry not found.";
+      const hasConsole = Boolean(state.manifest?.artifacts?.console?.present);
+      if (hasConsole && !state.loadedArtifacts.console) {
+        const loading = document.createElement("div");
+        loading.className = "muted";
+        loading.textContent = state.loadingConsole
+          ? "Loading console logs…"
+          : "Loading console logs…";
+        inspectorBody.appendChild(loading);
+        ensureConsoleLogsLoaded().then(renderInspector);
+        return;
+      }
+      inspectorBody.textContent = hasConsole
+        ? "Console entry not found."
+        : "Console logs not available.";
       return;
     }
     const message =
