@@ -858,38 +858,34 @@ function setZipControlsAvailable(enabled, reason = "") {
   }
 }
 
-function normalizeManifestPath(path) {
-  if (!path || typeof path !== "string") {
-    return "";
-  }
-  return path.replace(/^\.?\//, "");
-}
-
-function normalizeArtifactToken(value) {
-  return String(value || "")
+function normalizeArtifactPath(path) {
+  return String(path || "")
     .replace(/\\/g, "/")
-    .replace(/^\.?\//, "")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
     .trim()
     .toLowerCase();
+}
+
+function artifactCandidates(path) {
+  const normalized = normalizeArtifactPath(path);
+  const base = normalized.split("/").pop() || "";
+  return [normalized, base];
 }
 
 function findArtifact(files, artifactPath) {
   if (!Array.isArray(files) || !artifactPath) {
     return null;
   }
-  const normalized = normalizeArtifactToken(artifactPath);
-  const artifactName = normalized.split("/").pop();
+
+  const candidates = artifactCandidates(artifactPath);
+
   return (
     files.find((file) => {
-      const fileName = normalizeArtifactToken(file.name);
-      const relPath = normalizeArtifactToken(file.webkitRelativePath || "");
-      const relName = relPath ? relPath.split("/").pop() : "";
-      return (
-        fileName === normalized ||
-        relPath === normalized ||
-        fileName === artifactName ||
-        relName === artifactName
-      );
+      const fileName = normalizeArtifactPath(file.name);
+      const relPath = normalizeArtifactPath(file.webkitRelativePath || "");
+      return candidates.includes(fileName) || candidates.includes(relPath);
     }) || null
   );
 }
@@ -898,22 +894,26 @@ function resolveManualFile(path) {
   if (!state.manualFiles) {
     return null;
   }
-  const normalized = normalizeManifestPath(path);
+
+  const normalized = normalizeArtifactPath(path);
   if (state.manualFiles.has(normalized)) {
     return state.manualFiles.get(normalized);
   }
+
   if (state.manualBasePrefix) {
-    const prefixed = `${state.manualBasePrefix}${normalized}`;
+    const prefixed = normalizeArtifactPath(`${state.manualBasePrefix}${normalized}`);
     if (state.manualFiles.has(prefixed)) {
       return state.manualFiles.get(prefixed);
     }
   }
+
   if (state.manualFileList) {
     const fallback = findArtifact(state.manualFileList, normalized);
     if (fallback) {
       return fallback;
     }
   }
+
   return null;
 }
 
@@ -923,14 +923,14 @@ function buildManualFileMap(files) {
   let sessionFile = null;
   files.forEach((file) => {
     const rawPath = file.webkitRelativePath || file.name;
-    const normalized = normalizeManifestPath(rawPath);
+    const normalized = normalizeArtifactPath(rawPath);
     const stripped = normalized.includes("/")
       ? normalized.split("/").slice(1).join("/")
       : normalized;
     map.set(normalized, file);
-    map.set(file.name, file);
+    map.set(normalizeArtifactPath(file.name), file);
     if (stripped) {
-      map.set(stripped, file);
+      map.set(normalizeArtifactPath(stripped), file);
     }
     if (stripped.endsWith("session.json")) {
       sessionFile = file;
