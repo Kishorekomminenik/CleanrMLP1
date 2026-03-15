@@ -149,6 +149,10 @@ const state = {
     list: [],
   },
   currentMoment: null,
+  snapPulse: {
+    id: null,
+    untilMs: 0,
+  },
   incidentSourcePanel: null,
   loadedArtifacts: {
     network: false,
@@ -540,6 +544,14 @@ function getWindowSlice(entries, tms, windowMs, getTime) {
   };
 }
 
+function setSnapPulse(markerId) {
+  if (!markerId) {
+    return;
+  }
+  state.snapPulse.id = markerId;
+  state.snapPulse.untilMs = Date.now() + 500;
+}
+
 function getVisibleNetworkEvents() {
   const entries = state.networkEntries || [];
   const base =
@@ -703,6 +715,7 @@ function seekTo(targetTimeMs, source, options = {}) {
     if (nearest && Math.abs((nearest.timestampMs || 0) - next) <= thresholdMs) {
       next = nearest.timestampMs || 0;
       state.playhead.nearestMarkerId = nearest.id;
+      setSnapPulse(nearest.id);
     } else {
       state.playhead.nearestMarkerId = null;
     }
@@ -2432,8 +2445,23 @@ function renderTimelineLanes(events) {
       if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
         marker.classList.add("selected");
       }
-      if (state.playhead.nearestMarkerId && ev.id === state.playhead.nearestMarkerId) {
+      const nearestMarkerId = state.playhead.nearestMarkerId;
+      const refId = ev.refs?.ref || null;
+      if (
+        nearestMarkerId &&
+        (ev.id === nearestMarkerId || (refId && refId === nearestMarkerId))
+      ) {
         marker.classList.add("nearest");
+      }
+      const now = Date.now();
+      if (
+        state.snapPulse.id &&
+        now < state.snapPulse.untilMs &&
+        (ev.id === state.snapPulse.id || (refId && refId === state.snapPulse.id))
+      ) {
+        marker.classList.add("pulse");
+      } else if (state.snapPulse.id && now >= state.snapPulse.untilMs) {
+        state.snapPulse.id = null;
       }
       marker.addEventListener("click", () => handleEventSelection(ev, "timeline"));
       track.appendChild(marker);
@@ -2454,6 +2482,12 @@ function renderTimelineLanes(events) {
         }
         if (state.playhead.nearestMarkerId && inc.id === state.playhead.nearestMarkerId) {
           marker.classList.add("nearest");
+        }
+        const now = Date.now();
+        if (state.snapPulse.id && now < state.snapPulse.untilMs && inc.id === state.snapPulse.id) {
+          marker.classList.add("pulse");
+        } else if (state.snapPulse.id && now >= state.snapPulse.untilMs) {
+          state.snapPulse.id = null;
         }
         marker.addEventListener("click", () => handleIncidentSelection(inc, "incident-click"));
         track.appendChild(marker);
@@ -3045,7 +3079,8 @@ function findNearestEvent(events, tms) {
 }
 
 function setCurrentTms(tms, snap = true) {
-  seekTo(tms, "timeline", {
+  const source = state.playhead.isSeeking ? "timeline-drag" : "timeline-click";
+  seekTo(tms, source, {
     refresh: false,
     snap: state.playhead.isSeeking,
     nearestEvent: true,
@@ -3447,6 +3482,10 @@ function resetState() {
   state.incidentsVersion = 0;
   state.filteredIncidentsCache = { key: "", list: [] };
   state.currentMoment = null;
+  state.snapPulse = {
+    id: null,
+    untilMs: 0,
+  };
   state.videoSyncAvailable = false;
   state.partialMode = false;
   eventIdCounter = 0;
