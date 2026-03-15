@@ -6596,6 +6596,10 @@ async function deletePart(partId) {
 }
 
 async function clearAllCaptureData() {
+  const recordingState = recordingController.state || state.recording.status || "idle";
+  if (state.network.active || ["starting", "recording", "paused"].includes(recordingState)) {
+    return { ok: false, error: "Stop capture before clearing data." };
+  }
   if (!isIdbAvailable()) {
     return { ok: false, error: "Storage unavailable." };
   }
@@ -6617,6 +6621,23 @@ async function clearAllCaptureData() {
   resetCaptureState();
   state.network.requests = {};
   state.network.order = [];
+  state.network.capped = false;
+  state.network.startedAt = null;
+  state.network.stoppedAt = null;
+  state.console.logs = [];
+  state.console.startedAt = null;
+  state.console.stoppedAt = null;
+  state.screenshot.dataUrl = null;
+  state.screenshot.capturedAt = null;
+  if (session) {
+    session.screenshots = [];
+    session.counts = {
+      network_requests: 0,
+      console_entries: 0,
+      errors: 0,
+    };
+    session.diagnostics = [];
+  }
   if (wasActive && tab) {
     await loadCaptureSettings();
     await ensureSessionRecord(tab);

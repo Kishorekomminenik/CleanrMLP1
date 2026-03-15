@@ -36,6 +36,7 @@ const launcherButtons = {
   sessionExport: document.getElementById("btn_session_export"),
   sessionViewer: document.getElementById("btn_session_viewer"),
   sessionReset: document.getElementById("btn_session_reset"),
+  sessionClearAll: document.getElementById("btn_session_clear_all"),
 };
 
 const buttons = {
@@ -2110,6 +2111,14 @@ function updateLauncherSessionUI(context) {
       !canResetSession
     );
   }
+  if (launcherButtons.sessionClearAll) {
+    const canClearAll = sessionMode === "session" && sessionCaptured;
+    launcherButtons.sessionClearAll.disabled = !canClearAll;
+    launcherButtons.sessionClearAll.classList.toggle(
+      "is-hidden",
+      !canClearAll
+    );
+  }
 }
 
 function updateStatusUI(state) {
@@ -2741,6 +2750,23 @@ async function handleSessionReset() {
   await setLastExportFilename(null);
   showToast("Session reset.");
   await refreshStatus();
+}
+
+async function handleSessionClearAll() {
+  const confirmed = window.confirm(
+    "Clear captured session evidence? Downloaded files will remain on disk."
+  );
+  if (!confirmed) {
+    return;
+  }
+  const response = await send("CLEAR_ALL_CAPTURE_DATA");
+  if (!response.ok) {
+    showToast(response.error || "Failed to clear session data.", "error");
+    return;
+  }
+  await refreshCompletedParts();
+  await refreshStatus();
+  showToast("Session evidence cleared.");
 }
 
 function beginCaptureAfterDismissal(mode, payload) {
@@ -3642,6 +3668,9 @@ function routeAction(action, el) {
       break;
     case "launcher:session_reset":
       handleSessionReset();
+      break;
+    case "launcher:session_clear_all":
+      handleSessionClearAll();
       break;
     case "launcher:record_screen":
       handleOpenRecordingPanel();
