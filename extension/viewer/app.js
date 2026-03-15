@@ -71,6 +71,8 @@ const incidentPanel = document.getElementById("incidentPanel");
 const incidentList = document.getElementById("incidentList");
 const incidentEmpty = document.getElementById("incidentEmpty");
 const errorOnlyToggle = document.getElementById("errorOnlyToggle");
+console.log("DEBUGDUCK_VIEWER_RUNTIME_MARKER_v2");
+window.DEBUGDUCK_VIEWER_RUNTIME_MARKER = "v2";
 const networkFilterChips = Array.from(document.querySelectorAll("[data-net-filter]"));
 const networkModeChips = Array.from(document.querySelectorAll("[data-net-mode]"));
 const consoleLevelChips = Array.from(
@@ -4297,6 +4299,17 @@ if (sessionFolderInput) {
         .slice(0, 10)
         .map((file) => file.webkitRelativePath)
     );
+    console.debug("[DD Folder] change fired");
+    console.debug(
+      "[DD Folder] files length:",
+      sessionFolderInput?.files?.length || 0
+    );
+    console.debug(
+      "[DD Folder] first 20 relative paths:",
+      Array.from(sessionFolderInput?.files || [])
+        .slice(0, 20)
+        .map((file) => file.webkitRelativePath)
+    );
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       return;
@@ -4326,6 +4339,15 @@ if (sessionFolderInput) {
       console.debug(
         "[DD Folder] manual file list length:",
         state.manualFileList?.length
+      );
+      console.debug(
+        "[DD Map] manualFileList length:",
+        state.manualFileList?.length || 0
+      );
+      console.debug("[DD Map] manualFiles size:", state.manualFiles?.size || 0);
+      console.debug(
+        "[DD Map] first 20 keys:",
+        state.manualFiles ? Array.from(state.manualFiles.keys()).slice(0, 20) : []
       );
       state.manualBasePrefix = basePrefix || "";
       setPackageMode(false, null);
@@ -4362,6 +4384,18 @@ if (sessionFolderInput) {
       if (state.manifest?.artifacts?.console?.present) {
         await ensureConsoleLogsLoaded();
       }
+      console.debug(
+        "[DD Video] manifest recording path:",
+        state.manifest?.artifacts?.recording?.path
+      );
+      console.debug(
+        "[DD Video] resolveManualFile result:",
+        resolveManualFile(state.manifest?.artifacts?.recording?.path)
+      );
+      console.debug(
+        "[DD Video] single webm fallback:",
+        findSingleVideoFallback(state.manualFileList || [])
+      );
       updateTimeline();
       refreshView();
       updateCurrentTimeContext();
