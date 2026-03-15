@@ -10,6 +10,7 @@ const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
 const banner = document.getElementById("howtoBanner");
 const bannerClose = document.getElementById("bannerClose");
+const headerActions = document.querySelector(".header-actions");
 const timeline = document.getElementById("timeline");
 const timelineCursor = document.getElementById("timelineCursor");
 const timelineLanes = document.getElementById("timelineLanes");
@@ -717,6 +718,31 @@ function setPackageMode(enabled, baseUrl = null) {
       ? "Loaded from offline session package."
       : "";
     packageNotice.classList.toggle("hidden", !enabled);
+  }
+}
+
+function setHeaderActionsVisible(visible) {
+  if (!headerActions) {
+    return;
+  }
+  headerActions.classList.toggle("hidden", !visible);
+}
+
+function setZipControlsAvailable(enabled, reason = "") {
+  if (openZipBtn) {
+    openZipBtn.style.display = enabled ? "" : "none";
+    openZipBtn.disabled = !enabled;
+    openZipBtn.title = enabled ? "" : reason;
+  }
+  if (openAnotherBtn) {
+    openAnotherBtn.style.display = enabled ? "" : "none";
+    openAnotherBtn.disabled = !enabled;
+    openAnotherBtn.title = enabled ? "" : reason;
+  }
+  if (resetBtn) {
+    resetBtn.style.display = enabled ? "" : "none";
+    resetBtn.disabled = !enabled;
+    resetBtn.title = enabled ? "" : reason;
   }
 }
 
@@ -3265,10 +3291,33 @@ if (zipInput) {
 
 tryLoadPackageSession()
   .then((loaded) => {
-    if (!loaded && emptyState) {
-      emptyState.textContent =
-        "Unable to load session.json. Ensure this folder is the exported DebugDuck package.";
-      showError("Session package missing session.json.", true);
+    if (!loaded) {
+      setHeaderActionsVisible(true);
+      const zipAvailable = Boolean(window.JSZip);
+      if (!zipAvailable) {
+        setZipControlsAvailable(
+          false,
+          "ZIP loading is not available in this viewer build."
+        );
+      } else {
+        setZipControlsAvailable(true);
+      }
+
+      if (emptyState) {
+        emptyState.textContent =
+          "Unable to load session.json. Ensure this folder is the exported DebugDuck package.";
+      }
+      const fileWarning =
+        window.location.protocol === "file:"
+          ? " This file was opened via file://, which can block loading session.json. Use a local web server or enable file access."
+          : "";
+      const zipGuidance = zipAvailable
+        ? " Use Open Evidence ZIP to load a package manually."
+        : " ZIP loading is disabled in this viewer build.";
+      showError(
+        `Session package not loaded.${fileWarning}${zipGuidance}`,
+        true
+      );
     }
   })
   .catch(() => {});
