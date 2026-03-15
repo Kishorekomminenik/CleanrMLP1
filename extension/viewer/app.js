@@ -353,21 +353,37 @@ function updatePlayheadDisplay() {
   }
 }
 
-function getEntriesNearTime(entries, tms, windowMs) {
-  if (!Array.isArray(entries) || !entries.length) {
-    return [];
+function getEntryTimeSafe(entry, getTime) {
+  const ts = getTime(entry);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function lowerBoundByTime(entries, min, getTime) {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (getEntryTimeSafe(entries[mid], getTime) < min) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
   }
-  const min = tms - windowMs;
-  const max = tms + windowMs;
-  return entries.filter((entry) => {
-    const ts =
-      typeof entry.timestamp_ms === "number"
-        ? entry.timestamp_ms
-        : typeof entry.timestampMs === "number"
-          ? entry.timestampMs
-          : null;
-    return typeof ts === "number" && ts >= min && ts <= max;
-  });
+  return lo;
+}
+
+function upperBoundByTime(entries, max, getTime) {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (getEntryTimeSafe(entries[mid], getTime) <= max) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
 }
 
 function filterEntriesNearTime(entries, tms, windowMs, getTime) {
@@ -376,10 +392,9 @@ function filterEntriesNearTime(entries, tms, windowMs, getTime) {
   }
   const min = tms - windowMs;
   const max = tms + windowMs;
-  return entries.filter((entry) => {
-    const ts = getTime(entry);
-    return typeof ts === "number" && ts >= min && ts <= max;
-  });
+  const start = lowerBoundByTime(entries, min, getTime);
+  const end = upperBoundByTime(entries, max, getTime);
+  return entries.slice(start, end);
 }
 
 function getNetworkTimestampMs(entry) {
@@ -458,8 +473,10 @@ function getImportantMarkers() {
       id: inc.id,
       timestampMs: inc.timestampMs || 0,
       type: "incident",
+      severity: inc.severity || "warning",
       priority: 1,
       label: buildIncidentTitle(inc),
+      sourceRef: inc.sourceRef || null,
     });
   });
   const screenshots = state.manifest?.artifacts?.screenshots?.items || [];
@@ -468,8 +485,10 @@ function getImportantMarkers() {
       id: shot.id,
       timestampMs: shot.timestampMs || 0,
       type: "screenshot",
+      severity: null,
       priority: 2,
       label: shot.label || "Screenshot",
+      sourceRef: shot.id || null,
     });
   });
   state.events.forEach((ev) => {
@@ -479,8 +498,10 @@ function getImportantMarkers() {
         id: ev.id,
         timestampMs: ev.t_ms || 0,
         type: "network",
+        severity: "error",
         priority: 3,
         label: ev.summary,
+        sourceRef: ev.refs?.ref || ev.id,
       });
     }
     if (rawType.startsWith("console") && ev.isError) {
@@ -488,8 +509,10 @@ function getImportantMarkers() {
         id: ev.id,
         timestampMs: ev.t_ms || 0,
         type: "console",
+        severity: "error",
         priority: 4,
         label: ev.summary,
+        sourceRef: ev.refs?.ref || ev.id,
       });
     }
   });
@@ -545,10 +568,14 @@ function getVisibleConsoleEvents() {
   const entries = state.consoleEntries || [];
   const base =
     state.panelModes.console === "near"
-      ? getEntriesNearTime(
+      ? filterEntriesNearTime(
           entries,
           state.playhead.currentTimeMs,
-          state.playhead.timeWindowMs
+          state.playhead.timeWindowMs,
+          (entry) =>
+            typeof entry.timestamp_ms === "number"
+              ? entry.timestamp_ms
+              : entry.timestampMs || 0
         )
       : entries;
   const allowedLevels = getEffectiveConsoleLevels();
@@ -2129,6 +2156,7 @@ async function ensureNetworkLogsLoaded() {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
     const normalized = entries.map(normalizeNetworkEntry);
+    normalized.sort((a, b) => getNetworkTimestampMs(a) - getNetworkTimestampMs(b));
     state.networkEntries = normalized;
     state.networkIndex = indexEntriesById(normalized);
     state.loadedArtifacts.network = true;
@@ -2154,6 +2182,7 @@ async function ensureConsoleLogsLoaded() {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
     const normalized = entries.map(normalizeConsoleEntry);
+    normalized.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
     state.consoleEntries = normalized;
     state.consoleIndex = indexEntriesById(normalized);
     state.loadedArtifacts.console = true;
