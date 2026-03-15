@@ -4310,6 +4310,11 @@ if (sessionFolderInput) {
         .slice(0, 20)
         .map((file) => file.webkitRelativePath)
     );
+    console.log("[DD Folder] change fired");
+    console.log(
+      "[DD Folder] files length:",
+      sessionFolderInput?.files?.length || 0
+    );
     const files = Array.from(event.target.files || []);
     if (!files.length) {
       return;
@@ -4323,6 +4328,12 @@ if (sessionFolderInput) {
     }
     resetState();
     const { map, basePrefix, sessionFile } = buildManualFileMap(files);
+    console.log("[DD Folder] sessionFile found:", sessionFile);
+    console.log("[DD Folder] sessionFile name:", sessionFile?.name);
+    console.log(
+      "[DD Folder] sessionFile relative path:",
+      sessionFile?.webkitRelativePath
+    );
     console.debug("[DD Folder] manual file map size:", map?.size || 0);
     console.debug(
       "[DD Folder] manual file map keys sample:",
@@ -4333,7 +4344,19 @@ if (sessionFolderInput) {
       return;
     }
     try {
-      const manifest = JSON.parse(await sessionFile.text());
+      console.log("[DD Folder] about to read session.json");
+      const text = await sessionFile.text();
+      console.log("[DD Folder] session.json text length:", text?.length || 0);
+      const manifest = JSON.parse(text);
+      console.log("[DD Folder] parsed manifest:", manifest);
+      console.log("[DD Folder] manifest.session:", manifest?.session);
+      console.log("[DD Folder] manifest.session.id:", manifest?.session?.id);
+      console.log(
+        "[DD Folder] manifest duration candidates:",
+        manifest?.session?.durationMs,
+        manifest?.artifacts?.recording?.durationMs,
+        manifest?.timeline?.endOffsetMs
+      );
       state.manualFiles = map;
       state.manualFileList = files;
       console.debug(
@@ -4370,7 +4393,17 @@ if (sessionFolderInput) {
       console.log("First 20 file map keys:", mapKeys.slice(0, 20));
       console.log("WebM candidates:", mapKeys.filter((key) => /\.webm$/i.test(key)));
       console.groupEnd();
+      console.log("[DD Folder] about to call initFromManifest");
       await initFromManifest(manifest, { fileMap: state.manualFiles });
+      console.log("[DD Folder] initFromManifest completed");
+      console.log(
+        "[DD Folder] state.playhead.durationMs after init:",
+        state.playhead?.durationMs
+      );
+      console.log(
+        "[DD Folder] loadedInfo text after init:",
+        loadedInfo?.textContent
+      );
       const incidents = await loadIncidentsFromFileMap();
       if (incidents.length) {
         setIncidents(mergeIncidents(state.incidents, incidents));
@@ -4403,6 +4436,7 @@ if (sessionFolderInput) {
         emptyState.textContent = "";
       }
     } catch (error) {
+      console.error("[DD Folder] folder load error:", error);
       showError("Unable to read session.json from the selected folder.");
     }
   });
