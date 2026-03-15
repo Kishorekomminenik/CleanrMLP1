@@ -874,6 +874,36 @@ function artifactCandidates(path) {
   return [normalized, base];
 }
 
+function getCurrentViewerPathHint() {
+  try {
+    return decodeURIComponent(window.location.pathname || "")
+      .replace(/\\/g, "/")
+      .toLowerCase();
+  } catch (_) {
+    return String(window.location.pathname || "")
+      .replace(/\\/g, "/")
+      .toLowerCase();
+  }
+}
+
+function getSelectedFolderHint(files) {
+  if (!files || !files.length) {
+    return "";
+  }
+  const first = files[0]?.webkitRelativePath || "";
+  const root = String(first).split("/")[0] || "";
+  return root.toLowerCase();
+}
+
+function isViewerRunningInsideSelectedPackage(files) {
+  const viewerPath = getCurrentViewerPathHint();
+  const selectedRoot = getSelectedFolderHint(files);
+  if (!viewerPath || !selectedRoot) {
+    return false;
+  }
+  return viewerPath.includes(`/${selectedRoot}/`);
+}
+
 function findSingleVideoFallback(files) {
   if (!Array.isArray(files) || !files.length) {
     return null;
@@ -4240,6 +4270,13 @@ if (sessionFolderInput) {
   sessionFolderInput.addEventListener("change", async (event) => {
     const files = Array.from(event.target.files || []);
     if (!files.length) {
+      return;
+    }
+    if (isViewerRunningInsideSelectedPackage(files)) {
+      showError(
+        "Viewer is opened from inside this evidence package. Open the viewer from outside the session folder, or use Open Evidence ZIP instead.",
+        true
+      );
       return;
     }
     resetState();
