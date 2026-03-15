@@ -790,6 +790,9 @@ function applyPlayhead(tms, options = {}) {
   }
   if (options.refresh !== false) {
     refreshView();
+    if (options.source) {
+      afterSelectionOrSeek(options.source);
+    }
   }
 }
 
@@ -2599,12 +2602,46 @@ function getEventBadge(ev) {
   return EVENT_ICONS[ev.type] || ev.type;
 }
 
+let lastAutoScrollEventId = null;
+
+function revealActiveEventRow(options = {}) {
+  if (!eventList) {
+    return;
+  }
+  const active = eventList.querySelector(".event-item.active");
+  if (!active) {
+    return;
+  }
+  const eventId = active.dataset.eventId || null;
+  if (!options.force && eventId && eventId === lastAutoScrollEventId) {
+    return;
+  }
+  active.scrollIntoView({
+    block: "nearest",
+    inline: "nearest",
+    behavior: options.behavior || "smooth",
+  });
+  if (eventId) {
+    lastAutoScrollEventId = eventId;
+  }
+}
+
+function afterSelectionOrSeek(source) {
+  if (source === "video") {
+    return;
+  }
+  requestAnimationFrame(() => {
+    revealActiveEventRow({ force: true, behavior: "smooth" });
+  });
+}
+
 function renderEventList() {
   eventList.innerHTML = "";
   state.filtered.forEach((ev, index) => {
     const item = document.createElement("div");
     item.className = "event-item";
     item.dataset.index = String(index);
+    item.dataset.eventId = ev.id;
     if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
       item.classList.add("active");
     }
