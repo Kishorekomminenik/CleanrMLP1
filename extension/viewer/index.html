@@ -16,10 +16,26 @@
           <p id="loadedInfo" class="loaded-info muted hidden"></p>
         </div>
         <div class="header-actions hidden">
+          <button id="openSessionFolderBtn" class="primary">
+            Open Session Package
+          </button>
+          <button id="openSessionBtn" class="secondary">Open session.json</button>
           <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
           <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
           <button id="resetBtn" class="secondary">Reset</button>
           <input id="zipInput" type="file" accept=".zip" class="hidden" />
+          <input
+            id="sessionFolderInput"
+            type="file"
+            webkitdirectory
+            class="hidden"
+          />
+          <input
+            id="sessionFileInput"
+            type="file"
+            accept=".json,application/json"
+            class="hidden"
+          />
         </div>
       </header>
 

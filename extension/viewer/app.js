@@ -2,6 +2,10 @@ const openZipBtn = document.getElementById("openZipBtn");
 const openAnotherBtn = document.getElementById("openAnotherBtn");
 const resetBtn = document.getElementById("resetBtn");
 const zipInput = document.getElementById("zipInput");
+const openSessionBtn = document.getElementById("openSessionBtn");
+const openSessionFolderBtn = document.getElementById("openSessionFolderBtn");
+const sessionFileInput = document.getElementById("sessionFileInput");
+const sessionFolderInput = document.getElementById("sessionFolderInput");
 const packageNotice = document.getElementById("packageNotice");
 const loaderError = document.getElementById("loaderError");
 const errorPanel = document.getElementById("errorPanel");
@@ -86,6 +90,8 @@ const state = {
   manifest: null,
   packageMode: false,
   packageBaseUrl: null,
+  manualFiles: null,
+  manualBasePrefix: "",
   events: [],
   filtered: [],
   screenshotUrls: new Map(),
@@ -746,6 +752,93 @@ function setZipControlsAvailable(enabled, reason = "") {
   }
 }
 
+function normalizeManifestPath(path) {
+  if (!path || typeof path !== "string") {
+    return "";
+  }
+  return path.replace(/^\.?\//, "");
+}
+
+function resolveManualFile(path) {
+  if (!state.manualFiles) {
+    return null;
+  }
+  const normalized = normalizeManifestPath(path);
+  if (state.manualFiles.has(normalized)) {
+    return state.manualFiles.get(normalized);
+  }
+  if (state.manualBasePrefix) {
+    const prefixed = `${state.manualBasePrefix}${normalized}`;
+    if (state.manualFiles.has(prefixed)) {
+      return state.manualFiles.get(prefixed);
+    }
+  }
+  return null;
+}
+
+function buildManualFileMap(files) {
+  const map = new Map();
+  let basePrefix = "";
+  let sessionFile = null;
+  files.forEach((file) => {
+    const rawPath = file.webkitRelativePath || file.name;
+    const normalized = normalizeManifestPath(rawPath);
+    map.set(normalized, file);
+    if (normalized.endsWith("session.json")) {
+      sessionFile = file;
+      basePrefix = normalized.slice(0, normalized.length - "session.json".length);
+    }
+  });
+  return { map, basePrefix, sessionFile };
+}
+
+async function loadScreenshotBlobsFromFileMap(paths) {
+  state.missingScreenshots = [];
+  state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
+  state.screenshotUrls.clear();
+  for (const path of paths) {
+    const file = resolveManualFile(path);
+    if (!file) {
+      const baseName = path.split("/").pop();
+      state.missingScreenshots.push(baseName);
+      continue;
+    }
+    const url = URL.createObjectURL(file);
+    const baseName = path.split("/").pop();
+    state.screenshotUrls.set(baseName, url);
+  }
+}
+
+async function loadIncidentsFromFileMap() {
+  try {
+    const file = resolveManualFile("incidents.json");
+    if (!file) {
+      return [];
+    }
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data)) {
+      return [];
+    }
+    return data
+      .map((item, index) => ({
+        id: item.id || `inc_pkg_${index + 1}`,
+        type: item.type || "manifest-marker",
+        timestampMs: item.timestampMs || item.timestamp_ms || 0,
+        severity: item.severity || "warning",
+        title: item.title || item.label || "Incident",
+        subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
+        sourceRef: item.sourceRef || item.ref || item.id || null,
+        panelTarget: item.panelTarget || "timeline",
+        statusCode: item.statusCode || 0,
+        consoleLevel: item.consoleLevel || "",
+        url: item.url || "",
+      }))
+      .filter((item) => item.timestampMs !== null);
+  } catch (error) {
+    return [];
+  }
+}
+
 async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -881,7 +974,9 @@ async function initFromManifest(manifest, options = {}) {
   renderInspector();
 
   const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
-  if (options.baseUrl) {
+  if (options.fileMap) {
+    await loadScreenshotBlobsFromFileMap(screenshotFiles);
+  } else if (options.baseUrl) {
     await loadScreenshotBlobsFromPaths(screenshotFiles, options.baseUrl);
   } else if (options.zip) {
     await loadScreenshotBlobs(options.zip, screenshotFiles, referencedShots);
@@ -1870,7 +1965,30 @@ async function loadVideo(zip) {
 }
 
 async function loadNdjsonEntries(path) {
-  if (!path || !state.zip) {
+  if (!path || (!state.zip && !state.manualFiles)) {
+    if (state.manualFiles) {
+      try {
+        const file = resolveManualFile(path);
+        if (!file) {
+          return [];
+        }
+        const raw = await file.text();
+        return raw
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            try {
+              return JSON.parse(line);
+            } catch (error) {
+              return null;
+            }
+          })
+          .filter(Boolean);
+      } catch (error) {
+        return [];
+      }
+    }
     if (state.packageMode && state.packageBaseUrl) {
       try {
         const absolute = new URL(path, state.packageBaseUrl).toString();
@@ -2053,11 +2171,26 @@ async function ensureConsoleLogsLoaded() {
 }
 
 async function ensureVideoLoaded() {
-  if (!state.zip || state.videoUrl || !state.manifest?.artifacts?.recording?.present) {
+  if (state.videoUrl || !state.manifest?.artifacts?.recording?.present) {
     return;
   }
   const path = state.manifest.artifacts.recording.path;
   if (!path) {
+    return;
+  }
+  if (state.manualFiles) {
+    const file = resolveManualFile(path);
+    if (!file) {
+      state.videoMissing = true;
+      return;
+    }
+    state.videoUrl = URL.createObjectURL(file);
+    videoEl.src = state.videoUrl;
+    videoPanel.classList.remove("hidden");
+    state.videoMissing = false;
+    return;
+  }
+  if (!state.zip) {
     return;
   }
   const entry = state.zip.file(path);
@@ -3123,6 +3256,10 @@ function resetState() {
   state.zipFiles = null;
   state.sessionLog = null;
   state.manifest = null;
+  state.packageMode = false;
+  state.packageBaseUrl = null;
+  state.manualFiles = null;
+  state.manualBasePrefix = "";
   state.events = [];
   state.filtered = [];
   state.playhead = {
@@ -3267,6 +3404,12 @@ function resetState() {
 if (openZipBtn && zipInput) {
   openZipBtn.addEventListener("click", () => zipInput.click());
 }
+if (openSessionBtn && sessionFileInput) {
+  openSessionBtn.addEventListener("click", () => sessionFileInput.click());
+}
+if (openSessionFolderBtn && sessionFolderInput) {
+  openSessionFolderBtn.addEventListener("click", () => sessionFolderInput.click());
+}
 if (openAnotherBtn && zipInput) {
   openAnotherBtn.addEventListener("click", () => {
     resetState();
@@ -3289,10 +3432,90 @@ if (zipInput) {
   });
 }
 
+if (sessionFileInput) {
+  sessionFileInput.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+      return;
+    }
+    resetState();
+    try {
+      const manifest = JSON.parse(await file.text());
+      state.manualFiles = new Map([["session.json", file]]);
+      state.manualBasePrefix = "";
+      setPackageMode(false, null);
+      setHeaderActionsVisible(true);
+      await initFromManifest(manifest, { fileMap: state.manualFiles });
+      const incidents = await loadIncidentsFromFileMap();
+      if (incidents.length) {
+        state.incidents = mergeIncidents(state.incidents, incidents);
+        renderIncidentRail();
+      }
+      setLoadedInfo("session.json", manifest.session?.id || "session.json");
+      updateTimeline();
+      refreshView();
+      updateCurrentTimeContext();
+      if (emptyState) {
+        emptyState.textContent =
+          "Session loaded. Select the session folder to load artifacts.";
+      }
+      showError(
+        "Artifacts are not loaded yet. Select the session folder to load video, logs, and screenshots.",
+        true
+      );
+    } catch (error) {
+      showError("Unable to read session.json. Select a valid DebugDuck manifest.");
+    }
+  });
+}
+
+if (sessionFolderInput) {
+  sessionFolderInput.addEventListener("change", async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      return;
+    }
+    resetState();
+    const { map, basePrefix, sessionFile } = buildManualFileMap(files);
+    if (!sessionFile) {
+      showError("session.json was not found in the selected folder.");
+      return;
+    }
+    try {
+      const manifest = JSON.parse(await sessionFile.text());
+      state.manualFiles = map;
+      state.manualBasePrefix = basePrefix || "";
+      setPackageMode(false, null);
+      setHeaderActionsVisible(true);
+      await initFromManifest(manifest, { fileMap: state.manualFiles });
+      const incidents = await loadIncidentsFromFileMap();
+      if (incidents.length) {
+        state.incidents = mergeIncidents(state.incidents, incidents);
+        renderIncidentRail();
+      }
+      setLoadedInfo("session folder", manifest.session?.id || "session.json");
+      updateTimeline();
+      refreshView();
+      updateCurrentTimeContext();
+      if (emptyState) {
+        emptyState.textContent = "";
+      }
+    } catch (error) {
+      showError("Unable to read session.json from the selected folder.");
+    }
+  });
+}
+
 tryLoadPackageSession()
   .then((loaded) => {
     if (!loaded) {
       setHeaderActionsVisible(true);
+      if (openSessionBtn) {
+        openSessionBtn.style.display = "";
+      }
+      if (openSessionFolderBtn) {
+        openSessionFolderBtn.style.display = "";
+      }
       const zipAvailable = Boolean(window.JSZip);
       if (!zipAvailable) {
         setZipControlsAvailable(
@@ -3305,7 +3528,7 @@ tryLoadPackageSession()
 
       if (emptyState) {
         emptyState.textContent =
-          "Unable to load session.json. Ensure this folder is the exported DebugDuck package.";
+          "Open session.json or the session folder from an extracted DebugDuck bundle.";
       }
       const fileWarning =
         window.location.protocol === "file:"
@@ -3315,7 +3538,7 @@ tryLoadPackageSession()
         ? " Use Open Evidence ZIP to load a package manually."
         : " ZIP loading is disabled in this viewer build.";
       showError(
-        `Session package not loaded.${fileWarning}${zipGuidance}`,
+        `Session package not loaded.${fileWarning}${zipGuidance} You can also open session.json directly.`,
         true
       );
     }
