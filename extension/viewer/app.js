@@ -322,6 +322,17 @@ function clampTimeMs(targetTimeMs, durationMs) {
   return Math.min(Math.max(0, targetTimeMs), durationMs);
 }
 
+const SNAP_TOLERANCE_MS = 120;
+
+function applySnapTolerance(rawTimeMs, snappedTimeMs) {
+  if (!Number.isFinite(snappedTimeMs)) {
+    return rawTimeMs;
+  }
+  return Math.abs(snappedTimeMs - rawTimeMs) <= SNAP_TOLERANCE_MS
+    ? snappedTimeMs
+    : rawTimeMs;
+}
+
 function clampToDuration(tms) {
   return clampTimeMs(tms, state.playhead.durationMs || 0);
 }
@@ -709,16 +720,22 @@ function updateTimeAwarePanels() {
 }
 
 function seekTo(targetTimeMs, source, options = {}) {
-  let next = clampToDuration(targetTimeMs);
+  const rawTimeMs = clampToDuration(targetTimeMs);
+  let next = rawTimeMs;
   const markers = getImportantMarkers();
   const snapEnabled = Boolean(options.snap);
   if (snapEnabled) {
-    const nearest = findNearestMarker(next, markers);
-    const thresholdMs = typeof options.snapThresholdMs === "number" ? options.snapThresholdMs : 500;
-    if (nearest && Math.abs((nearest.timestampMs || 0) - next) <= thresholdMs) {
-      next = nearest.timestampMs || 0;
-      state.playhead.nearestMarkerId = nearest.id;
-      setSnapPulse(nearest.id);
+    const snapCandidate = findNearestMarker(rawTimeMs, markers);
+    const thresholdMs =
+      typeof options.snapThresholdMs === "number" ? options.snapThresholdMs : 500;
+    const snappedTimeMs =
+      snapCandidate && Math.abs((snapCandidate.timestampMs || 0) - rawTimeMs) <= thresholdMs
+        ? snapCandidate.timestampMs || rawTimeMs
+        : rawTimeMs;
+    next = applySnapTolerance(rawTimeMs, snappedTimeMs);
+    if (snapCandidate && next !== rawTimeMs) {
+      state.playhead.nearestMarkerId = snapCandidate.id;
+      setSnapPulse(snapCandidate.id);
     } else {
       state.playhead.nearestMarkerId = null;
     }
