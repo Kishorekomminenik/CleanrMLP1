@@ -196,6 +196,78 @@ body {
   width: 100%;
 }
 
+.timeline-markers {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  pointer-events: none;
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.timeline-marker.incident {
+  background: #f43f5e;
+}
+
+.timeline-marker.screenshot {
+  background: #0ea5e9;
+}
+
+.timeline-marker.network {
+  background: #f97316;
+}
+
+.timeline-marker.console {
+  background: #8b5cf6;
+}
+
+.timeline-marker.nearest {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
+.timeline-marker.selected {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.2);
+}
+
+.timeline-marker.pulse {
+  animation: snapPulse 0.45s ease-out;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.45);
+}
+
+.marker-hover {
+  position: absolute;
+  top: -32px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 11px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.marker-hover.hidden {
+  display: none;
+}
+
 .time-badge {
   display: inline-flex;
   align-items: center;

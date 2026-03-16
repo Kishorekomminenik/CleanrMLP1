@@ -32,6 +32,8 @@ const followPlayheadToggle = document.getElementById("followPlayheadToggle");
 const timeWindowSelect = document.getElementById("timeWindowSelect");
 const timeBadge = document.getElementById("timeBadge");
 const timelineHover = document.getElementById("timelineHover");
+const timelineMarkers = document.getElementById("timelineMarkers");
+const markerHover = document.getElementById("markerHover");
 const contextIncident = document.getElementById("contextIncident");
 const contextScreenshot = document.getElementById("contextScreenshot");
 const contextNetworkCount = document.getElementById("contextNetworkCount");
@@ -358,6 +360,7 @@ function clampTimeMs(targetTimeMs, durationMs) {
 }
 
 const SNAP_TOLERANCE_MS = 120;
+const MARKER_SNAP_THRESHOLD_MS = 350;
 
 function applySnapTolerance(rawTimeMs, snappedTimeMs) {
   if (!Number.isFinite(snappedTimeMs)) {
@@ -378,6 +381,110 @@ function isValidTimestampMs(value) {
 
 function coerceTimestampMs(value) {
   return isValidTimestampMs(value) ? value : null;
+}
+
+function formatMarkerLabel(marker) {
+  const typeLabel = marker.type[0].toUpperCase() + marker.type.slice(1);
+  const time = formatTimeWithMs(marker.timeMs);
+  const label = marker.label ? ` • ${marker.label}` : "";
+  return `${typeLabel} • ${time}${label}`;
+}
+
+function buildNetworkMarkerLabel(entry) {
+  const status = entry.response_status || entry.status || "";
+  const method = entry.method || "";
+  const url = entry.url || "";
+  let path = url;
+  try {
+    const parsed = new URL(url);
+    path = parsed.pathname || url;
+  } catch (_) {
+    // leave as-is
+  }
+  return `${method} ${status} ${path}`.trim();
+}
+
+function buildConsoleMarkerLabel(entry) {
+  const message =
+    entry.message ||
+    entry.text ||
+    entry.payload?.message ||
+    entry.payload?.text ||
+    "";
+  return message ? message.slice(0, 120) : "Console error";
+}
+
+function deriveTimelineMarkers(session) {
+  if (!session) {
+    return [];
+  }
+  const markers = [];
+  session.incidents.forEach((inc, index) => {
+    markers.push({
+      id: `marker_inc_${inc.id || index}`,
+      type: "incident",
+      timeMs: inc.timestampMs || 0,
+      label: buildIncidentTitle(inc),
+      severity: inc.severity || "warning",
+      sourceRef: inc.id || null,
+      priority: 1,
+    });
+  });
+  session.screenshots.forEach((shot, index) => {
+    const label =
+      shot.label ||
+      (shot.path ? shot.path.split("/").pop() : null) ||
+      "Screenshot";
+    markers.push({
+      id: `marker_shot_${shot.id || index}`,
+      type: "screenshot",
+      timeMs: shot.timestampMs || 0,
+      label,
+      severity: null,
+      sourceRef: shot.id || shot.path || null,
+      priority: 2,
+    });
+  });
+  session.networkEvents.forEach((entry, index) => {
+    if (!isNetworkError(entry)) {
+      return;
+    }
+    markers.push({
+      id: `marker_net_${entry.id || index}`,
+      type: "network",
+      timeMs: getNetworkTimestampMs(entry) || 0,
+      label: buildNetworkMarkerLabel(entry),
+      severity: "error",
+      sourceRef: entry.id || null,
+      priority: 3,
+    });
+  });
+  session.consoleEvents.forEach((entry, index) => {
+    const level = normalizeConsoleLevel(entry.level);
+    if (level !== "error") {
+      return;
+    }
+    markers.push({
+      id: `marker_con_${entry.id || index}`,
+      type: "console",
+      timeMs: entry.timestampMs || 0,
+      label: buildConsoleMarkerLabel(entry),
+      severity: "error",
+      sourceRef: entry.id || null,
+      priority: 4,
+    });
+  });
+  return markers
+    .filter((marker) => isValidTimestampMs(marker.timeMs))
+    .sort((a, b) => a.timeMs - b.timeMs);
+}
+
+function rebuildTimelineMarkers() {
+  if (!state.session) {
+    return;
+  }
+  state.session.markers = deriveTimelineMarkers(state.session);
+  state.session.markersVersion = (state.session.markersVersion || 0) + 1;
 }
 
 function setPlayState(isPlaying) {
@@ -483,6 +590,10 @@ function findNearestIncident(incidents, tms) {
   return findNearestInSorted(incidents, tms, (inc) => inc.timestampMs || 0);
 }
 
+function getNearestIncident(tms) {
+  return findNearestIncident(getFilteredIncidents(), tms);
+}
+
 function findNearestScreenshot(tms) {
   const shots =
     state.sortedScreenshotsByTime.length > 0
@@ -494,6 +605,10 @@ function findNearestScreenshot(tms) {
   return findNearestInSorted(shots, tms, (shot) => shot.timestampMs || 0);
 }
 
+function getNearestScreenshot(tms) {
+  return findNearestScreenshot(tms);
+}
+
 function findNearestTimelineEvent(currentTimeMs, events) {
   if (!Array.isArray(events) || !events.length) {
     return null;
@@ -502,57 +617,11 @@ function findNearestTimelineEvent(currentTimeMs, events) {
 }
 
 function getImportantMarkers() {
-  const markers = [];
-  const incidents = getFilteredIncidents();
-  incidents.forEach((inc) => {
-    markers.push({
-      id: inc.id,
-      timestampMs: inc.timestampMs || 0,
-      type: "incident",
-      severity: inc.severity || "warning",
-      priority: 1,
-      label: buildIncidentTitle(inc),
-      sourceRef: inc.sourceRef || null,
-    });
-  });
-  const screenshots = state.manifest?.artifacts?.screenshots?.items || [];
-  screenshots.forEach((shot) => {
-    markers.push({
-      id: shot.id,
-      timestampMs: shot.timestampMs || 0,
-      type: "screenshot",
-      severity: null,
-      priority: 2,
-      label: shot.label || "Screenshot",
-      sourceRef: shot.id || null,
-    });
-  });
-  state.events.forEach((ev) => {
-    const rawType = ev.raw?.type || "";
-    if (rawType.startsWith("network") && ev.isError) {
-      markers.push({
-        id: ev.id,
-        timestampMs: ev.t_ms || 0,
-        type: "network",
-        severity: "error",
-        priority: 3,
-        label: ev.summary,
-        sourceRef: ev.refs?.ref || ev.id,
-      });
-    }
-    if (rawType.startsWith("console") && ev.isError) {
-      markers.push({
-        id: ev.id,
-        timestampMs: ev.t_ms || 0,
-        type: "console",
-        severity: "error",
-        priority: 4,
-        label: ev.summary,
-        sourceRef: ev.refs?.ref || ev.id,
-      });
-    }
-  });
-  return markers;
+  return state.session?.markers || [];
+}
+
+function getSnapTargets() {
+  return getImportantMarkers();
 }
 
 function findNearestMarker(currentTimeMs, markers) {
@@ -560,9 +629,9 @@ function findNearestMarker(currentTimeMs, markers) {
     return null;
   }
   let nearest = markers[0];
-  let best = Math.abs((nearest.timestampMs || 0) - currentTimeMs);
+  let best = Math.abs((nearest.timeMs || 0) - currentTimeMs);
   markers.forEach((marker) => {
-    const delta = Math.abs((marker.timestampMs || 0) - currentTimeMs);
+    const delta = Math.abs((marker.timeMs || 0) - currentTimeMs);
     if (delta < best || (delta === best && marker.priority < nearest.priority)) {
       best = delta;
       nearest = marker;
@@ -610,8 +679,13 @@ function setSnapPulse(markerId) {
 }
 
 function getVisibleNetworkEvents() {
-  const timeMs = state.playhead.currentTimeMs || 0;
-  const windowMs = state.playhead.timeWindowMs || 0;
+  return getVisibleNetworkEventsAt(
+    state.playhead.currentTimeMs || 0,
+    state.playhead.timeWindowMs || 0
+  );
+}
+
+function getVisibleNetworkEventsAt(timeMs, windowMs) {
   const entries = state.networkEntries || [];
   const base =
     state.panelModes.network === "near"
@@ -636,8 +710,13 @@ function getVisibleNetworkEvents() {
 }
 
 function getVisibleConsoleEvents() {
-  const timeMs = state.playhead.currentTimeMs || 0;
-  const windowMs = state.playhead.timeWindowMs || 0;
+  return getVisibleConsoleEventsAt(
+    state.playhead.currentTimeMs || 0,
+    state.playhead.timeWindowMs || 0
+  );
+}
+
+function getVisibleConsoleEventsAt(timeMs, windowMs) {
   const entries = state.consoleEntries || [];
   const base =
     state.panelModes.console === "near"
@@ -657,12 +736,9 @@ function getVisibleConsoleEvents() {
   );
 }
 
-function getCurrentMomentContext() {
-  const timeMs = state.playhead.currentTimeMs || 0;
-  const windowMs = state.playhead.timeWindowMs || 0;
-  const incidents = getFilteredIncidents();
-  const nearestIncident = findNearestIncident(incidents, timeMs);
-  const nearestScreenshot = findNearestScreenshot(timeMs);
+function getCurrentMomentContextAt(timeMs, windowMs) {
+  const nearestIncident = getNearestIncident(timeMs);
+  const nearestScreenshot = getNearestScreenshot(timeMs);
 
   const networkWindow = state.loadedArtifacts.network
     ? getWindowSlice(state.networkEntries, timeMs, windowMs, getNetworkTimestampMs)
@@ -710,6 +786,13 @@ function getCurrentMomentContext() {
       consoleId: selectedConsole ? null : nearestConsole ? nearestConsole.id : null,
     },
   };
+}
+
+function getCurrentMomentContext() {
+  return getCurrentMomentContextAt(
+    state.playhead.currentTimeMs || 0,
+    state.playhead.timeWindowMs || 0
+  );
 }
 
 function updateCurrentTimeContext() {
@@ -769,10 +852,12 @@ function seekTo(targetTimeMs, source, options = {}) {
   if (snapEnabled) {
     const snapCandidate = findNearestMarker(rawTimeMs, markers);
     const thresholdMs =
-      typeof options.snapThresholdMs === "number" ? options.snapThresholdMs : 500;
+      typeof options.snapThresholdMs === "number"
+        ? options.snapThresholdMs
+        : MARKER_SNAP_THRESHOLD_MS;
     const snappedTimeMs =
-      snapCandidate && Math.abs((snapCandidate.timestampMs || 0) - rawTimeMs) <= thresholdMs
-        ? snapCandidate.timestampMs || rawTimeMs
+      snapCandidate && Math.abs((snapCandidate.timeMs || 0) - rawTimeMs) <= thresholdMs
+        ? snapCandidate.timeMs || rawTimeMs
         : rawTimeMs;
     next = applySnapTolerance(rawTimeMs, snappedTimeMs);
     if (snapCandidate && next !== rawTimeMs) {
@@ -1419,6 +1504,16 @@ function buildNormalizedSessionState(manifest, pkg) {
     .map((shot) => (shot && shot.path ? shot.path : null))
     .filter(Boolean);
   const events = normalizeTimelineEvents(buildEventsFromManifest(manifest));
+  const eventById = new Map();
+  const eventByRef = new Map();
+  events.forEach((ev) => {
+    if (ev?.id) {
+      eventById.set(ev.id, ev);
+    }
+    if (ev?.refs?.ref) {
+      eventByRef.set(ev.refs.ref, ev);
+    }
+  });
   const durationCandidate =
     (manifest?.timeline && manifest.timeline.endOffsetMs) ||
     manifest?.session?.durationMs ||
@@ -1429,8 +1524,7 @@ function buildNormalizedSessionState(manifest, pkg) {
     .slice()
     .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
   const screenshotIndex = buildScreenshotIndexFromManifest(manifest, screenshotsSorted);
-
-  return {
+  const session = {
     manifest,
     pkg,
     durationMs,
@@ -1442,6 +1536,8 @@ function buildNormalizedSessionState(manifest, pkg) {
     incidents,
     allEventsSorted: events,
     eventIndexes: {
+      eventById,
+      eventByRef,
       networkById: new Map(),
       consoleById: new Map(),
       incidentById: indexEntriesById(incidents),
@@ -1456,6 +1552,9 @@ function buildNormalizedSessionState(manifest, pkg) {
       incidents: incidents.length > 0,
     },
   };
+  session.markers = deriveTimelineMarkers(session);
+  session.markersVersion = 1;
+  return session;
 }
 
 function applyNormalizedSessionState(normalized) {
@@ -1669,7 +1768,7 @@ function applySummaryInteractions() {
         errorOnlyToggle.checked = true;
       }
       renderIncidentRail();
-      renderTimelineLanes(state.events);
+      renderTimelineLanes(state.session?.markers || []);
     } else if (key === "Network") {
       setActivePanel("network");
       state.filters.networkStatusBucket = "errors";
@@ -1776,6 +1875,9 @@ function setIncidents(nextIncidents) {
     );
     state.session.artifactPresence.incidents =
       state.sortedIncidentsByTime.length > 0;
+    rebuildTimelineMarkers();
+    renderTimelineMarkers();
+    renderTimelineLanes(state.session?.markers || []);
   }
 }
 
@@ -2601,6 +2703,9 @@ async function ensureNetworkLogsLoaded() {
       state.session.networkEvents = normalized;
       state.session.eventIndexes.networkById = state.networkIndex;
       state.session.artifactPresence.network = normalized.length > 0;
+      rebuildTimelineMarkers();
+      renderTimelineMarkers();
+      renderTimelineLanes(state.session?.markers || []);
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -2634,6 +2739,9 @@ async function ensureConsoleLogsLoaded() {
       state.session.consoleEvents = normalized;
       state.session.eventIndexes.consoleById = state.consoleIndex;
       state.session.artifactPresence.console = normalized.length > 0;
+      rebuildTimelineMarkers();
+      renderTimelineMarkers();
+      renderTimelineLanes(state.session?.markers || []);
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -2727,7 +2835,7 @@ function getTimelineMarkerClass(ev) {
   return ev.isError ? "error" : "marker";
 }
 
-function renderTimelineLanes(events) {
+function renderTimelineLanes(markers) {
   if (!timelineLanes) {
     return;
   }
@@ -2739,30 +2847,11 @@ function renderTimelineLanes(events) {
   if (!duration) {
     return;
   }
-  const screenshots = events.filter((ev) => ev.type === "screenshot");
-  const networkErrors = events.filter((ev) => {
-    const rawType = ev.raw?.type || "";
-    return (
-      rawType.startsWith("network") &&
-      (rawType.includes("error") || rawType.includes("warning") || ev.isError)
-    );
-  });
-  const consoleErrors = events.filter((ev) => {
-    const rawType = ev.raw?.type || "";
-    return (
-      rawType.startsWith("console") &&
-      (rawType.includes("error") || rawType.includes("warning") || ev.isError)
-    );
-  });
-  const markerEvents = events.filter((ev) => {
-    const rawType = ev.raw?.type || "";
-    const isMarker =
-      ev.type === "marker" || rawType.startsWith("recording") || ev.isError;
-    if (state.filters.errorOnly) {
-      return isMarker && ev.isError;
-    }
-    return isMarker;
-  });
+  const list = Array.isArray(markers) ? markers : [];
+  const screenshots = list.filter((marker) => marker.type === "screenshot");
+  const networkErrors = list.filter((marker) => marker.type === "network");
+  const consoleErrors = list.filter((marker) => marker.type === "console");
+  const markerEvents = list.filter((marker) => marker.type === "incident");
   const laneMap = {
     screenshots,
     network: networkErrors,
@@ -2776,70 +2865,48 @@ function renderTimelineLanes(events) {
     if (!track) {
       return;
     }
-    items.forEach((ev) => {
-      if (state.filters.errorOnly && !ev.isError && laneName !== "markers") {
+    items.forEach((marker) => {
+      if (state.filters.errorOnly && marker.severity !== "error") {
         return;
       }
-      const marker = document.createElement("div");
-      marker.className = "lane-marker";
-      marker.classList.add(laneName === "markers" ? "marker" : laneName);
-      if (ev.isError) {
-        marker.classList.add("error");
+      const markerEl = document.createElement("div");
+      markerEl.className = "lane-marker";
+      markerEl.classList.add(laneName === "markers" ? "marker" : laneName);
+      if (marker.severity === "error") {
+        markerEl.classList.add("error");
       }
-      const left = (ev.t_ms / duration) * 100;
-      marker.style.left = `${left}%`;
-      marker.title = ev.summary;
-      if (state.playhead.selectedEventId && ev.id === state.playhead.selectedEventId) {
-        marker.classList.add("selected");
+      const left = (marker.timeMs / duration) * 100;
+      markerEl.style.left = `${left}%`;
+      markerEl.title = marker.label || "";
+      if (
+        marker.type === "incident" &&
+        state.playhead.selectedIncidentId === marker.sourceRef
+      ) {
+        markerEl.classList.add("selected");
+      }
+      if (
+        marker.type === "screenshot" &&
+        state.playhead.selectedScreenshotId === marker.sourceRef
+      ) {
+        markerEl.classList.add("selected");
       }
       const nearestMarkerId = state.playhead.nearestMarkerId;
-      const refId = ev.refs?.ref || null;
-      if (
-        nearestMarkerId &&
-        (ev.id === nearestMarkerId || (refId && refId === nearestMarkerId))
-      ) {
-        marker.classList.add("nearest");
+      if (nearestMarkerId && marker.id === nearestMarkerId) {
+        markerEl.classList.add("nearest");
       }
       const now = Date.now();
       if (
         state.snapPulse.id &&
         now < state.snapPulse.untilMs &&
-        (ev.id === state.snapPulse.id || (refId && refId === state.snapPulse.id))
+        marker.id === state.snapPulse.id
       ) {
-        marker.classList.add("pulse");
+        markerEl.classList.add("pulse");
       } else if (state.snapPulse.id && now >= state.snapPulse.untilMs) {
         state.snapPulse.id = null;
       }
-      marker.addEventListener("click", () => handleEventSelection(ev, "timeline"));
-      track.appendChild(marker);
+      markerEl.addEventListener("click", () => jumpToMarker(marker));
+      track.appendChild(markerEl);
     });
-    if (laneName === "markers") {
-      const incidents = getFilteredIncidents();
-      incidents.forEach((inc) => {
-        const marker = document.createElement("div");
-        marker.className = "lane-marker incident";
-        if (inc.severity === "error") {
-          marker.classList.add("error");
-        }
-        const left = ((inc.timestampMs || 0) / duration) * 100;
-        marker.style.left = `${left}%`;
-        marker.title = buildIncidentTitle(inc);
-        if (state.playhead.selectedIncidentId === inc.id) {
-          marker.classList.add("selected");
-        }
-        if (state.playhead.nearestMarkerId && inc.id === state.playhead.nearestMarkerId) {
-          marker.classList.add("nearest");
-        }
-        const now = Date.now();
-        if (state.snapPulse.id && now < state.snapPulse.untilMs && inc.id === state.snapPulse.id) {
-          marker.classList.add("pulse");
-        } else if (state.snapPulse.id && now >= state.snapPulse.untilMs) {
-          state.snapPulse.id = null;
-        }
-        marker.addEventListener("click", () => handleIncidentSelection(inc, "incident-click"));
-        track.appendChild(marker);
-      });
-    }
   });
 }
 
@@ -3778,6 +3845,7 @@ function setCurrentTms(tms, snap = true) {
   const source = state.playhead.isSeeking ? "timeline-drag" : "timeline-click";
   seekTo(tms, source, {
     snap: state.playhead.isSeeking,
+    snapThresholdMs: MARKER_SNAP_THRESHOLD_MS,
     nearestEvent: true,
   });
 }
@@ -3803,6 +3871,149 @@ function updateTimeline() {
   if (videoSyncNote) {
     videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
   }
+}
+
+function resolveMarkerSelection(marker) {
+  const session = state.session;
+  if (!session) {
+    return { event: null, selection: {} };
+  }
+  let event = null;
+  if (marker.sourceRef && session.eventIndexes.eventByRef.has(marker.sourceRef)) {
+    event = session.eventIndexes.eventByRef.get(marker.sourceRef);
+  } else if (marker.sourceRef && session.eventIndexes.eventById.has(marker.sourceRef)) {
+    event = session.eventIndexes.eventById.get(marker.sourceRef);
+  }
+  const selection = {};
+  if (marker.type === "incident") {
+    selection.selectedIncidentId = marker.sourceRef || null;
+  }
+  if (marker.type === "screenshot") {
+    selection.selectedScreenshotId = marker.sourceRef || null;
+  }
+  if (marker.type === "network") {
+    state.selectedNetworkId = marker.sourceRef || null;
+  }
+  if (marker.type === "console") {
+    state.selectedConsoleId = marker.sourceRef || null;
+  }
+  if (event) {
+    selection.selectedEventId = event.id;
+  }
+  return { event, selection };
+}
+
+function mapMarkerToPanel(marker) {
+  if (marker.type === "screenshot") {
+    return "screenshots";
+  }
+  if (marker.type === "network") {
+    return "network";
+  }
+  if (marker.type === "console") {
+    return "console";
+  }
+  if (marker.type === "incident") {
+    return "incident";
+  }
+  return "timeline";
+}
+
+function jumpToMarker(marker) {
+  if (!marker) {
+    return;
+  }
+  const panel = mapMarkerToPanel(marker);
+  const resolved = resolveMarkerSelection(marker);
+  seekTo(marker.timeMs || 0, "marker-click", {
+    activePanel: panel,
+    ...resolved.selection,
+  });
+  if (resolved.event) {
+    renderDetails(resolved.event);
+  }
+  if (panel === "screenshots") {
+    renderScreenshotsPanel();
+  } else if (panel === "network") {
+    renderNetworkPanel();
+  } else if (panel === "console") {
+    renderConsolePanel();
+  } else if (panel === "incident") {
+    renderIncidentRail();
+  }
+}
+
+function renderTimelineMarkers() {
+  if (!timelineMarkers || !state.session) {
+    return;
+  }
+  const markers = state.session.markers || [];
+  const duration = state.playhead.durationMs || 0;
+  if (!duration || !markers.length) {
+    timelineMarkers.innerHTML = "";
+    if (markerHover) {
+      markerHover.classList.add("hidden");
+    }
+    return;
+  }
+  const markerById = new Map(markers.map((marker) => [marker.id, marker]));
+  const version = String(state.session.markersVersion || 0);
+  const durationKey = String(duration);
+  const needsRebuild =
+    timelineMarkers.dataset.version !== version ||
+    timelineMarkers.dataset.duration !== durationKey;
+  if (needsRebuild) {
+    timelineMarkers.innerHTML = "";
+    markers.forEach((marker) => {
+      const el = document.createElement("div");
+      el.className = `timeline-marker ${marker.type}`;
+      el.dataset.markerId = marker.id;
+      el.dataset.markerTime = String(marker.timeMs || 0);
+      el.title = marker.label || "";
+      el.addEventListener("click", (event) => {
+        event.stopPropagation();
+        jumpToMarker(marker);
+      });
+      el.addEventListener("mouseenter", () => {
+        if (!markerHover) {
+          return;
+        }
+        markerHover.textContent = formatMarkerLabel(marker);
+        markerHover.style.left = `${(marker.timeMs / duration) * 100}%`;
+        markerHover.classList.remove("hidden");
+      });
+      el.addEventListener("mouseleave", () => {
+        if (markerHover) {
+          markerHover.classList.add("hidden");
+        }
+      });
+      timelineMarkers.appendChild(el);
+    });
+    timelineMarkers.dataset.version = version;
+    timelineMarkers.dataset.duration = durationKey;
+  }
+  const nearestId = state.playhead.nearestMarkerId;
+  const now = Date.now();
+  Array.from(timelineMarkers.children).forEach((child) => {
+    const markerId = child.dataset.markerId;
+    const marker = markerById.get(markerId);
+    if (marker) {
+      const isSelected =
+        (marker.type === "incident" &&
+          state.playhead.selectedIncidentId === marker.sourceRef) ||
+        (marker.type === "screenshot" &&
+          state.playhead.selectedScreenshotId === marker.sourceRef) ||
+        (marker.type === "network" && state.selectedNetworkId === marker.sourceRef) ||
+        (marker.type === "console" && state.selectedConsoleId === marker.sourceRef);
+      child.classList.toggle("selected", isSelected);
+    }
+    child.classList.toggle("nearest", Boolean(nearestId && markerId === nearestId));
+    if (state.snapPulse.id && now < state.snapPulse.untilMs && markerId === state.snapPulse.id) {
+      child.classList.add("pulse");
+    } else {
+      child.classList.remove("pulse");
+    }
+  });
 }
 
 function updateTimelineHover(clientX) {
@@ -3834,7 +4045,8 @@ function refreshView() {
     state.playhead.selectedEventId = null;
   }
   renderEventList();
-  renderTimelineLanes(state.events);
+  renderTimelineMarkers();
+  renderTimelineLanes(state.session?.markers || []);
 }
 
 function buildPackageDiagnostics(pkg, manifest) {
@@ -4174,6 +4386,14 @@ function resetState() {
       track.innerHTML = "";
     });
   }
+  if (timelineMarkers) {
+    timelineMarkers.innerHTML = "";
+    timelineMarkers.dataset.version = "";
+    timelineMarkers.dataset.duration = "";
+  }
+  if (markerHover) {
+    markerHover.classList.add("hidden");
+  }
   timeline.value = "0";
   timeline.max = "0";
   currentTimeLabel.textContent = "00:00";
@@ -4436,6 +4656,9 @@ timeline.addEventListener("mouseleave", () => {
   if (timelineHover) {
     timelineHover.classList.add("hidden");
   }
+  if (markerHover) {
+    markerHover.classList.add("hidden");
+  }
 });
 timeline.addEventListener("mousedown", () => {
   state.playhead.isSeeking = true;
@@ -4478,7 +4701,8 @@ if (errorOnlyToggle) {
       filterErrors.checked = state.filters.errorOnly || filterErrors.checked;
     }
     renderIncidentRail();
-    renderTimelineLanes(state.events);
+    renderTimelineMarkers();
+    renderTimelineLanes(state.session?.markers || []);
     if (state.loadedArtifacts.network) {
       renderNetworkPanel();
     }
