@@ -92,16 +92,11 @@ const inspectorTitle = document.getElementById("inspectorTitle");
 const inspectorBody = document.getElementById("inspectorBody");
 
 const state = {
-  zip: null,
-  zipFiles: null,
   pkg: null,
   sessionLog: null,
   manifest: null,
   packageMode: false,
   packageBaseUrl: null,
-  manualFiles: null,
-  manualFileList: null,
-  manualBasePrefix: "",
   events: [],
   filtered: [],
   screenshotUrls: new Map(),
@@ -783,12 +778,6 @@ function seekTo(targetTimeMs, source, options = {}) {
     const nearest = findNearestMarker(next, markers);
     state.playhead.nearestMarkerId = nearest ? nearest.id : null;
   }
-  if (options.nearestEvent) {
-    const nearestEvent = findNearestTimelineEvent(next, state.events);
-    if (nearestEvent) {
-      options.selectedEventId = nearestEvent.id;
-    }
-  }
   applyPlayhead(next, {
     ...options,
     source,
@@ -821,6 +810,15 @@ function applyPlayhead(tms, options = {}) {
     }
     if ("selectedScreenshotId" in options) {
       state.playhead.selectedScreenshotId = options.selectedScreenshotId;
+    }
+  }
+  if (options.nearestEvent && !("selectedEventId" in options)) {
+    const nearestEvent = findNearestTimelineEvent(next, state.events);
+    if (nearestEvent) {
+      state.playhead.selectedEventId = nearestEvent.id;
+      renderDetails(nearestEvent);
+    } else {
+      state.playhead.selectedEventId = null;
     }
   }
   if (options.activePanel) {
@@ -895,22 +893,6 @@ function setZipControlsAvailable(enabled, reason = "") {
     resetBtn.disabled = !enabled;
     resetBtn.title = enabled ? "" : reason;
   }
-}
-
-function normalizeArtifactPath(path) {
-  return String(path || "")
-    .replace(/\\/g, "/")
-    .replace(/^\.\//, "")
-    .replace(/^\/+/, "")
-    .replace(/\/+/g, "/")
-    .trim()
-    .toLowerCase();
-}
-
-function artifactCandidates(path) {
-  const normalized = normalizeArtifactPath(path);
-  const base = normalized.split("/").pop() || "";
-  return [normalized, base];
 }
 
 function normalizePackagePath(path) {
@@ -1217,41 +1199,6 @@ function isViewerRunningInsideSelectedPackage(files) {
   return viewerPath.includes(`/${selectedRoot}/`);
 }
 
-function findSingleVideoFallback(files) {
-  if (!Array.isArray(files) || !files.length) {
-    return null;
-  }
-  const videoFiles = files.filter((file) => /\.webm$/i.test(file.name || ""));
-  if (videoFiles.length === 1) {
-    return videoFiles[0];
-  }
-  return null;
-}
-
-function findArtifact(files, artifactPath) {
-  if (!Array.isArray(files) || !artifactPath) {
-    return null;
-  }
-
-  debugGroup("DEBUGDUCK ARTIFACT COMPARISON");
-  debugLog("Manifest artifact path:", artifactPath);
-  files.forEach((file) => {
-    debugLog("Candidate file.name:", file.name);
-    debugLog("Candidate webkitRelativePath:", file.webkitRelativePath);
-  });
-  debugGroupEnd();
-
-  const candidates = artifactCandidates(artifactPath);
-
-  return (
-    files.find((file) => {
-      const fileName = normalizeArtifactPath(file.name);
-      const relPath = normalizeArtifactPath(file.webkitRelativePath || "");
-      return candidates.includes(fileName) || candidates.includes(relPath);
-    }) || null
-  );
-}
-
 function attachVideoDurationReconciliation() {
   if (!videoEl) {
     return;
@@ -1303,97 +1250,6 @@ function attachVideoDurationReconciliation() {
     }
   });
 }
-
-function resolveManualFile(path) {
-  if (!state.manualFiles) {
-    return null;
-  }
-
-  debugGroup("DEBUGDUCK RESOLVE MANUAL FILE");
-  debugLog("Requested path:", path);
-  const normalized = normalizeArtifactPath(path);
-  debugLog("Normalized manifest path:", normalized);
-  debugLog("Manual base prefix:", state.manualBasePrefix);
-  debugLog("[DD Resolver] compare candidate vs keys");
-  debugLog("[DD Resolver] candidate:", normalized);
-  debugLog(
-    "[DD Resolver] keys sample:",
-    Array.from(state.manualFiles.keys()).slice(0, 20)
-  );
-  const directLookup = state.manualFiles.get(normalized);
-  debugLog("Direct lookup result:", directLookup);
-  if (state.manualFiles.has(normalized)) {
-    debugGroupEnd();
-    return state.manualFiles.get(normalized);
-  }
-
-  if (state.manualBasePrefix) {
-    const prefixed = normalizeArtifactPath(`${state.manualBasePrefix}${normalized}`);
-    debugLog("Prefixed path attempt:", prefixed);
-    debugLog("Prefixed lookup result:", state.manualFiles.get(prefixed));
-    if (state.manualFiles.has(prefixed)) {
-      debugGroupEnd();
-      return state.manualFiles.get(prefixed);
-    }
-  }
-
-  if (state.manualFileList) {
-    const fallback = findArtifact(state.manualFileList, normalized);
-    if (fallback) {
-      debugGroupEnd();
-      return fallback;
-    }
-  }
-
-  debugGroupEnd();
-  return null;
-}
-
-function buildManualFileMap(files) {
-  const map = new Map();
-  let basePrefix = "";
-  let sessionFile = null;
-  files.forEach((file) => {
-    const rawPath = file.webkitRelativePath || file.name;
-    const normalized = normalizeArtifactPath(rawPath);
-    const stripped = normalized.includes("/")
-      ? normalized.split("/").slice(1).join("/")
-      : normalized;
-    map.set(normalized, file);
-    map.set(normalizeArtifactPath(file.name), file);
-    if (stripped) {
-      map.set(normalizeArtifactPath(stripped), file);
-    }
-    if (stripped.endsWith("session.json")) {
-      sessionFile = file;
-      basePrefix = stripped.slice(0, stripped.length - "session.json".length);
-      return;
-    }
-    if (normalized.endsWith("session.json")) {
-      sessionFile = file;
-      basePrefix = normalized.slice(0, normalized.length - "session.json".length);
-    }
-  });
-  return { map, basePrefix, sessionFile };
-}
-
-async function loadScreenshotBlobsFromFileMap(paths) {
-  state.missingScreenshots = [];
-  state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
-  state.screenshotUrls.clear();
-  for (const path of paths) {
-    const file = resolveManualFile(path);
-    if (!file) {
-      const baseName = path.split("/").pop();
-      state.missingScreenshots.push(baseName);
-      continue;
-    }
-    const url = URL.createObjectURL(file);
-    const baseName = path.split("/").pop();
-    state.screenshotUrls.set(baseName, url);
-  }
-}
-
 async function loadScreenshotBlobsFromPackage(paths, pkg) {
   state.missingScreenshots = [];
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -1415,36 +1271,6 @@ async function loadScreenshotBlobsFromPackage(paths, pkg) {
     const url = URL.createObjectURL(blob);
     const baseName = path.split("/").pop();
     state.screenshotUrls.set(baseName, url);
-  }
-}
-
-async function loadIncidentsFromFileMap() {
-  try {
-    const file = resolveManualFile("incidents.json");
-    if (!file) {
-      return [];
-    }
-    const data = JSON.parse(await file.text());
-    if (!Array.isArray(data)) {
-      return [];
-    }
-    return data
-      .map((item, index) => ({
-        id: item.id || `inc_pkg_${index + 1}`,
-        type: item.type || "manifest-marker",
-        timestampMs: item.timestampMs || item.timestamp_ms || 0,
-        severity: item.severity || "warning",
-        title: item.title || item.label || "Incident",
-        subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
-        sourceRef: item.sourceRef || item.ref || item.id || null,
-        panelTarget: item.panelTarget || "timeline",
-        statusCode: item.statusCode || 0,
-        consoleLevel: item.consoleLevel || "",
-        url: item.url || "",
-      }))
-      .filter((item) => item.timestampMs !== null);
-  } catch (error) {
-    return [];
   }
 }
 
@@ -1541,9 +1367,8 @@ function buildScreenshotIndexFromManifest(manifest) {
   return map;
 }
 
-async function initFromManifest(manifest, options = {}) {
-  state.manifest = manifest;
-  state.screenshotById = buildScreenshotIndexFromManifest(manifest);
+function buildNormalizedSessionState(manifest, options = {}) {
+  const screenshotById = buildScreenshotIndexFromManifest(manifest);
   const manifestShots = manifest?.artifacts?.screenshots?.items || [];
   const screenshotFiles =
     options.screenshotFiles && options.screenshotFiles.length
@@ -1553,41 +1378,57 @@ async function initFromManifest(manifest, options = {}) {
             .map((shot) => (shot && shot.path ? shot.path : null))
             .filter(Boolean)
         : [];
-  state.events = buildEventsFromManifest(manifest);
-  state.events.sort((a, b) => a.t_ms - b.t_ms);
-  state.playhead.durationMs =
+  const events = buildEventsFromManifest(manifest);
+  events.sort((a, b) => a.t_ms - b.t_ms);
+  const durationMs =
     (manifest.timeline && manifest.timeline.endOffsetMs) ||
     manifest.session?.durationMs ||
-    computeDurationMs(state.sessionLog, state.events);
+    computeDurationMs(null, events);
+  const hasRecording = Boolean(manifest?.artifacts?.recording?.present);
+  return {
+    screenshotById,
+    manifestShots,
+    screenshotFiles,
+    events,
+    durationMs,
+    hasRecording,
+    incidents: buildIncidentsFromManifest(manifest),
+    sortedScreenshotsByTime: manifestShots
+      .slice()
+      .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0)),
+    sortedScreenshotEvents: events.filter((ev) => ev.type === "screenshot"),
+  };
+}
+
+async function initFromManifest(manifest, options = {}) {
+  const normalized = buildNormalizedSessionState(manifest, options);
+  state.manifest = manifest;
+  state.screenshotById = normalized.screenshotById;
+  state.events = normalized.events;
   state.playhead.currentTimeMs = 0;
-  state.videoSyncAvailable =
-    Boolean(manifest?.artifacts?.recording?.present) &&
-    state.playhead.durationMs > 0;
-  state.playhead.hasRecording = Boolean(manifest?.artifacts?.recording?.present);
+  state.playhead.durationMs = normalized.durationMs;
+  state.playhead.selectedEventId = null;
+  state.playhead.selectedIncidentId = null;
+  state.playhead.selectedScreenshotId = null;
+  state.videoSyncAvailable = normalized.hasRecording && normalized.durationMs > 0;
+  state.playhead.hasRecording = normalized.hasRecording;
 
   applyManifestAvailability(manifest);
   renderSummaryFromManifest(manifest);
   updateTimelineSummary(manifest);
   renderScreenshotsPanel();
   setActivePanel("timeline");
-  setIncidents(buildIncidentsFromManifest(manifest));
-  state.sortedScreenshotsByTime = manifestShots
-    .slice()
-    .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
-  state.sortedScreenshotEvents = state.events.filter((ev) => ev.type === "screenshot");
+  setIncidents(normalized.incidents);
+  state.sortedScreenshotsByTime = normalized.sortedScreenshotsByTime;
+  state.sortedScreenshotEvents = normalized.sortedScreenshotEvents;
   renderIncidentRail();
   applySummaryInteractions();
   updatePlayheadDisplay();
   updateCurrentTimeContext();
   renderInspector();
 
-  const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
   if (options.pkg) {
-    await loadScreenshotBlobsFromPackage(screenshotFiles, options.pkg);
-  } else if (options.fileMap) {
-    await loadScreenshotBlobsFromFileMap(screenshotFiles);
-  } else if (options.zip) {
-    await loadScreenshotBlobs(options.zip, screenshotFiles, referencedShots);
+    await loadScreenshotBlobsFromPackage(normalized.screenshotFiles, options.pkg);
   }
 }
 
@@ -2742,12 +2583,6 @@ async function ensureVideoLoaded() {
   if (state.loadedArtifacts.recording && state.videoUrl) {
     return true;
   }
-  const path = state.manifest.artifacts.recording.path;
-  if (!path) {
-    state.videoMissing = true;
-    state.videoSyncAvailable = false;
-    return false;
-  }
   if (state.pkg) {
     const file = resolveRecordingFromPackage(state.pkg, state.manifest);
     if (!file) {
@@ -3855,33 +3690,12 @@ async function togglePlayback(source = "video") {
   }
 }
 
-function findNearestEvent(events, tms) {
-  let candidate = null;
-  for (const ev of events) {
-    if (ev.t_ms <= tms) {
-      candidate = ev;
-    } else {
-      break;
-    }
-  }
-  return candidate || events[0] || null;
-}
-
 function setCurrentTms(tms, snap = true) {
   const source = state.playhead.isSeeking ? "timeline-drag" : "timeline-click";
   seekTo(tms, source, {
-    refresh: false,
     snap: state.playhead.isSeeking,
     nearestEvent: true,
   });
-  if (snap) {
-    const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
-    if (nearest) {
-      state.playhead.selectedEventId = nearest.id;
-      renderDetails(nearest);
-    }
-  }
-  refreshView();
 }
 
 function selectEvent(ev, syncTimeline = false) {
@@ -3948,6 +3762,9 @@ function buildPackageDiagnostics(pkg, manifest) {
   const networkCandidates = keys.filter((key) => /network.*\.ndjson$/i.test(key));
   const consoleCandidates = keys.filter((key) => /console.*\.ndjson$/i.test(key));
   const screenshotCount = manifest?.artifacts?.screenshots?.items?.length || 0;
+  const resolvedRecording = pkg && manifest ? resolveRecordingFromPackage(pkg, manifest) : null;
+  const resolvedNetwork = pkg && manifest ? resolveNetworkLogFromPackage(pkg, manifest) : null;
+  const resolvedConsole = pkg && manifest ? resolveConsoleLogFromPackage(pkg, manifest) : null;
   return {
     hasManifest: Boolean(manifest),
     recordingCandidates: recordingCandidates.length,
@@ -3955,6 +3772,9 @@ function buildPackageDiagnostics(pkg, manifest) {
     consoleLogPresence: consoleCandidates.length > 0,
     screenshotCount,
     packageKeyCount: keys.length,
+    resolvedRecordingPath: resolvedRecording?.path || null,
+    resolvedNetworkPath: resolvedNetwork?.path || null,
+    resolvedConsolePath: resolvedConsole?.path || null,
   };
 }
 
@@ -3962,6 +3782,7 @@ function logPackageDiagnostics(pkg, manifest, label) {
   const diagnostics = buildPackageDiagnostics(pkg, manifest);
   const payload = {
     source: label || "package",
+    packageSource: pkg?.meta?.source || null,
     ...diagnostics,
   };
   if (DEBUG_ENABLED) {
@@ -4079,6 +3900,7 @@ function showLoaderError(error) {
 async function loadSessionPackage(input, options = {}) {
   let pkg;
   try {
+    resetState();
     if (input?.kind === "zip-file") {
       if (!window.JSZip) {
         const error = new Error("JSZip is required to open ZIP packages");
@@ -4172,16 +3994,11 @@ async function tryLoadPackageSession() {
 }
 
 function resetState() {
-  state.zip = null;
-  state.zipFiles = null;
   state.pkg = null;
   state.sessionLog = null;
   state.manifest = null;
   state.packageMode = false;
   state.packageBaseUrl = null;
-  state.manualFiles = null;
-  state.manualFileList = null;
-  state.manualBasePrefix = "";
   state.events = [];
   state.filtered = [];
   state.playhead = {
@@ -4288,6 +4105,13 @@ function resetState() {
     timeBadge.textContent = "00:00 / 00:00";
   }
   videoPanel.classList.add("hidden");
+  if (videoEl && !videoEl.paused) {
+    try {
+      videoEl.pause();
+    } catch (error) {
+      // ignore
+    }
+  }
   videoEl.removeAttribute("src");
   videoPlay.textContent = "Play";
   if (playToggleBtn) {
