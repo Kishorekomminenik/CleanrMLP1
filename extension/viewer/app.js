@@ -923,147 +923,268 @@ function normalizePackagePath(path) {
     .toLowerCase();
 }
 
-function packagePathAliases(path) {
-  const normalized = normalizePackagePath(path);
-  const base = normalized.split("/").pop() || "";
-  return Array.from(new Set([normalized, base].filter(Boolean)));
+function inferMimeType(path) {
+  const lower = String(path || "").toLowerCase();
+  if (lower.endsWith(".json")) {
+    return "application/json";
+  }
+  if (lower.endsWith(".ndjson")) {
+    return "application/x-ndjson";
+  }
+  if (lower.endsWith(".webm")) {
+    return "video/webm";
+  }
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  return "application/octet-stream";
+}
+
+function normalizeRelativeWebkitPath(file) {
+  return String(file?.webkitRelativePath || file?.name || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
 }
 
 class VirtualPackage {
-  constructor(fileMap) {
-    this.fileMap = fileMap || new Map();
-  }
-
-  has(path) {
-    return this.fileMap.has(normalizePackagePath(path));
-  }
-
-  get(path) {
-    return this.fileMap.get(normalizePackagePath(path)) || null;
-  }
-
-  keys() {
-    return Array.from(this.fileMap.keys());
-  }
-
-  findByExtension(ext) {
-    const needle = String(ext || "").toLowerCase();
-    const seen = new Set();
-    const results = [];
-    for (const [key, value] of this.fileMap.entries()) {
-      if (!key.endsWith(needle)) {
-        continue;
-      }
-      if (seen.has(value)) {
-        continue;
-      }
-      seen.add(value);
-      results.push(value);
-    }
-    return results;
-  }
-}
-
-function buildPackageFromFolderFiles(files) {
-  const map = new Map();
-  const list = Array.from(files || []);
-  list.forEach((file) => {
-    const rawPath = file.webkitRelativePath || file.name;
-    const normalized = normalizePackagePath(rawPath);
-    const stripped = normalized.includes("/")
-      ? normalized.split("/").slice(1).join("/")
-      : normalized;
-    packagePathAliases(normalized).forEach((alias) => {
-      map.set(alias, file);
+  constructor(entries = [], meta = {}) {
+    this.meta = meta;
+    this.entries = new Map();
+    entries.forEach((entry) => {
+      const key = this.normalize(entry.path);
+      this.entries.set(key, { ...entry, normalizedPath: key });
     });
-    if (stripped) {
-      packagePathAliases(stripped).forEach((alias) => {
-        map.set(alias, file);
+  }
+
+  normalize(input) {
+    return normalizePackagePath(input);
+  }
+
+  exists(path) {
+    return this.entries.has(this.normalize(path));
+  }
+
+  list() {
+    return Array.from(this.entries.values());
+  }
+
+  getEntry(path) {
+    return this.entries.get(this.normalize(path)) || null;
+  }
+
+  async readText(path) {
+    const entry = this.getEntry(path);
+    if (!entry) {
+      throw new Error(`Artifact not found: ${path}`);
+    }
+    if (entry.getText) {
+      return entry.getText();
+    }
+    if (entry.getBlob) {
+      return (await entry.getBlob()).text();
+    }
+    throw new Error(`Artifact cannot be read as text: ${path}`);
+  }
+
+  async readBlob(path) {
+    const entry = this.getEntry(path);
+    if (!entry) {
+      throw new Error(`Artifact not found: ${path}`);
+    }
+    if (entry.getBlob) {
+      return entry.getBlob();
+    }
+    if (entry.getText) {
+      return new Blob([await entry.getText()], {
+        type: entry.mimeType || "text/plain",
       });
     }
-  });
-  return new VirtualPackage(map);
-}
+    throw new Error(`Artifact cannot be read as blob: ${path}`);
+  }
 
-async function buildPackageFromZip(zip) {
-  const map = new Map();
-  const entries = Object.values(zip?.files || {}).filter((entry) => !entry.dir);
-  entries.forEach((entry) => {
-    const normalized = normalizePackagePath(entry.name || "");
-    const stripped = normalized.includes("/")
-      ? normalized.split("/").slice(1).join("/")
-      : normalized;
-    packagePathAliases(normalized).forEach((alias) => {
-      map.set(alias, entry);
-    });
-    if (stripped) {
-      packagePathAliases(stripped).forEach((alias) => {
-        map.set(alias, entry);
-      });
+  async readJson(path) {
+    return JSON.parse(await this.readText(path));
+  }
+
+  resolveArtifact(candidates = []) {
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+      const entry = this.getEntry(candidate);
+      if (entry) {
+        return entry;
+      }
     }
-  });
-  return new VirtualPackage(map);
-}
-
-async function readPackageText(fileLike) {
-  if (!fileLike) {
-    return "";
-  }
-  if (typeof fileLike.async === "function") {
-    return fileLike.async("string");
-  }
-  if (typeof fileLike.text === "function") {
-    return fileLike.text();
-  }
-  throw new Error("Unsupported package text reader");
-}
-
-async function readPackageBlob(fileLike) {
-  if (!fileLike) {
     return null;
   }
-  if (typeof fileLike.async === "function") {
-    return fileLike.async("blob");
+
+  getRootSummary() {
+    return this.list().map((entry) => entry.path);
   }
-  if (fileLike instanceof Blob) {
-    return fileLike;
-  }
-  return fileLike;
 }
 
-async function readPackageJson(fileLike) {
-  const text = await readPackageText(fileLike);
-  return JSON.parse(text);
+async function buildPackageFromZip(zipFile) {
+  const zip = await JSZip.loadAsync(zipFile);
+  const entries = [];
+  Object.entries(zip.files || {}).forEach(([path, zipEntry]) => {
+    if (zipEntry.dir) {
+      return;
+    }
+    const cleanPath = normalizeRelativeWebkitPath({ name: path });
+    entries.push({
+      path: cleanPath,
+      name: cleanPath.split("/").pop() || cleanPath,
+      size: zipEntry._data?.uncompressedSize || 0,
+      mimeType: inferMimeType(cleanPath),
+      sourceKind: "zip",
+      getText: async () => zipEntry.async("text"),
+      getBlob: async () => zipEntry.async("blob"),
+    });
+  });
+  return new VirtualPackage(entries, { source: "zip", inputName: zipFile.name });
+}
+
+async function buildPackageFromFileList(fileList) {
+  const entries = [];
+  Array.from(fileList || []).forEach((file) => {
+    const rawPath = normalizeRelativeWebkitPath(file);
+    entries.push({
+      path: rawPath,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type || inferMimeType(rawPath),
+      sourceKind: "folder",
+      file,
+      getText: async () => file.text(),
+      getBlob: async () => file,
+    });
+  });
+  return new VirtualPackage(entries, { source: "folder", count: entries.length });
+}
+
+async function buildPackageFromSessionJsonFile(file) {
+  return new VirtualPackage(
+    [
+      {
+        path: "session.json",
+        name: file.name,
+        size: file.size,
+        mimeType: "application/json",
+        sourceKind: "single-json",
+        file,
+        getText: async () => file.text(),
+        getBlob: async () => file,
+      },
+    ],
+    { source: "single-json" }
+  );
+}
+
+function commonTopLevelFolder(paths) {
+  const top = new Set(
+    paths
+      .map((path) => String(path || "").split("/")[0])
+      .filter(Boolean)
+  );
+  return top.size === 1 ? Array.from(top)[0] : null;
+}
+
+function normalizePackageRoot(pkg) {
+  if (pkg.exists("session.json")) {
+    return pkg;
+  }
+  const paths = pkg.list().map((entry) => entry.path);
+  if (!paths.length) {
+    return pkg;
+  }
+  const top = commonTopLevelFolder(paths);
+  if (!top) {
+    return pkg;
+  }
+  const rewritten = pkg.list().map((entry) => {
+    const nextPath = entry.path.startsWith(`${top}/`)
+      ? entry.path.slice(top.length + 1)
+      : entry.path;
+    return { ...entry, path: nextPath };
+  });
+  return new VirtualPackage(rewritten, { ...pkg.meta, strippedRoot: top });
+}
+
+function validatePackageShape(pkg) {
+  const entries = pkg.list();
+  if (!entries.length) {
+    const error = new Error("Package is empty");
+    error.code = "empty_package";
+    throw error;
+  }
+  if (!pkg.exists("session.json")) {
+    const error = new Error("session.json not found in selected package");
+    error.code = "missing_session_json";
+    error.details = { files: pkg.getRootSummary() };
+    throw error;
+  }
+  return true;
 }
 
 async function loadManifestFromPackage(pkg) {
-  const manifestFile = pkg.get("session.json");
-  if (!manifestFile) {
-    throw new Error("session.json not found in package");
-  }
-  return readPackageJson(manifestFile);
+  return pkg.readJson("session.json");
 }
 
+const RECORDING_CANDIDATES = [
+  "recording.webm",
+  "artifacts/recording.webm",
+  "video/recording.webm",
+];
+
+const NETWORK_CANDIDATES = [
+  "network.ndjson",
+  "logs/network.ndjson",
+  "artifacts/network.ndjson",
+];
+
+const CONSOLE_CANDIDATES = [
+  "console.ndjson",
+  "logs/console.ndjson",
+  "artifacts/console.ndjson",
+];
+
 function resolveRecordingFromPackage(pkg, manifest) {
-  const declaredPath = manifest?.artifacts?.recording?.path;
-  if (declaredPath) {
-    const declared = pkg.get(declaredPath);
-    if (declared) {
-      return declared;
-    }
+  const candidates = [
+    manifest?.artifacts?.recording?.path,
+    manifest?.recordingPath,
+    ...RECORDING_CANDIDATES,
+  ].filter(Boolean);
+  const resolved = pkg.resolveArtifact(candidates);
+  if (resolved) {
+    return resolved;
   }
-  const webms = pkg.findByExtension(".webm");
+  const webms = pkg
+    .list()
+    .filter((entry) => /\.webm$/i.test(entry.path || ""));
   return webms.length === 1 ? webms[0] : null;
 }
 
 function resolveNetworkLogFromPackage(pkg, manifest) {
-  const path = manifest?.artifacts?.network?.path;
-  return path ? pkg.get(path) : null;
+  const candidates = [
+    manifest?.artifacts?.network?.path,
+    manifest?.networkPath,
+    ...NETWORK_CANDIDATES,
+  ].filter(Boolean);
+  return pkg.resolveArtifact(candidates);
 }
 
 function resolveConsoleLogFromPackage(pkg, manifest) {
-  const path = manifest?.artifacts?.console?.path;
-  return path ? pkg.get(path) : null;
+  const candidates = [
+    manifest?.artifacts?.console?.path,
+    manifest?.consolePath,
+    ...CONSOLE_CANDIDATES,
+  ].filter(Boolean);
+  return pkg.resolveArtifact(candidates);
 }
 
 function getCurrentViewerPathHint() {
@@ -1278,14 +1399,15 @@ async function loadScreenshotBlobsFromPackage(paths, pkg) {
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
   state.screenshotUrls.clear();
   for (const path of paths) {
-    const file = pkg ? pkg.get(path) : null;
-    if (!file) {
+    if (!pkg || !pkg.exists(path)) {
       const baseName = path.split("/").pop();
       state.missingScreenshots.push(baseName);
       continue;
     }
-    const blob = await readPackageBlob(file);
-    if (!blob) {
+    let blob;
+    try {
+      blob = await pkg.readBlob(path);
+    } catch (error) {
       const baseName = path.split("/").pop();
       state.missingScreenshots.push(baseName);
       continue;
@@ -1328,11 +1450,10 @@ async function loadIncidentsFromFileMap() {
 
 async function loadIncidentsFromPackageFiles(pkg) {
   try {
-    const file = pkg ? pkg.get("incidents.json") : null;
-    if (!file) {
+    if (!pkg || !pkg.exists("incidents.json")) {
       return [];
     }
-    const data = await readPackageJson(file);
+    const data = await pkg.readJson("incidents.json");
     if (!Array.isArray(data)) {
       return [];
     }
@@ -1353,40 +1474,6 @@ async function loadIncidentsFromPackageFiles(pkg) {
       .filter((item) => item.timestampMs !== null);
   } catch (error) {
     return [];
-  }
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load ${url}`);
-  }
-  return response.json();
-}
-
-async function fetchBlob(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load ${url}`);
-  }
-  return response.blob();
-}
-
-async function loadScreenshotBlobsFromPaths(paths, baseUrl) {
-  state.missingScreenshots = [];
-  state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
-  state.screenshotUrls.clear();
-  for (const path of paths) {
-    try {
-      const absolute = new URL(path, baseUrl).toString();
-      const blob = await fetchBlob(absolute);
-      const url = URL.createObjectURL(blob);
-      const baseName = path.split("/").pop();
-      state.screenshotUrls.set(baseName, url);
-    } catch (error) {
-      const baseName = path.split("/").pop();
-      state.missingScreenshots.push(baseName);
-    }
   }
 }
 
@@ -1499,8 +1586,6 @@ async function initFromManifest(manifest, options = {}) {
     await loadScreenshotBlobsFromPackage(screenshotFiles, options.pkg);
   } else if (options.fileMap) {
     await loadScreenshotBlobsFromFileMap(screenshotFiles);
-  } else if (options.baseUrl) {
-    await loadScreenshotBlobsFromPaths(screenshotFiles, options.baseUrl);
   } else if (options.zip) {
     await loadScreenshotBlobs(options.zip, screenshotFiles, referencedShots);
   }
@@ -2502,51 +2587,6 @@ async function loadScreenshotBlobs(zip, screenshotFiles, referencedNames = []) {
   });
 }
 
-async function loadVideo(zip) {
-  if (state.packageMode && state.packageBaseUrl && state.manifest?.artifacts?.recording?.path) {
-    try {
-      const absolute = new URL(
-        state.manifest.artifacts.recording.path,
-        state.packageBaseUrl
-      ).toString();
-      const blob = await fetchBlob(absolute);
-      state.videoUrl = URL.createObjectURL(blob);
-      videoEl.src = state.videoUrl;
-      videoPanel.classList.remove("hidden");
-      state.videoMissing = false;
-      return;
-    } catch (error) {
-      state.videoMissing = true;
-    }
-  }
-  const candidates = Object.keys(zip.files).filter((name) =>
-    /(qa-session-video|debugduck-recording)-.*\.webm$/i.test(name)
-  );
-  if (!candidates.length) {
-    videoPanel.classList.add("hidden");
-    if (videoEl) {
-      videoEl.removeAttribute("src");
-    }
-    state.videoMissing = true;
-    if (videoSyncNote) {
-      videoSyncNote.classList.add("hidden");
-    }
-    return;
-  }
-  const entry = zip.file(candidates[0]);
-  if (!entry) {
-    return;
-  }
-  const blob = await entry.async("blob");
-  state.videoUrl = URL.createObjectURL(blob);
-  videoEl.src = state.videoUrl;
-  videoPanel.classList.remove("hidden");
-  state.videoMissing = false;
-  if (videoSyncNote) {
-    videoSyncNote.classList.toggle("hidden", state.videoSyncAvailable);
-  }
-}
-
 async function loadNdjsonEntries(path) {
   const parseNdjson = (raw) =>
     raw
@@ -2568,85 +2608,17 @@ async function loadNdjsonEntries(path) {
 
   if (state.pkg) {
     try {
-      const entry = state.pkg.get(path);
-      if (!entry) {
+      if (!state.pkg.exists(path)) {
         return [];
       }
-      const raw = await readPackageText(entry);
+      const raw = await state.pkg.readText(path);
       return parseNdjson(raw);
     } catch (error) {
       return [];
     }
   }
 
-  if (state.manualFiles) {
-    try {
-      const file = resolveManualFile(path);
-      if (!file) {
-        return [];
-      }
-      const raw = await file.text();
-      return parseNdjson(raw);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  if (state.packageMode && state.packageBaseUrl) {
-    try {
-      const absolute = new URL(path, state.packageBaseUrl).toString();
-      const response = await fetch(absolute);
-      if (!response.ok) {
-        return [];
-      }
-      const raw = await response.text();
-      return parseNdjson(raw);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  if (!state.zip) {
-    return [];
-  }
-
-  const entry = state.zip.file(path);
-  if (!entry) {
-    return [];
-  }
-  const raw = await entry.async("string");
-  return parseNdjson(raw);
-}
-
-async function loadIncidentsFromPackage(baseUrl) {
-  try {
-    const incidentsUrl = new URL("incidents.json", baseUrl).toString();
-    const response = await fetch(incidentsUrl);
-    if (!response.ok) {
-      return [];
-    }
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-      return [];
-    }
-    return data
-      .map((item, index) => ({
-        id: item.id || `inc_pkg_${index + 1}`,
-        type: item.type || "manifest-marker",
-        timestampMs: item.timestampMs || item.timestamp_ms || 0,
-        severity: item.severity || "warning",
-        title: item.title || item.label || "Incident",
-        subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
-        sourceRef: item.sourceRef || item.ref || item.id || null,
-        panelTarget: item.panelTarget || "timeline",
-        statusCode: item.statusCode || 0,
-        consoleLevel: item.consoleLevel || "",
-        url: item.url || "",
-      }))
-      .filter((item) => item.timestampMs !== null);
-  } catch (error) {
-    return [];
-  }
+  return [];
 }
 
 function indexEntriesById(entries) {
@@ -2789,7 +2761,7 @@ async function ensureVideoLoaded() {
       state.videoSyncAvailable = false;
       return false;
     }
-    const blob = await readPackageBlob(file);
+    const blob = await state.pkg.readBlob(file.path || "");
     if (!blob) {
       state.videoMissing = true;
       state.videoSyncAvailable = false;
@@ -2806,71 +2778,7 @@ async function ensureVideoLoaded() {
     attachVideoDurationReconciliation();
     return true;
   }
-  if (state.manualFiles) {
-    debugLog("[DD Resolver] resolving recording path:", path);
-    debugLog(
-      "[DD Resolver] candidate normalized path:",
-      normalizeArtifactPath(path)
-    );
-    debugLog("[DD Resolver] checking manualFiles map");
-    debugLog("[DD Resolver] manualFiles size:", state.manualFiles?.size);
-    let file = resolveManualFile(path);
-    if (!file && state.manualFileList) {
-      file = findArtifact(state.manualFileList, path);
-      if (!file) {
-        file = findSingleVideoFallback(state.manualFileList);
-      }
-    }
-    if (!file) {
-      debugGroup("DEBUGDUCK VIDEO RESOLUTION FAILURE");
-      debugError("Recording artifact could not be resolved.");
-      debugLog("Manifest recording path:", path);
-      const keys = state.manualFiles
-        ? Array.from(state.manualFiles.keys())
-        : [];
-      debugLog("Manual file map keys:", keys.slice(0, 20));
-      const webmFiles = (state.manualFileList || []).filter((entry) =>
-        /\.webm$/i.test(entry.name)
-      );
-      debugLog("WebM files detected:", webmFiles);
-      debugGroupEnd();
-      if (!state.videoMissing) {
-        showError(
-          "Recording artifact declared but file not found in package.",
-          true
-        );
-      }
-      state.videoMissing = true;
-      state.videoSyncAvailable = false;
-      console.warn("Recording artifact not found", path);
-      return false;
-    }
-    state.videoUrl = URL.createObjectURL(file);
-    videoEl.src = state.videoUrl;
-    videoPanel.classList.remove("hidden");
-    state.loadedArtifacts.recording = true;
-    state.videoMissing = false;
-    attachVideoDurationReconciliation();
-    return;
-  }
-  if (!state.zip) {
-    return false;
-  }
-  const entry = state.zip.file(path);
-  if (!entry) {
-    return false;
-  }
-  const blob = await entry.async("blob");
-  if (state.videoUrl) {
-    URL.revokeObjectURL(state.videoUrl);
-  }
-  state.videoUrl = URL.createObjectURL(blob);
-  videoEl.src = state.videoUrl;
-  videoPanel.classList.remove("hidden");
-  state.loadedArtifacts.recording = true;
-  state.videoMissing = false;
-  attachVideoDurationReconciliation();
-  return true;
+  return false;
 }
 
 function getTimelineMarkerClass(ev) {
@@ -4032,8 +3940,11 @@ function refreshView() {
 }
 
 function buildPackageDiagnostics(pkg, manifest) {
-  const keys = pkg ? pkg.keys() : [];
-  const recordingCandidates = pkg ? pkg.findByExtension(".webm") : [];
+  const entries = pkg ? pkg.list() : [];
+  const keys = entries.map((entry) => entry.path || "");
+  const recordingCandidates = entries.filter((entry) =>
+    /\.webm$/i.test(entry.path || "")
+  );
   const networkCandidates = keys.filter((key) => /network.*\.ndjson$/i.test(key));
   const consoleCandidates = keys.filter((key) => /console.*\.ndjson$/i.test(key));
   const screenshotCount = manifest?.artifacts?.screenshots?.items?.length || 0;
@@ -4064,7 +3975,7 @@ function applyDebugArtifactFallbacks(pkg, manifest) {
   if (!DEBUG_ENABLED || !pkg || !manifest) {
     return;
   }
-  const keys = pkg.keys();
+  const keys = pkg.list().map((entry) => entry.path || "");
   const networkCandidates = keys.filter((key) => /network.*\.ndjson$/i.test(key));
   const consoleCandidates = keys.filter((key) => /console.*\.ndjson$/i.test(key));
   if (!manifest.artifacts) {
@@ -4112,17 +4023,13 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   try {
     manifest = await loadManifestFromPackage(pkg);
   } catch (error) {
-    showError("session.json was not found in the selected package.");
-    return false;
+    const err = new Error("session.json could not be parsed.");
+    err.code = "malformed_session_json";
+    throw err;
   }
 
-  try {
-    applyDebugArtifactFallbacks(pkg, manifest);
-    await initFromManifest(manifest, { pkg });
-  } catch (error) {
-    showError("Unable to read session.json from the selected package.");
-    return false;
-  }
+  applyDebugArtifactFallbacks(pkg, manifest);
+  await initFromManifest(manifest, { pkg });
 
   const incidents = await loadIncidentsFromPackageFiles(pkg);
   if (incidents.length) {
@@ -4152,7 +4059,57 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   return true;
 }
 
-async function handlePackageFiles(files, label, options = {}) {
+function showLoaderError(error) {
+  const code = error?.code || "unknown_loader_error";
+  const messages = {
+    empty_package: "The selected package is empty.",
+    missing_session_json: "session.json was not found in the selected package.",
+    unsupported_shape:
+      "The selected files do not look like a DebugDuck session package.",
+    malformed_session_json: "session.json could not be parsed.",
+    zip_bootstrap_missing:
+      "ZIP support is unavailable because JSZip did not load.",
+  };
+  showError(messages[code] || error?.message || "There was a problem loading this session package.");
+  if (DEBUG_ENABLED) {
+    console.error("[DebugDuck loader]", error);
+  }
+}
+
+async function loadSessionPackage(input, options = {}) {
+  let pkg;
+  try {
+    if (input?.kind === "zip-file") {
+      if (!window.JSZip) {
+        const error = new Error("JSZip is required to open ZIP packages");
+        error.code = "zip_bootstrap_missing";
+        throw error;
+      }
+      pkg = await buildPackageFromZip(input.file);
+    } else if (input?.kind === "folder-files") {
+      pkg = await buildPackageFromFileList(input.files);
+    } else if (input?.kind === "session-json-file") {
+      pkg = await buildPackageFromSessionJsonFile(input.file);
+    } else {
+      const error = new Error("Unsupported loader input");
+      error.code = "unsupported_shape";
+      throw error;
+    }
+
+    pkg = normalizePackageRoot(pkg);
+    validatePackageShape(pkg);
+
+    return await hydrateViewerFromPackage(pkg, options.label || "package", {
+      eagerRecording: options.eagerRecording,
+      eagerLogs: options.eagerLogs,
+    });
+  } catch (error) {
+    showLoaderError(error);
+    return false;
+  }
+}
+
+async function handlePackageFiles(files, label) {
   const list = Array.from(files || []);
   if (!list.length) {
     return false;
@@ -4160,24 +4117,38 @@ async function handlePackageFiles(files, label, options = {}) {
 
   const zipCandidates = list.filter((file) => /\.zip$/i.test(file.name || ""));
   if (zipCandidates.length === 1 && list.length === 1) {
-    await loadZip(zipCandidates[0]);
-    return true;
+    return loadSessionPackage(
+      { kind: "zip-file", file: zipCandidates[0] },
+      { label }
+    );
   }
   if (zipCandidates.length > 0 && list.length > 1) {
-    showError("Drop a single ZIP file or an extracted session folder.");
+    showLoaderError({ code: "unsupported_shape" });
     return false;
+  }
+
+  const jsonCandidates = list.filter((file) =>
+    /session\.json$/i.test(file.name || file.webkitRelativePath || "")
+  );
+  if (list.length === 1 && jsonCandidates.length === 1) {
+    const loaded = await loadSessionPackage(
+      { kind: "session-json-file", file: jsonCandidates[0] },
+      { label, eagerRecording: false, eagerLogs: false }
+    );
+    if (loaded) {
+      if (emptyState) {
+        emptyState.textContent =
+          "Session loaded. Select the session folder to load artifacts.";
+      }
+      showError(
+        "Artifacts are not loaded yet. Select the session folder to load video, logs, and screenshots.",
+        true
+      );
+    }
+    return loaded;
   }
 
   const hasRelativePath = list.some((file) => Boolean(file.webkitRelativePath));
-  const hasSessionJson = list.some((file) => {
-    const name = file.webkitRelativePath || file.name || "";
-    return /session\.json$/i.test(name);
-  });
-  if (!hasSessionJson) {
-    showError("session.json was not found in the selected files.");
-    return false;
-  }
-
   if (hasRelativePath && isViewerRunningInsideSelectedPackage(list)) {
     showError(
       "Viewer is opened from inside this evidence package. Open the viewer from outside the session folder, or use Open Evidence ZIP instead.",
@@ -4186,312 +4157,18 @@ async function handlePackageFiles(files, label, options = {}) {
     return false;
   }
 
-  const pkg = buildPackageFromFolderFiles(list);
-  const hasArtifacts = list.some((file) => {
-    const name = file.name || "";
-    return !/session\.json$/i.test(name);
-  });
-  const eagerLoad = hasRelativePath || hasArtifacts;
-  const hydrated = await hydrateViewerFromPackage(pkg, label, {
-    eagerRecording: eagerLoad,
-    eagerLogs: eagerLoad,
-  });
-  if (hydrated && !eagerLoad) {
-    if (emptyState) {
-      emptyState.textContent =
-        "Session loaded. Select the session folder to load artifacts.";
-    }
-    showError(
-      "Artifacts are not loaded yet. Select the session folder to load video, logs, and screenshots.",
-      true
-    );
-  }
-  return hydrated;
+  return loadSessionPackage(
+    { kind: "folder-files", files: list },
+    { label, eagerRecording: true, eagerLogs: true }
+  );
 }
 
 async function loadZip(file) {
-  clearError();
-  clearLoadedInfo();
-  emptyState.textContent = "Loading evidence...";
-
-  if (!window.JSZip) {
-    showError("JSZip failed to load. Ensure vendor/jszip.min.js exists.");
-    return;
-  }
-
-  let zip;
-  try {
-    zip = await JSZip.loadAsync(file);
-  } catch (error) {
-    showError("Unable to read ZIP file. Please select a valid DebugDuck export.");
-    return;
-  }
-  const pkg = await buildPackageFromZip(zip);
-  if (pkg && pkg.has("session.json")) {
-    const hydrated = await hydrateViewerFromPackage(pkg, file.name, {
-      eagerRecording: false,
-      eagerLogs: false,
-    });
-    if (hydrated) {
-      return;
-    }
-    return;
-  }
-
-  state.pkg = null;
-  state.zip = zip;
-  state.zipFiles = zip.files;
-  state.partialMode = false;
-
-  const manifestName = findSessionManifestFile(zip.files);
-  const screenshotFilesFromZip = listScreenshotFiles(zip.files);
-  let sessionLabel = "partial logs";
-  let networkLogs = null;
-  let consoleLogs = null;
-  let environment = null;
-  let sessionStartIso = null;
-  let screenshotFiles = screenshotFilesFromZip;
-
-  if (manifestName) {
-    let manifestRaw = "";
-    try {
-      manifestRaw = await zip.file(manifestName).async("string");
-    } catch (error) {
-      showError("Unable to read session.json from ZIP.");
-      return;
-    }
-    try {
-      state.manifest = JSON.parse(manifestRaw);
-    } catch (error) {
-      showError("Invalid session.json. Re-export the evidence ZIP.");
-      return;
-    }
-
-    sessionLabel =
-      state.manifest.session?.title ||
-      state.manifest.session?.id ||
-      "session.json";
-    await initFromManifest(state.manifest, {
-      zip,
-      screenshotFiles: screenshotFilesFromZip,
-    });
-    const incidentEntry = zip.file("incidents.json");
-    if (incidentEntry) {
-      try {
-        const raw = await incidentEntry.async("string");
-        const data = JSON.parse(raw);
-        if (Array.isArray(data)) {
-          const normalized = data.map((item, index) => ({
-            id: item.id || `inc_pkg_${index + 1}`,
-            type: item.type || "manifest-marker",
-            timestampMs: item.timestampMs || item.timestamp_ms || 0,
-            severity: item.severity || "warning",
-            title: item.title || item.label || "Incident",
-            subtitle: formatTimeWithMs(item.timestampMs || item.timestamp_ms || 0),
-            sourceRef: item.sourceRef || item.ref || item.id || null,
-            panelTarget: item.panelTarget || "timeline",
-            statusCode: item.statusCode || 0,
-            consoleLevel: item.consoleLevel || "",
-            url: item.url || "",
-          }));
-      setIncidents(mergeIncidents(state.incidents, normalized));
-          renderIncidentRail();
-        }
-      } catch (error) {
-        // ignore optional incidents file
-      }
-    }
-  } else {
-    const sessionLogName = selectSessionLogFile(zip.files);
-    const screenshotTimes = screenshotFiles
-      .map((name) => parseScreenshotTimestamp(name.split("/").pop()))
-      .filter(Boolean);
-    if (sessionLogName) {
-      let sessionLogRaw = "";
-      try {
-        sessionLogRaw = await zip.file(sessionLogName).async("string");
-      } catch (error) {
-        showError("Unable to read session log JSON from ZIP.");
-        return;
-      }
-      try {
-        state.sessionLog = JSON.parse(sessionLogRaw);
-      } catch (error) {
-        showError("Invalid session log JSON. Re-export the evidence ZIP.");
-        return;
-      }
-
-      sessionStartIso = state.sessionLog?.session?.startedAt || null;
-      const normalized = state.sessionLog.normalizedEvents || [];
-      state.events = normalized.length
-        ? buildEventsFromNormalized(normalized)
-        : buildEventsFromRaw(state.sessionLog);
-      sessionLabel = sessionLogName;
-    } else {
-      const networkName = findFile(zip.files, /network_logs\.json$/i);
-      const consoleName = findFile(zip.files, /console_logs\.json$/i);
-      const environmentName = findFile(zip.files, /environment\.json$/i);
-      if (!networkName && !consoleName) {
-        const found = Object.keys(zip.files)
-          .filter((name) => name.endsWith(".json"))
-          .slice(0, 5)
-          .join(", ");
-        const foundText = found ? `Found JSON: ${found}` : "No JSON files found.";
-        showError(
-          `This ZIP does not look like a DebugDuck export (missing session log). ${foundText}`
-        );
-        return;
-      }
-      state.partialMode = true;
-      try {
-        if (networkName) {
-          const raw = await zip.file(networkName).async("string");
-          networkLogs = JSON.parse(raw);
-        }
-        if (consoleName) {
-          const raw = await zip.file(consoleName).async("string");
-          consoleLogs = JSON.parse(raw);
-        }
-        if (environmentName) {
-          const raw = await zip.file(environmentName).async("string");
-          environment = JSON.parse(raw);
-        }
-      } catch (error) {
-        showError("Unable to read logs JSON from ZIP.");
-        return;
-      }
-      sessionStartIso = deriveSessionStartIso({
-        sessionLog: null,
-        networkEntries: networkLogs?.entries || [],
-        consoleEntries: consoleLogs?.entries || [],
-        screenshotTimes,
-        environmentTimestamp: environment?.timestamp,
-      });
-      state.events = buildEventsFromSupplemental({
-        networkLogs,
-        consoleLogs,
-        sessionStartIso,
-      });
-      state.events = state.events.concat(
-        buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
-      );
-      state.sessionLog = {
-        session: { startedAt: sessionStartIso, endedAt: null, mode: null },
-        raw: {
-          network: networkLogs?.entries || [],
-          console: consoleLogs?.entries || [],
-          markers: [],
-          screenshots: [],
-        },
-      };
-      sessionLabel = "partial logs";
-    }
-  }
-
-  if (!state.manifest) {
-    state.events.sort((a, b) => a.t_ms - b.t_ms);
-    state.playhead.durationMs = computeDurationMs(state.sessionLog, state.events);
-    state.playhead.currentTimeMs = 0;
-    state.videoSyncAvailable = state.playhead.durationMs > 0;
-
-    const referencedShots =
-      state.sessionLog?.raw?.screenshots?.map((s) => s.fileName) || [];
-    if (!referencedShots.length && screenshotFiles.length) {
-      state.events = state.events.concat(
-        buildScreenshotEventsFromFiles(screenshotFiles, sessionStartIso)
-      );
-      state.events.sort((a, b) => a.t_ms - b.t_ms);
-    }
-    await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
-    await loadVideo(zip);
-    state.videoSyncAvailable = !state.videoMissing && state.playhead.durationMs > 0;
-    state.playhead.hasRecording = !state.videoMissing;
-    if (playToggleBtn) {
-      playToggleBtn.disabled = !state.videoSyncAvailable;
-    }
-    if (videoPlay) {
-      videoPlay.disabled = !state.videoSyncAvailable;
-    }
-  } else {
-    const referencedShots = screenshotFiles.map((name) => name.split("/").pop());
-    await loadScreenshotBlobs(zip, screenshotFiles, referencedShots);
-    const hasRecording = Boolean(state.manifest?.artifacts?.recording?.present);
-    videoPanel.classList.toggle("hidden", !hasRecording);
-  }
-
-  setLoadedInfo(file.name, sessionLabel);
-
-  updateTimeline();
-  if (!state.manifest && timelineSummary) {
-    timelineSummary.textContent = `${state.events.length} events`;
-  }
-  const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
-  if (nearest) {
-    state.playhead.selectedEventId = nearest.id;
-    renderDetails(nearest);
-  }
-  refreshView();
-  updateCurrentTimeContext();
-  emptyState.textContent = "";
-
-  const warnings = [];
-  if (state.partialMode) {
-    warnings.push("Loaded partial logs (no session log). Some details may be missing.");
-  }
-  if (state.manifest?.integrity?.warnings?.length) {
-    warnings.push(state.manifest.integrity.warnings.join(" "));
-  }
-  if (state.missingScreenshots.length) {
-    warnings.push("Some screenshots referenced in the log are missing from this ZIP.");
-  }
-  if (state.videoMissing && state.sessionLog?.session?.mode === "recording") {
-    warnings.push("Video file is missing from this ZIP.");
-  }
-  if (warnings.length) {
-    showError(warnings.join(" "), true);
-  }
+  return loadSessionPackage({ kind: "zip-file", file }, { label: file.name });
 }
 
 async function tryLoadPackageSession() {
-  try {
-    const baseUrl = new URL("../", window.location.href);
-    const sessionUrl = new URL("session.json", baseUrl).toString();
-    const response = await fetch(sessionUrl);
-    if (!response.ok) {
-      return false;
-    }
-    const manifest = await response.json();
-    setPackageMode(true, baseUrl);
-    await initFromManifest(manifest, { baseUrl });
-    const packageIncidents = await loadIncidentsFromPackage(baseUrl);
-    if (packageIncidents.length) {
-      setIncidents(mergeIncidents(state.incidents, packageIncidents));
-      renderIncidentRail();
-    }
-    setLoadedInfo("package", manifest.session?.id || "session.json");
-    updateTimeline();
-    refreshView();
-    emptyState.textContent = "";
-    const nearest = findNearestEvent(state.events, state.playhead.currentTimeMs);
-    if (nearest) {
-      state.playhead.selectedEventId = nearest.id;
-      renderDetails(nearest);
-    }
-    updateCurrentTimeContext();
-    const warnings = [];
-    if (manifest.integrity?.warnings?.length) {
-      warnings.push(manifest.integrity.warnings.join(" "));
-    }
-    if (manifest.integrity?.missingArtifacts?.length) {
-      warnings.push(`Missing artifacts: ${manifest.integrity.missingArtifacts.join(", ")}`);
-    }
-    if (warnings.length) {
-      showError(warnings.join(" "), true);
-    }
-    return true;
-  } catch (error) {
-    return false;
-  }
+  return false;
 }
 
 function resetState() {
@@ -4767,26 +4444,11 @@ if (sessionFileInput) {
       return;
     }
     resetState();
-    try {
-      const manifest = JSON.parse(await file.text());
-      state.manualFiles = new Map([
-        ["session.json", file],
-        [file.name, file],
-      ]);
-      state.manualFileList = [file];
-      state.manualBasePrefix = "";
-      setPackageMode(false, null);
-      setHeaderActionsVisible(true);
-      await initFromManifest(manifest, { fileMap: state.manualFiles });
-      const incidents = await loadIncidentsFromFileMap();
-      if (incidents.length) {
-        setIncidents(mergeIncidents(state.incidents, incidents));
-        renderIncidentRail();
-      }
-      setLoadedInfo("session.json", manifest.session?.id || "session.json");
-      updateTimeline();
-      refreshView();
-      updateCurrentTimeContext();
+    const loaded = await loadSessionPackage(
+      { kind: "session-json-file", file },
+      { label: "session.json", eagerRecording: false, eagerLogs: false }
+    );
+    if (loaded) {
       if (emptyState) {
         emptyState.textContent =
           "Session loaded. Select the session folder to load artifacts.";
@@ -4795,8 +4457,6 @@ if (sessionFileInput) {
         "Artifacts are not loaded yet. Select the session folder to load video, logs, and screenshots.",
         true
       );
-    } catch (error) {
-      showError("Unable to read session.json. Select a valid DebugDuck manifest.");
     }
   });
 }
