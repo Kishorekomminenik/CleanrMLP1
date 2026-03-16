@@ -93,6 +93,7 @@ const inspectorBody = document.getElementById("inspectorBody");
 
 const state = {
   pkg: null,
+  session: null,
   sessionLog: null,
   manifest: null,
   packageMode: false,
@@ -371,6 +372,14 @@ function clampToDuration(tms) {
   return clampTimeMs(tms, state.playhead.durationMs || 0);
 }
 
+function isValidTimestampMs(value) {
+  return Number.isFinite(value) && value >= 0;
+}
+
+function coerceTimestampMs(value) {
+  return isValidTimestampMs(value) ? value : null;
+}
+
 function setPlayState(isPlaying) {
   state.playhead.isPlaying = Boolean(isPlaying);
   if (playToggleBtn) {
@@ -601,15 +610,12 @@ function setSnapPulse(markerId) {
 }
 
 function getVisibleNetworkEvents() {
+  const timeMs = state.playhead.currentTimeMs || 0;
+  const windowMs = state.playhead.timeWindowMs || 0;
   const entries = state.networkEntries || [];
   const base =
     state.panelModes.network === "near"
-      ? filterEntriesNearTime(
-          entries,
-          state.playhead.currentTimeMs,
-          state.playhead.timeWindowMs,
-          getNetworkTimestampMs
-        )
+      ? filterEntriesNearTime(entries, timeMs, windowMs, getNetworkTimestampMs)
       : entries;
   return base.filter((entry) => {
     if (state.filters.errorOnly && !isNetworkError(entry)) {
@@ -630,13 +636,15 @@ function getVisibleNetworkEvents() {
 }
 
 function getVisibleConsoleEvents() {
+  const timeMs = state.playhead.currentTimeMs || 0;
+  const windowMs = state.playhead.timeWindowMs || 0;
   const entries = state.consoleEntries || [];
   const base =
     state.panelModes.console === "near"
       ? filterEntriesNearTime(
           entries,
-          state.playhead.currentTimeMs,
-          state.playhead.timeWindowMs,
+          timeMs,
+          windowMs,
           (entry) =>
             typeof entry.timestamp_ms === "number"
               ? entry.timestamp_ms
@@ -1220,6 +1228,9 @@ function attachVideoDurationReconciliation() {
 
     const previousDuration = state.playhead.durationMs || 0;
     state.playhead.durationMs = mediaDurationMs;
+    if (state.session) {
+      state.session.durationMs = mediaDurationMs;
+    }
     state.videoSyncAvailable = true;
 
     if (state.manifest?.artifacts?.recording) {
@@ -1353,13 +1364,9 @@ function buildEventsFromManifest(manifest) {
   return events;
 }
 
-function buildScreenshotIndexFromManifest(manifest) {
+function buildScreenshotIndexFromManifest(manifest, screenshots) {
   const map = new Map();
-  if (!manifest || !manifest.artifacts || !manifest.artifacts.screenshots) {
-    return map;
-  }
-  const items = manifest.artifacts.screenshots.items || [];
-  items.forEach((shot) => {
+  (screenshots || []).forEach((shot) => {
     if (shot && shot.id) {
       map.set(shot.id, shot);
     }
@@ -1367,69 +1374,119 @@ function buildScreenshotIndexFromManifest(manifest) {
   return map;
 }
 
-function buildNormalizedSessionState(manifest, options = {}) {
-  const screenshotById = buildScreenshotIndexFromManifest(manifest);
-  const manifestShots = manifest?.artifacts?.screenshots?.items || [];
-  const screenshotFiles =
-    options.screenshotFiles && options.screenshotFiles.length
-      ? options.screenshotFiles
-      : manifestShots.length
-        ? manifestShots
-            .map((shot) => (shot && shot.path ? shot.path : null))
-            .filter(Boolean)
-        : [];
-  const events = buildEventsFromManifest(manifest);
-  events.sort((a, b) => a.t_ms - b.t_ms);
-  const durationMs =
-    (manifest.timeline && manifest.timeline.endOffsetMs) ||
-    manifest.session?.durationMs ||
+function normalizeScreenshotItems(items) {
+  return (items || [])
+    .map((shot) => {
+      const timestampMs = coerceTimestampMs(shot?.timestampMs);
+      if (timestampMs === null) {
+        return null;
+      }
+      return { ...shot, timestampMs };
+    })
+    .filter(Boolean);
+}
+
+function normalizeIncidentItems(items) {
+  return (items || [])
+    .map((inc) => {
+      const timestampMs = coerceTimestampMs(inc?.timestampMs);
+      if (timestampMs === null) {
+        return null;
+      }
+      return { ...inc, timestampMs };
+    })
+    .filter(Boolean);
+}
+
+function normalizeTimelineEvents(events) {
+  return (events || [])
+    .map((ev) => {
+      const tms = coerceTimestampMs(ev?.t_ms);
+      if (tms === null) {
+        return null;
+      }
+      return { ...ev, t_ms: tms };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.t_ms - b.t_ms);
+}
+
+function buildNormalizedSessionState(manifest, pkg) {
+  const manifestShots = normalizeScreenshotItems(
+    manifest?.artifacts?.screenshots?.items || []
+  );
+  const screenshotFiles = manifestShots
+    .map((shot) => (shot && shot.path ? shot.path : null))
+    .filter(Boolean);
+  const events = normalizeTimelineEvents(buildEventsFromManifest(manifest));
+  const durationCandidate =
+    (manifest?.timeline && manifest.timeline.endOffsetMs) ||
+    manifest?.session?.durationMs ||
     computeDurationMs(null, events);
-  const hasRecording = Boolean(manifest?.artifacts?.recording?.present);
+  const durationMs = isValidTimestampMs(durationCandidate) ? durationCandidate : 0;
+  const incidents = normalizeIncidentItems(buildIncidentsFromManifest(manifest));
+  const screenshotsSorted = manifestShots
+    .slice()
+    .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+  const screenshotIndex = buildScreenshotIndexFromManifest(manifest, screenshotsSorted);
+
   return {
-    screenshotById,
-    manifestShots,
-    screenshotFiles,
-    events,
+    manifest,
+    pkg,
     durationMs,
-    hasRecording,
-    incidents: buildIncidentsFromManifest(manifest),
-    sortedScreenshotsByTime: manifestShots
-      .slice()
-      .sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0)),
-    sortedScreenshotEvents: events.filter((ev) => ev.type === "screenshot"),
+    recordingBlob: null,
+    recordingUrl: null,
+    networkEvents: [],
+    consoleEvents: [],
+    screenshots: screenshotsSorted,
+    incidents,
+    allEventsSorted: events,
+    eventIndexes: {
+      networkById: new Map(),
+      consoleById: new Map(),
+      incidentById: indexEntriesById(incidents),
+      screenshotById: screenshotIndex,
+    },
+    screenshotFiles,
+    artifactPresence: {
+      recording: Boolean(manifest?.artifacts?.recording?.present),
+      network: Boolean(manifest?.artifacts?.network?.present),
+      console: Boolean(manifest?.artifacts?.console?.present),
+      screenshots: Boolean(manifest?.artifacts?.screenshots?.present),
+      incidents: incidents.length > 0,
+    },
   };
 }
 
-async function initFromManifest(manifest, options = {}) {
-  const normalized = buildNormalizedSessionState(manifest, options);
-  state.manifest = manifest;
-  state.screenshotById = normalized.screenshotById;
-  state.events = normalized.events;
+function applyNormalizedSessionState(normalized) {
+  state.session = normalized;
+  state.manifest = normalized.manifest;
+  state.events = normalized.allEventsSorted;
+  state.screenshotById = normalized.eventIndexes.screenshotById;
+  state.sortedScreenshotsByTime = normalized.screenshots;
+  state.sortedScreenshotEvents = normalized.allEventsSorted.filter(
+    (ev) => ev.type === "screenshot"
+  );
   state.playhead.currentTimeMs = 0;
   state.playhead.durationMs = normalized.durationMs;
   state.playhead.selectedEventId = null;
   state.playhead.selectedIncidentId = null;
   state.playhead.selectedScreenshotId = null;
-  state.videoSyncAvailable = normalized.hasRecording && normalized.durationMs > 0;
-  state.playhead.hasRecording = normalized.hasRecording;
+  state.videoSyncAvailable =
+    normalized.artifactPresence.recording && normalized.durationMs > 0;
+  state.playhead.hasRecording = normalized.artifactPresence.recording;
+  setIncidents(normalized.incidents);
 
-  applyManifestAvailability(manifest);
-  renderSummaryFromManifest(manifest);
-  updateTimelineSummary(manifest);
+  applyManifestAvailability(normalized.manifest);
+  renderSummaryFromManifest(normalized.manifest);
+  updateTimelineSummary(normalized.manifest);
   renderScreenshotsPanel();
   setActivePanel("timeline");
-  setIncidents(normalized.incidents);
-  state.sortedScreenshotsByTime = normalized.sortedScreenshotsByTime;
-  state.sortedScreenshotEvents = normalized.sortedScreenshotEvents;
   renderIncidentRail();
   applySummaryInteractions();
   updatePlayheadDisplay();
   updateCurrentTimeContext();
   renderInspector();
-
-  if (options.pkg) {
-    await loadScreenshotBlobsFromPackage(normalized.screenshotFiles, options.pkg);
-  }
 }
 
 function applyManifestAvailability(manifest) {
@@ -1712,6 +1769,14 @@ function setIncidents(nextIncidents) {
     key: "",
     list: [],
   };
+  if (state.session) {
+    state.session.incidents = state.sortedIncidentsByTime;
+    state.session.eventIndexes.incidentById = indexEntriesById(
+      state.sortedIncidentsByTime
+    );
+    state.session.artifactPresence.incidents =
+      state.sortedIncidentsByTime.length > 0;
+  }
 }
 
 function getFilteredIncidents() {
@@ -2525,11 +2590,18 @@ async function ensureNetworkLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
-    const normalized = entries.map(normalizeNetworkEntry);
+    const normalized = entries
+      .map(normalizeNetworkEntry)
+      .filter((entry) => isValidTimestampMs(getNetworkTimestampMs(entry)));
     normalized.sort((a, b) => getNetworkTimestampMs(a) - getNetworkTimestampMs(b));
     state.networkEntries = normalized;
     state.networkIndex = indexEntriesById(normalized);
     state.loadedArtifacts.network = true;
+    if (state.session) {
+      state.session.networkEvents = normalized;
+      state.session.eventIndexes.networkById = state.networkIndex;
+      state.session.artifactPresence.network = normalized.length > 0;
+    }
     setIncidents(mergeIncidents(
       state.incidents,
       buildIncidentsFromNetwork(normalized)
@@ -2551,11 +2623,18 @@ async function ensureConsoleLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
     const entries = await loadNdjsonEntries(manifestPath);
-    const normalized = entries.map(normalizeConsoleEntry);
+    const normalized = entries
+      .map(normalizeConsoleEntry)
+      .filter((entry) => isValidTimestampMs(entry.timestampMs || 0));
     normalized.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
     state.consoleEntries = normalized;
     state.consoleIndex = indexEntriesById(normalized);
     state.loadedArtifacts.console = true;
+    if (state.session) {
+      state.session.consoleEvents = normalized;
+      state.session.eventIndexes.consoleById = state.consoleIndex;
+      state.session.artifactPresence.console = normalized.length > 0;
+    }
     setIncidents(mergeIncidents(
       state.incidents,
       buildIncidentsFromConsole(normalized)
@@ -2610,6 +2689,11 @@ async function ensureVideoLoaded() {
     videoPanel.classList.remove("hidden");
     state.loadedArtifacts.recording = true;
     state.videoMissing = false;
+    if (state.session) {
+      state.session.recordingBlob = blob;
+      state.session.recordingUrl = state.videoUrl;
+      state.session.artifactPresence.recording = true;
+    }
     attachVideoDurationReconciliation();
     return true;
   }
@@ -3834,11 +3918,6 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   if (emptyState) {
     emptyState.textContent = "Loading evidence...";
   }
-  resetState();
-  state.pkg = pkg;
-  state.partialMode = false;
-  setPackageMode(false, null);
-  setHeaderActionsVisible(true);
 
   let manifest;
   try {
@@ -3850,7 +3929,12 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   }
 
   applyDebugArtifactFallbacks(pkg, manifest);
-  await initFromManifest(manifest, { pkg });
+  const normalized = buildNormalizedSessionState(manifest, pkg);
+  state.pkg = pkg;
+  state.partialMode = false;
+  setPackageMode(false, null);
+  setHeaderActionsVisible(true);
+  applyNormalizedSessionState(normalized);
 
   const incidents = await loadIncidentsFromPackageFiles(pkg);
   if (incidents.length) {
@@ -3875,6 +3959,10 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   updateCurrentTimeContext();
   if (emptyState) {
     emptyState.textContent = "";
+  }
+  if (normalized.screenshotFiles.length) {
+    await loadScreenshotBlobsFromPackage(normalized.screenshotFiles, pkg);
+    state.loadedArtifacts.screenshots = true;
   }
   logPackageDiagnostics(pkg, manifest, loadedLabel);
   return true;
@@ -3995,6 +4083,7 @@ async function tryLoadPackageSession() {
 
 function resetState() {
   state.pkg = null;
+  state.session = null;
   state.sessionLog = null;
   state.manifest = null;
   state.packageMode = false;
