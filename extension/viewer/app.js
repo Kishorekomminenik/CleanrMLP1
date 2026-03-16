@@ -384,7 +384,16 @@ function coerceTimestampMs(value) {
 }
 
 function formatMarkerLabel(marker) {
-  const typeLabel = marker.type[0].toUpperCase() + marker.type.slice(1);
+  const typeLabel =
+    marker.type === "console-error"
+      ? "Console error"
+      : marker.type === "network-failure"
+        ? "Network failure"
+        : marker.type === "screenshot"
+          ? "Screenshot"
+          : marker.type === "incident"
+            ? "Incident"
+            : marker.type;
   const time = formatTimeWithMs(marker.timeMs);
   const label = marker.label ? ` • ${marker.label}` : "";
   return `${typeLabel} • ${time}${label}`;
@@ -451,7 +460,7 @@ function deriveTimelineMarkers(session) {
     }
     markers.push({
       id: `marker_net_${entry.id || index}`,
-      type: "network",
+      type: "network-failure",
       timeMs: getNetworkTimestampMs(entry) || 0,
       label: buildNetworkMarkerLabel(entry),
       severity: "error",
@@ -466,7 +475,7 @@ function deriveTimelineMarkers(session) {
     }
     markers.push({
       id: `marker_con_${entry.id || index}`,
-      type: "console",
+      type: "console-error",
       timeMs: entry.timestampMs || 0,
       label: buildConsoleMarkerLabel(entry),
       severity: "error",
@@ -678,6 +687,18 @@ function setSnapPulse(markerId) {
   state.snapPulse.untilMs = Date.now() + 500;
 }
 
+function getSnapTarget(timeMs, markers, thresholdMs) {
+  if (!markers.length) {
+    return null;
+  }
+  const candidate = findNearestMarker(timeMs, markers);
+  if (!candidate) {
+    return null;
+  }
+  const delta = Math.abs((candidate.timeMs || 0) - timeMs);
+  return delta <= thresholdMs ? candidate : null;
+}
+
 function getVisibleNetworkEvents() {
   return getVisibleNetworkEventsAt(
     state.playhead.currentTimeMs || 0,
@@ -850,7 +871,13 @@ function seekTo(targetTimeMs, source, options = {}) {
   const markers = getImportantMarkers();
   const snapEnabled = Boolean(options.snap);
   if (snapEnabled) {
-    const snapCandidate = findNearestMarker(rawTimeMs, markers);
+    const snapCandidate = getSnapTarget(
+      rawTimeMs,
+      markers,
+      typeof options.snapThresholdMs === "number"
+        ? options.snapThresholdMs
+        : MARKER_SNAP_THRESHOLD_MS
+    );
     const thresholdMs =
       typeof options.snapThresholdMs === "number"
         ? options.snapThresholdMs
@@ -2077,9 +2104,14 @@ function renderScreenshotPreview() {
   if (!screenshotPreview) {
     return;
   }
-  const shot = state.playhead.selectedScreenshotId
+  const selectedShot = state.playhead.selectedScreenshotId
     ? state.screenshotById.get(state.playhead.selectedScreenshotId)
     : null;
+  const nearestShot =
+    !selectedShot && state.currentMoment?.nearestScreenshot
+      ? state.currentMoment.nearestScreenshot
+      : null;
+  const shot = selectedShot || nearestShot;
   if (!shot) {
     screenshotPreview.textContent = "Select a screenshot to preview.";
     return;
@@ -2097,6 +2129,7 @@ function renderScreenshotPreview() {
     typeof shot.timestampMs === "number"
       ? `Time: ${formatTimeWithMs(shot.timestampMs)}`
       : null,
+    selectedShot ? "Selected" : "Nearest",
   ].filter(Boolean);
   meta.textContent = pieces.join(" • ");
   screenshotPreview.appendChild(img);
@@ -2849,8 +2882,8 @@ function renderTimelineLanes(markers) {
   }
   const list = Array.isArray(markers) ? markers : [];
   const screenshots = list.filter((marker) => marker.type === "screenshot");
-  const networkErrors = list.filter((marker) => marker.type === "network");
-  const consoleErrors = list.filter((marker) => marker.type === "console");
+  const networkErrors = list.filter((marker) => marker.type === "network-failure");
+  const consoleErrors = list.filter((marker) => marker.type === "console-error");
   const markerEvents = list.filter((marker) => marker.type === "incident");
   const laneMap = {
     screenshots,
@@ -3412,7 +3445,7 @@ function renderInspector() {
   }
   inspectorBody.classList.remove("muted");
   if (type === "network") {
-    const entry = state.networkEntries.find((item) => item.id === id);
+    const entry = state.networkIndex?.get(id) || state.networkEntries.find((item) => item.id === id);
     inspectorTitle.textContent = "Network request";
     if (!entry) {
       const hasNetwork = Boolean(state.manifest?.artifacts?.network?.present);
@@ -3458,6 +3491,19 @@ function renderInspector() {
         { muted: true }
       )
     );
+    if (entry.url) {
+      const path = (() => {
+        try {
+          const parsed = new URL(entry.url);
+          return parsed.pathname || entry.url;
+        } catch (_) {
+          return entry.url;
+        }
+      })();
+      summary.appendChild(
+        createInspectorRow("Path", path, { muted: true, align: "left" })
+      );
+    }
     inspectorBody.appendChild(summary);
     const actions = document.createElement("div");
     actions.className = "inspector-actions";
@@ -3507,7 +3553,7 @@ function renderInspector() {
     return;
   }
   if (type === "console") {
-    const entry = state.consoleEntries.find((item) => item.id === id);
+    const entry = state.consoleIndex?.get(id) || state.consoleEntries.find((item) => item.id === id);
     inspectorTitle.textContent = "Console log";
     if (!entry) {
       const hasConsole = Boolean(state.manifest?.artifacts?.console?.present);
@@ -3541,6 +3587,10 @@ function renderInspector() {
     summary.className = "inspector-section inspector-summary";
     summary.appendChild(createInspectorHeadline(levelLabel));
     summary.appendChild(createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true }));
+    const source = entry.source || entry.location || entry.url || entry.file || "";
+    if (source) {
+      summary.appendChild(createInspectorRow("Source", source, { muted: true, align: "left" }));
+    }
     summary.appendChild(
       createInspectorRow("Message", summaryMessage || "-", {
         muted: false,
@@ -3891,10 +3941,10 @@ function resolveMarkerSelection(marker) {
   if (marker.type === "screenshot") {
     selection.selectedScreenshotId = marker.sourceRef || null;
   }
-  if (marker.type === "network") {
+  if (marker.type === "network-failure") {
     state.selectedNetworkId = marker.sourceRef || null;
   }
-  if (marker.type === "console") {
+  if (marker.type === "console-error") {
     state.selectedConsoleId = marker.sourceRef || null;
   }
   if (event) {
@@ -3907,10 +3957,10 @@ function mapMarkerToPanel(marker) {
   if (marker.type === "screenshot") {
     return "screenshots";
   }
-  if (marker.type === "network") {
+  if (marker.type === "network-failure") {
     return "network";
   }
-  if (marker.type === "console") {
+  if (marker.type === "console-error") {
     return "console";
   }
   if (marker.type === "incident") {
@@ -3929,6 +3979,15 @@ function jumpToMarker(marker) {
     activePanel: panel,
     ...resolved.selection,
   });
+  if (marker.type === "screenshot" && resolved.selection.selectedScreenshotId) {
+    setInspector("screenshot", resolved.selection.selectedScreenshotId);
+  } else if (marker.type === "network-failure" && state.selectedNetworkId) {
+    setInspector("network", state.selectedNetworkId);
+  } else if (marker.type === "console-error" && state.selectedConsoleId) {
+    setInspector("console", state.selectedConsoleId);
+  } else if (marker.type === "incident" && resolved.selection.selectedIncidentId) {
+    setInspector("incident", resolved.selection.selectedIncidentId);
+  }
   if (resolved.event) {
     renderDetails(resolved.event);
   }
@@ -3966,7 +4025,13 @@ function renderTimelineMarkers() {
     timelineMarkers.innerHTML = "";
     markers.forEach((marker) => {
       const el = document.createElement("div");
-      el.className = `timeline-marker ${marker.type}`;
+      const markerClass =
+        marker.type === "network-failure"
+          ? "network"
+          : marker.type === "console-error"
+            ? "console"
+            : marker.type;
+      el.className = `timeline-marker ${markerClass}`;
       el.dataset.markerId = marker.id;
       el.dataset.markerTime = String(marker.timeMs || 0);
       el.title = marker.label || "";
