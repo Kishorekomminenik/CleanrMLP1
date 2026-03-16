@@ -80,6 +80,23 @@ body {
   display: none;
 }
 
+.diagnostics-panel.hidden {
+  display: none;
+}
+
+.diagnostics-grid {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.diagnostics-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -640,6 +657,11 @@ body {
   border-radius: 8px;
   font-size: 11px;
   cursor: pointer;
+}
+
+.copy-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .expand-toggle {

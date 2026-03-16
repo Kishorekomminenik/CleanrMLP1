@@ -92,6 +92,17 @@ const consoleModeChips = Array.from(
 const inspectorPanel = document.getElementById("inspectorPanel");
 const inspectorTitle = document.getElementById("inspectorTitle");
 const inspectorBody = document.getElementById("inspectorBody");
+const diagnosticsPanel = document.getElementById("diagnosticsPanel");
+const diagSource = document.getElementById("diagSource");
+const diagRoot = document.getElementById("diagRoot");
+const diagRecording = document.getElementById("diagRecording");
+const diagNetwork = document.getElementById("diagNetwork");
+const diagConsole = document.getElementById("diagConsole");
+const diagScreenshots = document.getElementById("diagScreenshots");
+const diagIncidents = document.getElementById("diagIncidents");
+const diagDuration = document.getElementById("diagDuration");
+const diagDurationSource = document.getElementById("diagDurationSource");
+const diagParseWarnings = document.getElementById("diagParseWarnings");
 
 const state = {
   pkg: null,
@@ -1342,6 +1353,7 @@ function attachVideoDurationReconciliation() {
     state.playhead.durationMs = mediaDurationMs;
     if (state.session) {
       state.session.durationMs = mediaDurationMs;
+      state.session.durationSource = "media";
     }
     state.videoSyncAvailable = true;
 
@@ -1359,6 +1371,7 @@ function attachVideoDurationReconciliation() {
     updateTimeline();
     updateCurrentTimeContext();
     refreshView();
+    updateDiagnosticsPanel();
 
     if (loadedInfo && loadedInfo.textContent) {
       const prefix = loadedInfo.textContent.split(" • ").slice(0, 2).join(" • ");
@@ -1545,6 +1558,11 @@ function buildNormalizedSessionState(manifest, pkg) {
     (manifest?.timeline && manifest.timeline.endOffsetMs) ||
     manifest?.session?.durationMs ||
     computeDurationMs(null, events);
+  const durationSource = manifest?.timeline?.endOffsetMs
+    ? "timeline"
+    : manifest?.session?.durationMs
+      ? "manifest"
+      : "events";
   const durationMs = isValidTimestampMs(durationCandidate) ? durationCandidate : 0;
   const incidents = normalizeIncidentItems(buildIncidentsFromManifest(manifest));
   const screenshotsSorted = manifestShots
@@ -1555,6 +1573,7 @@ function buildNormalizedSessionState(manifest, pkg) {
     manifest,
     pkg,
     durationMs,
+    durationSource,
     recordingBlob: null,
     recordingUrl: null,
     networkEvents: [],
@@ -1577,6 +1596,11 @@ function buildNormalizedSessionState(manifest, pkg) {
       console: Boolean(manifest?.artifacts?.console?.present),
       screenshots: Boolean(manifest?.artifacts?.screenshots?.present),
       incidents: incidents.length > 0,
+    },
+    parseWarnings: {
+      network: 0,
+      console: 0,
+      total: 0,
     },
   };
   session.markers = deriveTimelineMarkers(session);
@@ -1613,6 +1637,7 @@ function applyNormalizedSessionState(normalized) {
   updatePlayheadDisplay();
   updateCurrentTimeContext();
   renderInspector();
+  updateDiagnosticsPanel();
 }
 
 function applyManifestAvailability(manifest) {
@@ -2629,8 +2654,9 @@ async function loadScreenshotBlobs(zip, screenshotFiles, referencedNames = []) {
 }
 
 async function loadNdjsonEntries(path) {
-  const parseNdjson = (raw) =>
-    raw
+  const parseNdjson = (raw) => {
+    let parseErrors = 0;
+    const entries = raw
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
@@ -2638,28 +2664,31 @@ async function loadNdjsonEntries(path) {
         try {
           return JSON.parse(line);
         } catch (error) {
+          parseErrors += 1;
           return null;
         }
       })
       .filter(Boolean);
+    return { entries, parseErrors };
+  };
 
   if (!path) {
-    return [];
+    return { entries: [], parseErrors: 0 };
   }
 
   if (state.pkg) {
     try {
       if (!state.pkg.exists(path)) {
-        return [];
+        return { entries: [], parseErrors: 0 };
       }
       const raw = await state.pkg.readText(path);
       return parseNdjson(raw);
     } catch (error) {
-      return [];
+      return { entries: [], parseErrors: 0 };
     }
   }
 
-  return [];
+  return { entries: [], parseErrors: 0 };
 }
 
 function indexEntriesById(entries) {
@@ -2724,7 +2753,7 @@ async function ensureNetworkLogsLoaded() {
   state.loadingNetwork = true;
   try {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
-    const entries = await loadNdjsonEntries(manifestPath);
+    const { entries, parseErrors } = await loadNdjsonEntries(manifestPath);
     const normalized = entries
       .map(normalizeNetworkEntry)
       .filter((entry) => isValidTimestampMs(getNetworkTimestampMs(entry)));
@@ -2736,9 +2765,16 @@ async function ensureNetworkLogsLoaded() {
       state.session.networkEvents = normalized;
       state.session.eventIndexes.networkById = state.networkIndex;
       state.session.artifactPresence.network = normalized.length > 0;
+      if (!state.session.parseWarnings) {
+        state.session.parseWarnings = { network: 0, console: 0, total: 0 };
+      }
+      state.session.parseWarnings.network = parseErrors;
+      state.session.parseWarnings.total =
+        state.session.parseWarnings.network + state.session.parseWarnings.console;
       rebuildTimelineMarkers();
       renderTimelineMarkers();
       renderTimelineLanes(state.session?.markers || []);
+      updateDiagnosticsPanel();
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -2760,7 +2796,7 @@ async function ensureConsoleLogsLoaded() {
   state.loadingConsole = true;
   try {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
-    const entries = await loadNdjsonEntries(manifestPath);
+    const { entries, parseErrors } = await loadNdjsonEntries(manifestPath);
     const normalized = entries
       .map(normalizeConsoleEntry)
       .filter((entry) => isValidTimestampMs(entry.timestampMs || 0));
@@ -2772,9 +2808,16 @@ async function ensureConsoleLogsLoaded() {
       state.session.consoleEvents = normalized;
       state.session.eventIndexes.consoleById = state.consoleIndex;
       state.session.artifactPresence.console = normalized.length > 0;
+      if (!state.session.parseWarnings) {
+        state.session.parseWarnings = { network: 0, console: 0, total: 0 };
+      }
+      state.session.parseWarnings.console = parseErrors;
+      state.session.parseWarnings.total =
+        state.session.parseWarnings.network + state.session.parseWarnings.console;
       rebuildTimelineMarkers();
       renderTimelineMarkers();
       renderTimelineLanes(state.session?.markers || []);
+      updateDiagnosticsPanel();
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -3331,6 +3374,11 @@ function createCopyButton(label, text) {
   button.type = "button";
   button.className = "copy-button";
   button.textContent = label;
+  const enabled =
+    typeof text === "function" ? true : text !== null && text !== undefined && text !== "";
+  if (!enabled) {
+    button.disabled = true;
+  }
   button.addEventListener("click", async () => {
     const resolved =
       typeof text === "function"
@@ -3403,11 +3451,11 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
     const expandBtn = document.createElement("button");
     expandBtn.type = "button";
     expandBtn.className = "expand-toggle";
-    expandBtn.textContent = isExpanded ? "Show less" : "Show more";
+    expandBtn.textContent = isExpanded ? "Show less" : "Show full";
     expandBtn.addEventListener("click", () => {
       const expanded = !state.inspector.expandState[sectionId];
       state.inspector.expandState[sectionId] = expanded;
-      expandBtn.textContent = expanded ? "Show less" : "Show more";
+      expandBtn.textContent = expanded ? "Show less" : "Show full";
       code.textContent = expanded
         ? normalizeInspectorValue(value)
         : preview.text;
@@ -3600,7 +3648,7 @@ function renderInspector() {
     inspectorBody.appendChild(summary);
     const actions = document.createElement("div");
     actions.className = "inspector-actions";
-    actions.appendChild(createCopyButton("Copy message", message));
+    actions.appendChild(createCopyButton("Copy message", message || ""));
     actions.appendChild(
       createCopyButton("Copy raw entry", () => normalizeInspectorValue(entry))
     );
@@ -4153,6 +4201,60 @@ function logPackageDiagnostics(pkg, manifest, label) {
   }
 }
 
+function updateDiagnosticsPanel() {
+  if (!diagnosticsPanel) {
+    return;
+  }
+  const session = state.session;
+  if (!session) {
+    diagnosticsPanel.classList.add("hidden");
+    return;
+  }
+  diagnosticsPanel.classList.remove("hidden");
+  const meta = session.pkg?.meta || {};
+  if (diagSource) {
+    diagSource.textContent = meta.source || "-";
+  }
+  if (diagRoot) {
+    diagRoot.textContent = meta.strippedRoot
+      ? `Yes (${meta.strippedRoot})`
+      : "No";
+  }
+  if (diagRecording) {
+    diagRecording.textContent = session.artifactPresence.recording ? "Yes" : "No";
+  }
+  if (diagNetwork) {
+    diagNetwork.textContent = session.artifactPresence.network
+      ? state.loadedArtifacts.network
+        ? String(session.networkEvents.length)
+        : "Present (not loaded)"
+      : "No";
+  }
+  if (diagConsole) {
+    diagConsole.textContent = session.artifactPresence.console
+      ? state.loadedArtifacts.console
+        ? String(session.consoleEvents.length)
+        : "Present (not loaded)"
+      : "No";
+  }
+  if (diagScreenshots) {
+    diagScreenshots.textContent = String(session.screenshots.length);
+  }
+  if (diagIncidents) {
+    diagIncidents.textContent = String(session.incidents.length);
+  }
+  if (diagDuration) {
+    diagDuration.textContent = formatTime(session.durationMs || 0);
+  }
+  if (diagDurationSource) {
+    diagDurationSource.textContent = session.durationSource || "-";
+  }
+  if (diagParseWarnings) {
+    const warnings = session.parseWarnings || { network: 0, console: 0, total: 0 };
+    diagParseWarnings.textContent = `${warnings.total} (net ${warnings.network}, con ${warnings.console})`;
+  }
+}
+
 function applyDebugArtifactFallbacks(pkg, manifest) {
   if (!DEBUG_ENABLED || !pkg || !manifest) {
     return;
@@ -4249,12 +4351,12 @@ function showLoaderError(error) {
   const code = error?.code || "unknown_loader_error";
   const messages = {
     empty_package: "The selected package is empty.",
-    missing_session_json: "session.json was not found in the selected package.",
+    missing_session_json: "session.json was not found. Select a DebugDuck session bundle.",
     unsupported_shape:
       "The selected files do not look like a DebugDuck session package.",
-    malformed_session_json: "session.json could not be parsed.",
+    malformed_session_json: "session.json could not be parsed. Re-export the session.",
     zip_bootstrap_missing:
-      "ZIP support is unavailable because JSZip did not load.",
+      "ZIP support is unavailable because JSZip did not load. Folder packages still work.",
   };
   showError(messages[code] || error?.message || "There was a problem loading this session package.");
   if (DEBUG_ENABLED) {
@@ -4499,10 +4601,11 @@ function resetState() {
     videoSyncNote.classList.add("hidden");
   }
   emptyState.textContent =
-    "Open an evidence ZIP exported from DebugDuck to replay a session locally.";
+    "Open a DebugDuck session ZIP, folder, or session.json to replay locally. You can also drag and drop files here.";
   if (summaryPanel) {
     summaryPanel.classList.add("hidden");
   }
+  updateDiagnosticsPanel();
   if (timelineSummary) {
     timelineSummary.textContent = "";
   }
