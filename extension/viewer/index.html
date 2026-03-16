@@ -16,6 +16,9 @@
           <p id="loadedInfo" class="loaded-info muted hidden"></p>
         </div>
         <div class="header-actions hidden">
+          <button id="openUnifiedBtn" class="primary">
+            Open DebugDuck Session
+          </button>
           <button id="openSessionFolderBtn" class="primary">
             Open Session Package
           </button>
@@ -24,6 +27,13 @@
           <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
           <button id="resetBtn" class="secondary">Reset</button>
           <input id="zipInput" type="file" accept=".zip" class="hidden" />
+          <input
+            id="sessionAnyInput"
+            type="file"
+            accept=".zip,.json,application/json"
+            multiple
+            class="hidden"
+          />
           <input
             id="sessionFolderInput"
             type="file"
@@ -48,6 +58,12 @@
               from inside the same evidence folder, use Open Evidence ZIP or move the viewer
               outside the package first.
             </p>
+            <div id="dropZone" class="drop-zone">
+              <div class="drop-title">Drag &amp; drop a session package</div>
+              <div class="drop-subtitle muted">
+                Supports ZIP exports, extracted session folders, or session.json
+              </div>
+            </div>
             <div id="errorPanel" class="error-panel hidden" role="alert">
               <div>
                 <div class="error-title">There was a problem</div>

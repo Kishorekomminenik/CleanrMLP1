@@ -4,7 +4,9 @@ const resetBtn = document.getElementById("resetBtn");
 const zipInput = document.getElementById("zipInput");
 const openSessionBtn = document.getElementById("openSessionBtn");
 const openSessionFolderBtn = document.getElementById("openSessionFolderBtn");
+const openUnifiedBtn = document.getElementById("openUnifiedBtn");
 const sessionFileInput = document.getElementById("sessionFileInput");
+const sessionAnyInput = document.getElementById("sessionAnyInput");
 const sessionFolderInput = document.getElementById("sessionFolderInput");
 const packageNotice = document.getElementById("packageNotice");
 const loaderError = document.getElementById("loaderError");
@@ -12,6 +14,7 @@ const errorPanel = document.getElementById("errorPanel");
 const errorClose = document.getElementById("errorClose");
 const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
+const dropZone = document.getElementById("dropZone");
 const banner = document.getElementById("howtoBanner");
 const bannerClose = document.getElementById("bannerClose");
 const headerActions = document.querySelector(".header-actions");
@@ -71,7 +74,10 @@ const incidentPanel = document.getElementById("incidentPanel");
 const incidentList = document.getElementById("incidentList");
 const incidentEmpty = document.getElementById("incidentEmpty");
 const errorOnlyToggle = document.getElementById("errorOnlyToggle");
-console.log("DEBUGDUCK_VIEWER_RUNTIME_MARKER_v2");
+const DEBUG_ENABLED = Boolean(window.DEBUGDUCK_DEBUG);
+if (DEBUG_ENABLED) {
+  console.log("DEBUGDUCK_VIEWER_RUNTIME_MARKER_v2");
+}
 window.DEBUGDUCK_VIEWER_RUNTIME_MARKER = "v2";
 const networkFilterChips = Array.from(document.querySelectorAll("[data-net-filter]"));
 const networkModeChips = Array.from(document.querySelectorAll("[data-net-mode]"));
@@ -175,6 +181,36 @@ const state = {
   loadingNetwork: false,
   loadingConsole: false,
 };
+
+function debugLog(...args) {
+  if (DEBUG_ENABLED) {
+    console.debug(...args);
+  }
+}
+
+function debugGroup(title) {
+  if (DEBUG_ENABLED) {
+    console.group(title);
+  }
+}
+
+function debugGroupEnd() {
+  if (DEBUG_ENABLED) {
+    console.groupEnd();
+  }
+}
+
+function debugWarn(...args) {
+  if (DEBUG_ENABLED) {
+    console.warn(...args);
+  }
+}
+
+function debugError(...args) {
+  if (DEBUG_ENABLED) {
+    console.error(...args);
+  }
+}
 
 const EVENT_ICONS = {
   marker: "M",
@@ -1076,13 +1112,13 @@ function findArtifact(files, artifactPath) {
     return null;
   }
 
-  console.group("DEBUGDUCK ARTIFACT COMPARISON");
-  console.log("Manifest artifact path:", artifactPath);
+  debugGroup("DEBUGDUCK ARTIFACT COMPARISON");
+  debugLog("Manifest artifact path:", artifactPath);
   files.forEach((file) => {
-    console.log("Candidate file.name:", file.name);
-    console.log("Candidate webkitRelativePath:", file.webkitRelativePath);
+    debugLog("Candidate file.name:", file.name);
+    debugLog("Candidate webkitRelativePath:", file.webkitRelativePath);
   });
-  console.groupEnd();
+  debugGroupEnd();
 
   const candidates = artifactCandidates(artifactPath);
 
@@ -1152,30 +1188,30 @@ function resolveManualFile(path) {
     return null;
   }
 
-  console.group("DEBUGDUCK RESOLVE MANUAL FILE");
-  console.log("Requested path:", path);
+  debugGroup("DEBUGDUCK RESOLVE MANUAL FILE");
+  debugLog("Requested path:", path);
   const normalized = normalizeArtifactPath(path);
-  console.log("Normalized manifest path:", normalized);
-  console.log("Manual base prefix:", state.manualBasePrefix);
-  console.debug("[DD Resolver] compare candidate vs keys");
-  console.debug("[DD Resolver] candidate:", normalized);
-  console.debug(
+  debugLog("Normalized manifest path:", normalized);
+  debugLog("Manual base prefix:", state.manualBasePrefix);
+  debugLog("[DD Resolver] compare candidate vs keys");
+  debugLog("[DD Resolver] candidate:", normalized);
+  debugLog(
     "[DD Resolver] keys sample:",
     Array.from(state.manualFiles.keys()).slice(0, 20)
   );
   const directLookup = state.manualFiles.get(normalized);
-  console.log("Direct lookup result:", directLookup);
+  debugLog("Direct lookup result:", directLookup);
   if (state.manualFiles.has(normalized)) {
-    console.groupEnd();
+    debugGroupEnd();
     return state.manualFiles.get(normalized);
   }
 
   if (state.manualBasePrefix) {
     const prefixed = normalizeArtifactPath(`${state.manualBasePrefix}${normalized}`);
-    console.log("Prefixed path attempt:", prefixed);
-    console.log("Prefixed lookup result:", state.manualFiles.get(prefixed));
+    debugLog("Prefixed path attempt:", prefixed);
+    debugLog("Prefixed lookup result:", state.manualFiles.get(prefixed));
     if (state.manualFiles.has(prefixed)) {
-      console.groupEnd();
+      debugGroupEnd();
       return state.manualFiles.get(prefixed);
     }
   }
@@ -1183,12 +1219,12 @@ function resolveManualFile(path) {
   if (state.manualFileList) {
     const fallback = findArtifact(state.manualFileList, normalized);
     if (fallback) {
-      console.groupEnd();
+      debugGroupEnd();
       return fallback;
     }
   }
 
-  console.groupEnd();
+  debugGroupEnd();
   return null;
 }
 
@@ -2721,8 +2757,8 @@ async function ensureConsoleLogsLoaded() {
 }
 
 async function ensureVideoLoaded() {
-  console.debug("[DD Video] ensureVideoLoaded called");
-  console.debug(
+  debugLog("[DD Video] ensureVideoLoaded called");
+  debugLog(
     "[DD Video] manifest recording path:",
     state.manifest?.artifacts?.recording?.path
   );
@@ -2771,13 +2807,13 @@ async function ensureVideoLoaded() {
     return true;
   }
   if (state.manualFiles) {
-    console.debug("[DD Resolver] resolving recording path:", path);
-    console.debug(
+    debugLog("[DD Resolver] resolving recording path:", path);
+    debugLog(
       "[DD Resolver] candidate normalized path:",
       normalizeArtifactPath(path)
     );
-    console.debug("[DD Resolver] checking manualFiles map");
-    console.debug("[DD Resolver] manualFiles size:", state.manualFiles?.size);
+    debugLog("[DD Resolver] checking manualFiles map");
+    debugLog("[DD Resolver] manualFiles size:", state.manualFiles?.size);
     let file = resolveManualFile(path);
     if (!file && state.manualFileList) {
       file = findArtifact(state.manualFileList, path);
@@ -2786,18 +2822,18 @@ async function ensureVideoLoaded() {
       }
     }
     if (!file) {
-      console.group("DEBUGDUCK VIDEO RESOLUTION FAILURE");
-      console.error("Recording artifact could not be resolved.");
-      console.log("Manifest recording path:", path);
+      debugGroup("DEBUGDUCK VIDEO RESOLUTION FAILURE");
+      debugError("Recording artifact could not be resolved.");
+      debugLog("Manifest recording path:", path);
       const keys = state.manualFiles
         ? Array.from(state.manualFiles.keys())
         : [];
-      console.log("Manual file map keys:", keys.slice(0, 20));
+      debugLog("Manual file map keys:", keys.slice(0, 20));
       const webmFiles = (state.manualFileList || []).filter((entry) =>
         /\.webm$/i.test(entry.name)
       );
-      console.log("WebM files detected:", webmFiles);
-      console.groupEnd();
+      debugLog("WebM files detected:", webmFiles);
+      debugGroupEnd();
       if (!state.videoMissing) {
         showError(
           "Recording artifact declared but file not found in package.",
@@ -3995,6 +4031,71 @@ function refreshView() {
   renderTimelineLanes(state.events);
 }
 
+function buildPackageDiagnostics(pkg, manifest) {
+  const keys = pkg ? pkg.keys() : [];
+  const recordingCandidates = pkg ? pkg.findByExtension(".webm") : [];
+  const networkCandidates = keys.filter((key) => /network.*\.ndjson$/i.test(key));
+  const consoleCandidates = keys.filter((key) => /console.*\.ndjson$/i.test(key));
+  const screenshotCount = manifest?.artifacts?.screenshots?.items?.length || 0;
+  return {
+    hasManifest: Boolean(manifest),
+    recordingCandidates: recordingCandidates.length,
+    networkLogPresence: networkCandidates.length > 0,
+    consoleLogPresence: consoleCandidates.length > 0,
+    screenshotCount,
+    packageKeyCount: keys.length,
+  };
+}
+
+function logPackageDiagnostics(pkg, manifest, label) {
+  const diagnostics = buildPackageDiagnostics(pkg, manifest);
+  const payload = {
+    source: label || "package",
+    ...diagnostics,
+  };
+  if (DEBUG_ENABLED) {
+    console.table(payload);
+  } else {
+    console.info("[DebugDuck] Package diagnostics", payload);
+  }
+}
+
+function applyDebugArtifactFallbacks(pkg, manifest) {
+  if (!DEBUG_ENABLED || !pkg || !manifest) {
+    return;
+  }
+  const keys = pkg.keys();
+  const networkCandidates = keys.filter((key) => /network.*\.ndjson$/i.test(key));
+  const consoleCandidates = keys.filter((key) => /console.*\.ndjson$/i.test(key));
+  if (!manifest.artifacts) {
+    manifest.artifacts = {};
+  }
+  if (!manifest.artifacts.network?.present && networkCandidates.length === 1) {
+    manifest.artifacts.network = {
+      ...(manifest.artifacts.network || {}),
+      present: true,
+      path: networkCandidates[0],
+      format: manifest.artifacts.network?.format || "ndjson",
+    };
+    debugWarn(
+      "[DD Debug] Network log recovery enabled for",
+      networkCandidates[0]
+    );
+  }
+  if (!manifest.artifacts.console?.present && consoleCandidates.length === 1) {
+    manifest.artifacts.console = {
+      ...(manifest.artifacts.console || {}),
+      present: true,
+      path: consoleCandidates[0],
+      format: manifest.artifacts.console?.format || "ndjson",
+    };
+    debugWarn(
+      "[DD Debug] Console log recovery enabled for",
+      consoleCandidates[0]
+    );
+  }
+}
+
 async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   clearError();
   clearLoadedInfo();
@@ -4016,6 +4117,7 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   }
 
   try {
+    applyDebugArtifactFallbacks(pkg, manifest);
     await initFromManifest(manifest, { pkg });
   } catch (error) {
     showError("Unable to read session.json from the selected package.");
@@ -4046,7 +4148,65 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
   if (emptyState) {
     emptyState.textContent = "";
   }
+  logPackageDiagnostics(pkg, manifest, loadedLabel);
   return true;
+}
+
+async function handlePackageFiles(files, label, options = {}) {
+  const list = Array.from(files || []);
+  if (!list.length) {
+    return false;
+  }
+
+  const zipCandidates = list.filter((file) => /\.zip$/i.test(file.name || ""));
+  if (zipCandidates.length === 1 && list.length === 1) {
+    await loadZip(zipCandidates[0]);
+    return true;
+  }
+  if (zipCandidates.length > 0 && list.length > 1) {
+    showError("Drop a single ZIP file or an extracted session folder.");
+    return false;
+  }
+
+  const hasRelativePath = list.some((file) => Boolean(file.webkitRelativePath));
+  const hasSessionJson = list.some((file) => {
+    const name = file.webkitRelativePath || file.name || "";
+    return /session\.json$/i.test(name);
+  });
+  if (!hasSessionJson) {
+    showError("session.json was not found in the selected files.");
+    return false;
+  }
+
+  if (hasRelativePath && isViewerRunningInsideSelectedPackage(list)) {
+    showError(
+      "Viewer is opened from inside this evidence package. Open the viewer from outside the session folder, or use Open Evidence ZIP instead.",
+      true
+    );
+    return false;
+  }
+
+  const pkg = buildPackageFromFolderFiles(list);
+  const hasArtifacts = list.some((file) => {
+    const name = file.name || "";
+    return !/session\.json$/i.test(name);
+  });
+  const eagerLoad = hasRelativePath || hasArtifacts;
+  const hydrated = await hydrateViewerFromPackage(pkg, label, {
+    eagerRecording: eagerLoad,
+    eagerLogs: eagerLoad,
+  });
+  if (hydrated && !eagerLoad) {
+    if (emptyState) {
+      emptyState.textContent =
+        "Session loaded. Select the session folder to load artifacts.";
+    }
+    showError(
+      "Artifacts are not loaded yet. Select the session folder to load video, logs, and screenshots.",
+      true
+    );
+  }
+  return hydrated;
 }
 
 async function loadZip(file) {
@@ -4508,6 +4668,9 @@ function clearAllLoaderInputs() {
   if (zipInput) {
     zipInput.value = "";
   }
+  if (sessionAnyInput) {
+    sessionAnyInput.value = "";
+  }
   if (sessionFileInput) {
     sessionFileInput.value = "";
   }
@@ -4520,6 +4683,12 @@ if (openZipBtn && zipInput) {
   openZipBtn.addEventListener("click", () => {
     clearAllLoaderInputs();
     zipInput.click();
+  });
+}
+if (openUnifiedBtn && sessionAnyInput) {
+  openUnifiedBtn.addEventListener("click", () => {
+    clearAllLoaderInputs();
+    sessionAnyInput.click();
   });
 }
 if (openSessionBtn && sessionFileInput) {
@@ -4556,6 +4725,38 @@ if (zipInput) {
         showError(error?.message || "Failed to load ZIP.");
       });
     }
+  });
+}
+
+if (sessionAnyInput) {
+  sessionAnyInput.addEventListener("change", async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      return;
+    }
+    resetState();
+    await handlePackageFiles(files, "selected files");
+  });
+}
+
+if (dropZone) {
+  dropZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    dropZone.classList.add("active");
+  });
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("active");
+  });
+  dropZone.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    dropZone.classList.remove("active");
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!files.length) {
+      showError("No files were dropped.");
+      return;
+    }
+    resetState();
+    await handlePackageFiles(files, "dropped files");
   });
 }
 
@@ -4606,18 +4807,8 @@ if (sessionFolderInput) {
     if (!files.length) {
       return;
     }
-    if (isViewerRunningInsideSelectedPackage(files)) {
-      showError(
-        "Viewer is opened from inside this evidence package. Open the viewer from outside the session folder, or use Open Evidence ZIP instead.",
-        true
-      );
-      return;
-    }
-    const pkg = buildPackageFromFolderFiles(files);
-    await hydrateViewerFromPackage(pkg, "session folder", {
-      eagerRecording: true,
-      eagerLogs: true,
-    });
+    resetState();
+    await handlePackageFiles(files, "session folder");
   });
 }
 
