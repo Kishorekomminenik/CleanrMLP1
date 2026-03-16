@@ -326,6 +326,17 @@
           <div class="panel-group hidden" data-panel="network">
             <div class="panel network-panel">
               <h2>Network</h2>
+              <div class="filter-row search-row">
+                <input
+                  id="networkSearchInput"
+                  type="search"
+                  placeholder="Search method, URL, status"
+                />
+                <button id="networkSearchClear" class="chip" type="button">
+                  Clear
+                </button>
+                <span id="networkResultCount" class="muted"></span>
+              </div>
               <div class="filter-row chips">
                 <button class="chip active" type="button" data-net-mode="near">
                   Near Current Time
@@ -347,6 +358,9 @@
                 </button>
               </div>
               <div id="networkList" class="data-list"></div>
+              <div id="networkSelectionNote" class="empty-state muted hidden">
+                Selected item is hidden by current filters.
+              </div>
               <div id="networkEmpty" class="empty-state muted hidden">
                 No network logs available for this session.
               </div>
@@ -359,6 +373,28 @@
           <div class="panel-group hidden" data-panel="console">
             <div class="panel console-panel">
               <h2>Console</h2>
+              <div class="filter-row search-row">
+                <input
+                  id="consoleSearchInput"
+                  type="search"
+                  placeholder="Search level, message, source"
+                />
+                <button id="consoleSearchClear" class="chip" type="button">
+                  Clear
+                </button>
+                <span id="consoleResultCount" class="muted"></span>
+              </div>
+              <div class="filter-row chips">
+                <button class="chip active" type="button" data-console-quick="all">
+                  All
+                </button>
+                <button class="chip" type="button" data-console-quick="errors">
+                  Errors
+                </button>
+                <button class="chip" type="button" data-console-quick="warnings">
+                  Warnings
+                </button>
+              </div>
               <div class="filter-row chips">
                 <button class="chip active" type="button" data-console-mode="near">
                   Near Current Time
@@ -383,6 +419,9 @@
                 </button>
               </div>
               <div id="consoleList" class="data-list"></div>
+              <div id="consoleSelectionNote" class="empty-state muted hidden">
+                Selected item is hidden by current filters.
+              </div>
               <div id="consoleEmpty" class="empty-state muted hidden">
                 No console logs available for this session.
               </div>
