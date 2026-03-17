@@ -6112,10 +6112,22 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/debugduck-logs-console.json",
         getData: async () => {
-          const entries =
-            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-              ? data.consoleLogs.entries
-              : [];
+          let entries = [];
+          if (exportSessionId && isIdbAvailable()) {
+            entries = await loadLimitedEntriesFromIdb({
+              storeName: "console_entries",
+              indexName: "sessionId",
+              keyRange: IDBKeyRange.only(exportSessionId),
+              limit: data.exportLimits
+                ? data.exportLimits.maxConsoleEntries
+                : EXPORT_LIMITS.maxConsoleEntries,
+            });
+          } else {
+            entries =
+              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                ? data.consoleLogs.entries
+                : [];
+          }
           const redactedEntries = redactConsoleEntry
             ? entries.map((entry) => redactConsoleEntry(entry))
             : entries;
