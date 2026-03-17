@@ -5212,30 +5212,24 @@ function renderInspector() {
     const summary = document.createElement("div");
     summary.className = "inspector-section inspector-summary";
     const headlineText = `${entry.method || ""} ${entry.url || ""}`.trim();
-    summary.appendChild(
-      createInspectorHeadline(headlineText || "Network request")
+    const methodText = entry.method || "Not available";
+    const urlText = entry.url || "Not available";
+    const statusValue = entry.response_status ?? entry.status;
+    const statusText = statusValue || statusValue === 0 ? statusValue : "Not available";
+    const durationText = formatDurationValue(
+      entry.durationMs || entry.timing || entry.total_time_ms
     );
-    summary.appendChild(
-      createInspectorRow(
-        "Status",
-        entry.response_status || entry.status || "-",
-        { muted: true }
-      )
-    );
-    summary.appendChild(
-      createInspectorRow(
-        "Duration",
-        formatDurationValue(entry.durationMs || entry.timing || entry.total_time_ms),
-        { muted: true }
-      )
-    );
-    summary.appendChild(
-      createInspectorRow(
-        "Time",
-        formatTimeWithMs(getNetworkTimestampMs(entry)),
-        { muted: true }
-      )
-    );
+    const durationValue = durationText === "-" ? "Not available" : durationText;
+    const entryTime = getNetworkTimestampMs(entry);
+    const timeValue = Number.isFinite(entryTime)
+      ? formatTimeWithMs(entryTime)
+      : "Not available";
+    summary.appendChild(createInspectorHeadline(headlineText || "Network request"));
+    summary.appendChild(createInspectorRow("Method", methodText, { muted: true }));
+    summary.appendChild(createInspectorRow("URL", urlText, { muted: true, align: "left" }));
+    summary.appendChild(createInspectorRow("Status", statusText, { muted: true }));
+    summary.appendChild(createInspectorRow("Duration", durationValue, { muted: true }));
+    summary.appendChild(createInspectorRow("Time", timeValue, { muted: true }));
     if (entry.url) {
       const path = (() => {
         try {
@@ -5248,13 +5242,17 @@ function renderInspector() {
       summary.appendChild(
         createInspectorRow("Path", path, { muted: true, align: "left" })
       );
+    } else {
+      summary.appendChild(
+        createInspectorRow("Path", "Not available", { muted: true, align: "left" })
+      );
     }
     inspectorBody.appendChild(summary);
     const actions = document.createElement("div");
     actions.className = "inspector-actions";
     actions.appendChild(createCopyButton("Copy URL", entry.url || ""));
     actions.appendChild(
-      createCopyButton("Copy raw entry", () => normalizeInspectorValue(entry))
+      createCopyButton("Copy raw event", () => normalizeInspectorValue(entry))
     );
     inspectorBody.appendChild(actions);
     const requestHeaders =
@@ -5268,8 +5266,15 @@ function renderInspector() {
       entry.requestBody;
     const responseBody =
       entry.response_body || entry.responseBody || entry.response_body_raw;
+    const timing =
+      entry.timing ||
+      entry.timings ||
+      entry.performance ||
+      entry.request_timing ||
+      entry.response_timing ||
+      (entry.total_time_ms ? { total_time_ms: entry.total_time_ms } : null);
     inspectorBody.appendChild(
-      renderExpandableSection("Request Headers", requestHeaders, "Copy headers", {
+      renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
         sectionId: "network-request-headers",
         previewValue: formatHeadersPreview,
       })
@@ -5280,7 +5285,7 @@ function renderInspector() {
       })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Response Headers", responseHeaders, "Copy headers", {
+      renderExpandableSection("Response Headers", responseHeaders, "Copy response headers", {
         sectionId: "network-response-headers",
         previewValue: formatHeadersPreview,
       })
@@ -5291,7 +5296,12 @@ function renderInspector() {
       })
     );
     inspectorBody.appendChild(
-      renderExpandableSection("Raw Entry", entry, "Copy raw entry", {
+      renderExpandableSection("Timing", timing, "Copy timing", {
+        sectionId: "network-timing",
+      })
+    );
+    inspectorBody.appendChild(
+      renderExpandableSection("Raw Event", entry, "Copy raw event", {
         sectionId: "network-raw-entry",
       })
     );
