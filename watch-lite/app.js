@@ -238,6 +238,9 @@ function showError(message, isWarning = false) {
   }
   loaderError.textContent = message;
   errorPanel.classList.remove("hidden");
+  if (emptyState) {
+    emptyState.textContent = "";
+  }
   if (isWarning) {
     errorPanel.style.borderColor = "rgba(217, 119, 6, 0.4)";
     errorPanel.style.background = "#fff7ed";
@@ -1863,6 +1866,28 @@ async function loadVideo(zip) {
 }
 
 async function loadNdjsonEntries(path) {
+  const parseNDJSON = (text, label) => {
+    if (!text) {
+      return [];
+    }
+    const lines = text.split("\n");
+    const result = [];
+    lines.forEach((line, idx) => {
+      if (!line.trim()) {
+        return;
+      }
+      try {
+        result.push(JSON.parse(line));
+      } catch (error) {
+        console.warn("NDJSON parse skip:", {
+          label,
+          line: idx + 1,
+          error: error && error.message ? error.message : String(error),
+        });
+      }
+    });
+    return result;
+  };
   if (!path || !state.zip) {
     if (state.packageMode && state.packageBaseUrl) {
       try {
@@ -1872,18 +1897,7 @@ async function loadNdjsonEntries(path) {
           return [];
         }
         const raw = await response.text();
-        return raw
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => {
-            try {
-              return JSON.parse(line);
-            } catch (error) {
-              return null;
-            }
-          })
-          .filter(Boolean);
+        return parseNDJSON(raw, path);
       } catch (error) {
         return [];
       }
@@ -1895,18 +1909,7 @@ async function loadNdjsonEntries(path) {
     return [];
   }
   const raw = await entry.async("string");
-  return raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch (error) {
-        return null;
-      }
-    })
-    .filter(Boolean);
+  return parseNDJSON(raw, path);
 }
 
 async function loadIncidentsFromPackage(baseUrl) {
@@ -3274,10 +3277,16 @@ async function loadZip(file) {
         : buildEventsFromRaw(state.sessionLog);
       sessionLabel = sessionLogName;
     } else {
+      const networkNdjsonName =
+        findFile(zip.files, /debugduck-logs-network\.ndjson$/i) ||
+        findFile(zip.files, /logs\/.*network.*\.ndjson$/i);
+      const consoleNdjsonName =
+        findFile(zip.files, /debugduck-logs-console\.ndjson$/i) ||
+        findFile(zip.files, /logs\/.*console.*\.ndjson$/i);
       const networkName = findFile(zip.files, /network_logs\.json$/i);
       const consoleName = findFile(zip.files, /console_logs\.json$/i);
       const environmentName = findFile(zip.files, /environment\.json$/i);
-      if (!networkName && !consoleName) {
+      if (!networkNdjsonName && !consoleNdjsonName && !networkName && !consoleName) {
         const found = Object.keys(zip.files)
           .filter((name) => name.endsWith(".json"))
           .slice(0, 5)
@@ -3290,11 +3299,19 @@ async function loadZip(file) {
       }
       state.partialMode = true;
       try {
-        if (networkName) {
+        if (networkNdjsonName) {
+          networkLogs = {
+            entries: await loadNdjsonEntries(networkNdjsonName),
+          };
+        } else if (networkName) {
           const raw = await zip.file(networkName).async("string");
           networkLogs = JSON.parse(raw);
         }
-        if (consoleName) {
+        if (consoleNdjsonName) {
+          consoleLogs = {
+            entries: await loadNdjsonEntries(consoleNdjsonName),
+          };
+        } else if (consoleName) {
           const raw = await zip.file(consoleName).async("string");
           consoleLogs = JSON.parse(raw);
         }
@@ -3303,7 +3320,7 @@ async function loadZip(file) {
           environment = JSON.parse(raw);
         }
       } catch (error) {
-        showError("Unable to read logs JSON from ZIP.");
+        showError("Unable to read logs from ZIP.");
         return;
       }
       sessionStartIso = deriveSessionStartIso({
@@ -3330,6 +3347,18 @@ async function loadZip(file) {
           screenshots: [],
         },
       };
+      if (networkLogs && Array.isArray(networkLogs.entries)) {
+        const normalized = networkLogs.entries.map(normalizeNetworkEntry);
+        state.networkEntries = normalized;
+        state.networkIndex = indexEntriesById(normalized);
+        state.loadedArtifacts.network = true;
+      }
+      if (consoleLogs && Array.isArray(consoleLogs.entries)) {
+        const normalized = consoleLogs.entries.map(normalizeConsoleEntry);
+        state.consoleEntries = normalized;
+        state.consoleIndex = indexEntriesById(normalized);
+        state.loadedArtifacts.console = true;
+      }
       sessionLabel = "partial logs";
     }
   }

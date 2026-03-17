@@ -473,6 +473,9 @@ function showError(message, isWarning = false) {
   }
   loaderError.textContent = message;
   errorPanel.classList.remove("hidden");
+  if (emptyState) {
+    emptyState.textContent = "";
+  }
   if (isWarning) {
     errorPanel.style.borderColor = "rgba(217, 119, 6, 0.4)";
     errorPanel.style.background = "#fff7ed";
@@ -4413,11 +4416,16 @@ async function loadNdjsonEntries(path) {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => {
+      .map((line, idx) => {
         try {
           return JSON.parse(line);
         } catch (error) {
           parseErrors += 1;
+          console.warn("[DebugDuck] NDJSON parse skip", {
+            path,
+            line: idx + 1,
+            error: error?.message || String(error),
+          });
           return null;
         }
       })

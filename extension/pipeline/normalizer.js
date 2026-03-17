@@ -347,9 +347,9 @@
       return a.ts_iso < b.ts_iso ? -1 : 1;
     });
 
-    const normalizedEvents = events.map((event, index) => ({
+    const normalizedEvents = events.map((event, idx) => ({
       ...event,
-      id: `evt_${String(index + 1).padStart(6, "0")}`,
+      id: `evt_${String(idx + 1).padStart(6, "0")}`,
     }));
 
     return { normalizedEvents };
