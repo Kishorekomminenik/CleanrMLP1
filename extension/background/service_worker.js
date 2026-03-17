@@ -4237,6 +4237,7 @@ function buildSessionManifest(options) {
     recordingDurationMs,
     ndjsonStats,
     usePartExport,
+    exported,
   } = options;
   const sessionExport = data.session || {};
   const environment = data.environment || {};
@@ -4247,16 +4248,29 @@ function buildSessionManifest(options) {
     ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt))
     : recordingDurationMs || 0;
 
-  const networkEntries = data.networkLogs?.entries || [];
-  const consoleEntries = data.consoleLogs?.entries || [];
+  const exportedNetworkEntries = Array.isArray(exported?.networkEntries)
+    ? exported.networkEntries
+    : data.networkLogs?.entries || [];
+  const exportedConsoleEntries = Array.isArray(exported?.consoleEntries)
+    ? exported.consoleEntries
+    : data.consoleLogs?.entries || [];
+  const exportedScreenshots = Array.isArray(exported?.screenshots)
+    ? exported.screenshots
+    : Array.isArray(screenshotCandidates)
+      ? screenshotCandidates
+      : [];
   const exportedNetworkCount =
-    typeof ndjsonStats?.network?.count === "number"
-      ? ndjsonStats.network.count
-      : networkEntries.length;
+    typeof exported?.networkCount === "number"
+      ? exported.networkCount
+      : typeof ndjsonStats?.network?.count === "number"
+        ? ndjsonStats.network.count
+        : exportedNetworkEntries.length;
   const exportedConsoleCount =
-    typeof ndjsonStats?.console?.count === "number"
-      ? ndjsonStats.console.count
-      : consoleEntries.length;
+    typeof exported?.consoleCount === "number"
+      ? exported.consoleCount
+      : typeof ndjsonStats?.console?.count === "number"
+        ? ndjsonStats.console.count
+        : exportedConsoleEntries.length;
   const networkSizeBytes =
     typeof ndjsonStats?.network?.size === "number" ? ndjsonStats.network.size : null;
   const consoleSizeBytes =
@@ -4266,33 +4280,29 @@ function buildSessionManifest(options) {
     Boolean(data.video) ||
     Boolean(data.recordingDataUrl) ||
     Boolean(data.recordingMimeType);
-  const hasScreenshots = Array.isArray(screenshotCandidates) && screenshotCandidates.length > 0;
-  const hasNetwork = Boolean(ndjsonStats?.network?.count) || networkEntries.length > 0;
-  const hasConsole = Boolean(ndjsonStats?.console?.count) || consoleEntries.length > 0;
+  const hasScreenshots = exportedScreenshots.length > 0;
+  const hasNetwork = exportedNetworkCount > 0;
+  const hasConsole = exportedConsoleCount > 0;
   const hasNetworkArtifacts =
     exportedNetworkCount > 0 || (networkSizeBytes !== null && networkSizeBytes > 0);
   const hasConsoleArtifacts =
     exportedConsoleCount > 0 || (consoleSizeBytes !== null && consoleSizeBytes > 0);
   const sessionMode = sessionExport && sessionExport.mode ? sessionExport.mode : null;
-  const captureModeNetwork = sessionMode
-    ? sessionMode === "session" || sessionMode === "network_console"
-    : hasNetwork;
-  const captureModeConsole = sessionMode
-    ? sessionMode === "session" || sessionMode === "network_console"
-    : hasConsole;
-  const captureModeRecording = sessionMode
-    ? sessionMode === "session" || sessionMode === "recording"
-    : hasRecording;
-  const captureModeScreenshot = sessionMode ? sessionMode === "session" : hasScreenshots;
-  const hasFullPage = screenshotCandidates?.some((shot) => shot && shot.fullPage);
+  const captureModeNetwork = hasNetworkArtifacts;
+  const captureModeConsole = hasConsoleArtifacts;
+  const captureModeRecording = hasRecording;
+  const captureModeScreenshot = hasScreenshots;
+  const hasFullPage = exportedScreenshots.some(
+    (shot) => shot && (shot.fullPage || shot.kind === "fullpage")
+  );
 
-  const screenshotItems = (screenshotCandidates || [])
-    .filter((shot) => shot && shot.dataUrl)
+  const screenshotItems = exportedScreenshots
+    .filter((shot) => shot)
     .map((shot, index) => {
       const fileName =
         shot && shot.fileName ? shot.fileName : `debugduck-screenshot-${exportTimestamp}.png`;
       const dims = shot && shot.dataUrl ? readPngDimensionsFromDataUrl(shot.dataUrl) : null;
-      const blob = shot && shot.dataUrl ? dataUrlToBlob(shot.dataUrl) : null;
+      const blob = shot && shot.dataUrl ? dataUrlToBlob(shot.dataUrl) : shot.blob || null;
       return {
         id: `snap_${String(index + 1).padStart(4, "0")}`,
         path: `screenshots/${fileName}`,
@@ -4302,9 +4312,10 @@ function buildSessionManifest(options) {
             : getRelativeMs(shot?.timestampIso, startedAt),
         kind: shot && shot.fullPage ? "fullpage" : "viewport",
         fullPage: Boolean(shot && shot.fullPage),
-        width: dims && dims.width ? dims.width : null,
-        height: dims && dims.height ? dims.height : null,
-        sizeBytes: blob ? blob.size : null,
+        width: shot && typeof shot.width === "number" ? shot.width : dims?.width || null,
+        height: shot && typeof shot.height === "number" ? shot.height : dims?.height || null,
+        sizeBytes:
+          typeof shot.sizeBytes === "number" ? shot.sizeBytes : blob ? blob.size : null,
         label: shot && shot.label ? shot.label : null,
       };
     });
@@ -4338,7 +4349,7 @@ function buildSessionManifest(options) {
     });
   });
 
-  networkEntries.forEach((entry) => {
+  exportedNetworkEntries.forEach((entry) => {
     const status = entry.response_status || entry.status;
     const hasError =
       typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
@@ -4359,7 +4370,7 @@ function buildSessionManifest(options) {
     });
   });
 
-  consoleEntries.forEach((entry) => {
+  exportedConsoleEntries.forEach((entry) => {
     if (entry.level !== "error") {
       return;
     }
@@ -4376,11 +4387,17 @@ function buildSessionManifest(options) {
     });
   });
 
-  const networkFailures = networkEntries.filter((entry) => {
+  const networkFailures =
+    typeof exported?.networkFailures === "number"
+      ? exported.networkFailures
+      : exportedNetworkEntries.filter((entry) => {
     const status = entry.response_status || entry.status;
     return typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
-  }).length;
-  const consoleErrors = consoleEntries.filter((entry) => entry.level === "error").length;
+      }).length;
+  const consoleErrors =
+    typeof exported?.consoleErrors === "number"
+      ? exported.consoleErrors
+      : exportedConsoleEntries.filter((entry) => entry.level === "error").length;
   const topSignals = [];
   if (networkFailures > 0) {
     topSignals.push("Network failures detected");
@@ -5357,21 +5374,28 @@ async function runEvidenceZipExport(context) {
       screenshotArtifactBlobs.set(shot.artifactKey, blob);
       return blob;
     };
+    const exportedScreenshotCandidates = [];
     let estimatedScreenshotBytes = 0;
     for (const shot of screenshotCandidates) {
       if (!shot) {
         continue;
       }
+      let blob = null;
       if (shot.dataUrl) {
-        estimatedScreenshotBytes += estimateDataUrlBytes(shot.dataUrl);
+        blob = dataUrlToBlob(shot.dataUrl);
+      } else if (shot.artifactKey) {
+        blob = await resolveScreenshotBlob(shot);
+      }
+      if (!blob) {
         continue;
       }
-      if (shot.artifactKey) {
-        const blob = await resolveScreenshotBlob(shot);
-        if (blob && blob.size) {
-          estimatedScreenshotBytes += blob.size;
-        }
-      }
+      const sizeBytes = blob.size || 0;
+      exportedScreenshotCandidates.push({
+        ...shot,
+        blob,
+        sizeBytes,
+      });
+      estimatedScreenshotBytes += sizeBytes;
     }
     if (estimatedScreenshotBytes > EXPORT_SIZE_GUARDS.maxScreenshotBytes) {
       throw buildExportSizeError(
@@ -5559,6 +5583,7 @@ async function runEvidenceZipExport(context) {
     const summaryItems = [];
     const automationItems = [];
     const ndjsonStats = { network: null, console: null };
+    const preparedNdjson = { network: null, console: null };
     const exportSessionId =
       captureState.sessionId ||
       (session && session.session_id) ||
@@ -5592,6 +5617,211 @@ async function runEvidenceZipExport(context) {
       data.exportTimestamp || formatExportTimestamp(new Date());
     const manifestSessionId =
       data.manifestSessionId || createDebugDuckSessionId(new Date());
+    const prepareNetworkNdjson = async () => {
+      if (preparedNdjson.network) {
+        return preparedNdjson.network;
+      }
+      let result;
+      if (usePartExport && data.partId) {
+        const networkTotal =
+          data.partInfo && typeof data.partInfo.requestCount === "number"
+            ? data.partInfo.requestCount
+            : null;
+        result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+          storeName: "network_entries",
+          indexName: "partId",
+          keyRange: IDBKeyRange.only(data.partId),
+          maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+          redactEntry: redactNetworkEntry,
+          filterEntry: exportFilters
+            ? (entry) => matchesExportNetworkEntry(entry, exportFilters)
+            : null,
+          totalCount: networkTotal,
+          onProgress: ({ percent }) => {
+            reportExportProgress(
+              12 + Math.round((percent / 100) * 4),
+              "ndjson_network",
+              { percent }
+            );
+          },
+          onEntry: (entry) => {
+            if (entry.request_body_truncated) {
+              truncationCounts.request += 1;
+            }
+            if (entry.response_body_truncated) {
+              truncationCounts.response += 1;
+            }
+            recordFailedRequest(entry, redactNetworkEntry);
+          },
+        });
+        trackJsonSize("network_ndjson", result.size);
+        ndjsonStats.network = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "network" });
+        }
+        networkBuilt = true;
+        finalizePartTruncationReport();
+      } else if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
+        result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+          storeName: "network_entries",
+          indexName: "sessionId",
+          keyRange: IDBKeyRange.only(exportSessionId),
+          maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+          redactEntry: redactNetworkEntry,
+          totalCount:
+            data.session && data.session.counts
+              ? data.session.counts.network_requests
+              : null,
+          onProgress: ({ percent }) => {
+            reportExportProgress(
+              12 + Math.round((percent / 100) * 4),
+              "ndjson_network",
+              { percent }
+            );
+          },
+          onEntry: (entry) => {
+            recordFailedRequest(entry, redactNetworkEntry);
+          },
+        });
+        trackJsonSize("network_ndjson", result.size);
+        ndjsonStats.network = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "network" });
+        }
+      } else {
+        const fallbackEntries =
+          data.networkLogs && Array.isArray(data.networkLogs.entries)
+            ? data.networkLogs.entries
+            : [];
+        result = await buildNdjsonBlobFromEntries({
+          entries: fallbackEntries,
+          maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
+          label: "Network logs",
+          debugCode: "network_ndjson_too_large",
+          redactEntry: redactNetworkEntry,
+          onEntry: (entry) => {
+            recordFailedRequest(entry, redactNetworkEntry);
+          },
+        });
+        trackJsonSize("network_ndjson", result.size);
+        ndjsonStats.network = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "network" });
+        }
+      }
+      preparedNdjson.network = result;
+      return result;
+    };
+    const prepareConsoleNdjson = async () => {
+      if (preparedNdjson.console) {
+        return preparedNdjson.console;
+      }
+      let result;
+      if (usePartExport && data.partId) {
+        const consoleTotal =
+          data.partInfo && typeof data.partInfo.consoleCount === "number"
+            ? data.partInfo.consoleCount
+            : null;
+        result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+          storeName: "console_entries",
+          indexName: "partId",
+          keyRange: IDBKeyRange.only(data.partId),
+          maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+          redactEntry: redactConsoleEntry,
+          totalCount: consoleTotal,
+          onProgress: ({ percent }) => {
+            reportExportProgress(
+              16 + Math.round((percent / 100) * 4),
+              "ndjson_console",
+              { percent }
+            );
+          },
+          onEntry: (entry) => {
+            recordConsoleError(entry, redactConsoleEntry);
+          },
+        });
+        trackJsonSize("console_ndjson", result.size);
+        ndjsonStats.console = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "console" });
+        }
+        consoleBuilt = true;
+        finalizePartTruncationReport();
+      } else if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
+        result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
+          storeName: "console_entries",
+          indexName: "sessionId",
+          keyRange: IDBKeyRange.only(exportSessionId),
+          maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+          redactEntry: redactConsoleEntry,
+          totalCount:
+            data.session && data.session.counts
+              ? data.session.counts.console_entries
+              : null,
+          onProgress: ({ percent }) => {
+            reportExportProgress(
+              16 + Math.round((percent / 100) * 4),
+              "ndjson_console",
+              { percent }
+            );
+          },
+          onEntry: (entry) => {
+            recordConsoleError(entry, redactConsoleEntry);
+          },
+        });
+        trackJsonSize("console_ndjson", result.size);
+        ndjsonStats.console = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "console" });
+        }
+      } else {
+        const fallbackEntries =
+          data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+            ? data.consoleLogs.entries
+            : [];
+        result = await buildNdjsonBlobFromEntries({
+          entries: fallbackEntries,
+          maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
+          label: "Console logs",
+          debugCode: "console_ndjson_too_large",
+          redactEntry: redactConsoleEntry,
+          onEntry: (entry) => {
+            recordConsoleError(entry, redactConsoleEntry);
+          },
+        });
+        trackJsonSize("console_ndjson", result.size);
+        ndjsonStats.console = {
+          size: result.size,
+          count: result.count,
+          truncated: result.truncated,
+        };
+        if (result.truncated) {
+          logExportPhase("ndjson_truncated", { type: "console" });
+        }
+      }
+      preparedNdjson.console = result;
+      return result;
+    };
     if (usePartExport && data.partId) {
       const networkTotal =
         data.partInfo && typeof data.partInfo.requestCount === "number"
@@ -5604,46 +5834,7 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/debugduck-logs-network.ndjson",
         getData: async () => {
-          const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
-            {
-              storeName: "network_entries",
-              indexName: "partId",
-              keyRange: IDBKeyRange.only(data.partId),
-              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-              redactEntry: redactNetworkEntry,
-              filterEntry: exportFilters
-                ? (entry) => matchesExportNetworkEntry(entry, exportFilters)
-                : null,
-              totalCount: networkTotal,
-              onProgress: ({ percent }) => {
-                reportExportProgress(
-                  12 + Math.round((percent / 100) * 4),
-                  "ndjson_network",
-                  { percent }
-                );
-              },
-              onEntry: (entry) => {
-                if (entry.request_body_truncated) {
-                  truncationCounts.request += 1;
-                }
-                if (entry.response_body_truncated) {
-                  truncationCounts.response += 1;
-                }
-                recordFailedRequest(entry, redactNetworkEntry);
-              },
-            }
-          );
-          trackJsonSize("network_ndjson", result.size);
-          ndjsonStats.network = {
-            size: result.size,
-            count: result.count,
-            truncated: result.truncated,
-          };
-          if (result.truncated) {
-            logExportPhase("ndjson_truncated", { type: "network" });
-          }
-          networkBuilt = true;
-          finalizePartTruncationReport();
+          const result = await prepareNetworkNdjson();
           return result.blob;
         },
           options: { date: zipDate },
@@ -5651,37 +5842,7 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/debugduck-logs-console.ndjson",
         getData: async () => {
-          const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb(
-            {
-              storeName: "console_entries",
-              indexName: "partId",
-              keyRange: IDBKeyRange.only(data.partId),
-              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-              redactEntry: redactConsoleEntry,
-              totalCount: consoleTotal,
-              onProgress: ({ percent }) => {
-                reportExportProgress(
-                  16 + Math.round((percent / 100) * 4),
-                  "ndjson_console",
-                  { percent }
-                );
-              },
-              onEntry: (entry) => {
-                recordConsoleError(entry, redactConsoleEntry);
-              },
-            }
-          );
-          trackJsonSize("console_ndjson", result.size);
-          ndjsonStats.console = {
-            size: result.size,
-            count: result.count,
-            truncated: result.truncated,
-          };
-          if (result.truncated) {
-            logExportPhase("ndjson_truncated", { type: "console" });
-          }
-          consoleBuilt = true;
-          finalizePartTruncationReport();
+          const result = await prepareConsoleNdjson();
           return result.blob;
         },
         options: { date: zipDate },
@@ -5847,59 +6008,7 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/debugduck-logs-network.ndjson",
         getData: async () => {
-          if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
-            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
-              storeName: "network_entries",
-              indexName: "sessionId",
-              keyRange: IDBKeyRange.only(exportSessionId),
-              maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-              redactEntry: redactNetworkEntry,
-              totalCount: networkTotal,
-              onProgress: ({ percent }) => {
-                reportExportProgress(
-                  12 + Math.round((percent / 100) * 4),
-                  "ndjson_network",
-                  { percent }
-                );
-              },
-              onEntry: (entry) => {
-                recordFailedRequest(entry, redactNetworkEntry);
-              },
-            });
-            trackJsonSize("network_ndjson", result.size);
-            ndjsonStats.network = {
-              size: result.size,
-              count: result.count,
-              truncated: result.truncated,
-            };
-            if (result.truncated) {
-              logExportPhase("ndjson_truncated", { type: "network" });
-            }
-            return result.blob;
-          }
-          const fallbackEntries =
-            data.networkLogs && Array.isArray(data.networkLogs.entries)
-              ? data.networkLogs.entries
-              : [];
-          const result = await buildNdjsonBlobFromEntries({
-            entries: fallbackEntries,
-            maxBytes: EXPORT_SIZE_GUARDS.maxNetworkJsonBytes,
-            label: "Network logs",
-            debugCode: "network_ndjson_too_large",
-            redactEntry: redactNetworkEntry,
-            onEntry: (entry) => {
-              recordFailedRequest(entry, redactNetworkEntry);
-            },
-          });
-          trackJsonSize("network_ndjson", result.size);
-          ndjsonStats.network = {
-            size: result.size,
-            count: result.count,
-            truncated: result.truncated,
-          };
-          if (result.truncated) {
-            logExportPhase("ndjson_truncated", { type: "network" });
-          }
+          const result = await prepareNetworkNdjson();
           return result.blob;
         },
         options: { date: zipDate },
@@ -5995,59 +6104,7 @@ async function runEvidenceZipExport(context) {
       logItems.push({
         path: "logs/debugduck-logs-console.ndjson",
         getData: async () => {
-          if (exportSessionId && isNdjsonAvailable() && isIdbAvailable()) {
-            const result = await globalThis.NdjsonExporter.buildNdjsonBlobFromIdb({
-              storeName: "console_entries",
-              indexName: "sessionId",
-              keyRange: IDBKeyRange.only(exportSessionId),
-              maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-              redactEntry: redactConsoleEntry,
-              totalCount: consoleTotal,
-              onProgress: ({ percent }) => {
-                reportExportProgress(
-                  16 + Math.round((percent / 100) * 4),
-                  "ndjson_console",
-                  { percent }
-                );
-              },
-              onEntry: (entry) => {
-                recordConsoleError(entry, redactConsoleEntry);
-              },
-            });
-            trackJsonSize("console_ndjson", result.size);
-            ndjsonStats.console = {
-              size: result.size,
-              count: result.count,
-              truncated: result.truncated,
-            };
-            if (result.truncated) {
-              logExportPhase("ndjson_truncated", { type: "console" });
-            }
-            return result.blob;
-          }
-          const fallbackEntries =
-            data.consoleLogs && Array.isArray(data.consoleLogs.entries)
-              ? data.consoleLogs.entries
-              : [];
-          const result = await buildNdjsonBlobFromEntries({
-            entries: fallbackEntries,
-            maxBytes: EXPORT_SIZE_GUARDS.maxConsoleJsonBytes,
-            label: "Console logs",
-            debugCode: "console_ndjson_too_large",
-            redactEntry: redactConsoleEntry,
-            onEntry: (entry) => {
-              recordConsoleError(entry, redactConsoleEntry);
-            },
-          });
-          trackJsonSize("console_ndjson", result.size);
-          ndjsonStats.console = {
-            size: result.size,
-            count: result.count,
-            truncated: result.truncated,
-          };
-          if (result.truncated) {
-            logExportPhase("ndjson_truncated", { type: "console" });
-          }
+          const result = await prepareConsoleNdjson();
           return result.blob;
         },
         options: { date: zipDate },
@@ -6296,11 +6353,23 @@ async function runEvidenceZipExport(context) {
       data.video && data.video.fileName
         ? data.video.fileName
         : `debugduck-recording-${exportTimestamp}.webm`;
+    await prepareNetworkNdjson();
+    await prepareConsoleNdjson();
+    const exportedNetworkEntries = data.networkLogs?.entries || [];
+    const exportedConsoleEntries = data.consoleLogs?.entries || [];
+    const exportedNetworkCount =
+      typeof ndjsonStats?.network?.count === "number"
+        ? ndjsonStats.network.count
+        : exportedNetworkEntries.length;
+    const exportedConsoleCount =
+      typeof ndjsonStats?.console?.count === "number"
+        ? ndjsonStats.console.count
+        : exportedConsoleEntries.length;
     const manifestPayload = buildSessionManifest({
       data,
       manifestSessionId,
       exportTimestamp,
-      screenshotCandidates,
+      screenshotCandidates: exportedScreenshotCandidates,
       recordingFileName: data.video || data.recordingDataUrl ? recordingFileName : "",
       recordingSizeBytes:
         data.video && typeof data.video.byteLength === "number"
@@ -6311,6 +6380,15 @@ async function runEvidenceZipExport(context) {
       recordingDurationMs: data.recordingDurationMs,
       ndjsonStats,
       usePartExport,
+      exported: {
+        networkEntries: exportedNetworkEntries,
+        consoleEntries: exportedConsoleEntries,
+        networkCount: exportedNetworkCount,
+        consoleCount: exportedConsoleCount,
+        networkFailures: summaryCounts.failedRequests,
+        consoleErrors: summaryCounts.consoleErrors,
+        screenshots: exportedScreenshotCandidates,
+      },
     });
     const manifestValidation = validateManifestForExport(manifestPayload);
     if (manifestValidation.warnings.length) {
@@ -6402,24 +6480,15 @@ async function runEvidenceZipExport(context) {
     logExportPhase("stringify_done", jsonSizes);
 
     const screenshotItems = [];
-    for (const shot of screenshotCandidates) {
-      if (!shot) {
-        continue;
-      }
-      let blob = null;
-      if (shot.dataUrl) {
-        blob = dataUrlToBlob(shot.dataUrl);
-      } else if (shot.artifactKey) {
-        blob = await resolveScreenshotBlob(shot);
-      }
-      if (!blob) {
+    for (const shot of exportedScreenshotCandidates) {
+      if (!shot || !shot.blob) {
         continue;
       }
       const name =
         shot.fileName || `debugduck-screenshot-${formatZipTimestamp(new Date())}.png`;
       screenshotItems.push({
         path: `screenshots/${name}`,
-        getData: () => blob,
+        getData: () => shot.blob,
         options: { date: zipDate },
       });
     }
