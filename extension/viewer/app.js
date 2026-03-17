@@ -104,6 +104,8 @@ const inspectorPanel = document.getElementById("inspectorPanel");
 const inspectorTitle = document.getElementById("inspectorTitle");
 const inspectorBody = document.getElementById("inspectorBody");
 const diagnosticsPanel = document.getElementById("diagnosticsPanel");
+const inspectorDockNetwork = document.querySelector("[data-inspector-dock='network']");
+const inspectorDockConsole = document.querySelector("[data-inspector-dock='console']");
 const diagSource = document.getElementById("diagSource");
 const diagRoot = document.getElementById("diagRoot");
 const diagRecording = document.getElementById("diagRecording");
@@ -5228,15 +5230,20 @@ function renderInspector() {
   }
   inspectorBody.innerHTML = "";
   const { type, id } = state.inspector;
-  if (!type || !id) {
+  const activePanel = state.playhead.activePanel;
+  const inspectorVisible = activePanel === "network" || activePanel === "console";
+  if (!inspectorVisible) {
     inspectorPanel.classList.add("hidden");
-    inspectorTitle.textContent = "Inspector";
-    inspectorBody.textContent =
-      "Select an item to see details.";
-    inspectorBody.classList.add("muted");
     return;
   }
   inspectorPanel.classList.remove("hidden");
+  if (!type || !id) {
+    inspectorTitle.textContent = "Inspector";
+    inspectorBody.textContent =
+      "Select an event to inspect details.";
+    inspectorBody.classList.add("muted");
+    return;
+  }
   const scope =
     type === "network"
       ? "network"
@@ -5725,6 +5732,24 @@ function setActivePanel(panel) {
     const active = panelEl.dataset.panel === panel;
     panelEl.classList.toggle("hidden", !active);
   });
+  attachInspectorDock(panel);
+}
+
+function attachInspectorDock(panel) {
+  if (!inspectorPanel) {
+    return;
+  }
+  if (panel === "network" && inspectorDockNetwork) {
+    inspectorDockNetwork.appendChild(inspectorPanel);
+    inspectorPanel.classList.remove("hidden");
+    return;
+  }
+  if (panel === "console" && inspectorDockConsole) {
+    inspectorDockConsole.appendChild(inspectorPanel);
+    inspectorPanel.classList.remove("hidden");
+    return;
+  }
+  inspectorPanel.classList.add("hidden");
 }
 
 function mapEventToPanel(ev) {

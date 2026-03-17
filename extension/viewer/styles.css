@@ -1027,6 +1027,28 @@ body {
   display: none;
 }
 
+.event-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 42%) minmax(420px, 58%);
+  gap: 12px;
+}
+
+.event-list-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspector-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspector-panel {
+  margin-top: 0;
+}
+
 .screenshots-list {
   display: flex;
   flex-direction: column;
