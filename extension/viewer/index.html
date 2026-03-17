@@ -101,13 +101,15 @@
               <h2>Video</h2>
               <div class="video-controls">
                 <button id="videoPlay" class="secondary">Play</button>
-                <span id="videoTime" class="muted">00:00</span>
+                <span id="videoTime" class="muted video-timer">00:00</span>
               </div>
             </div>
             <p id="videoSyncNote" class="muted hidden">
               Video sync unavailable for this session.
             </p>
-            <video id="videoEl" controls></video>
+            <div class="video-frame">
+              <video id="videoEl" controls></video>
+            </div>
           </div>
 
           <div class="panel timeline-panel">
