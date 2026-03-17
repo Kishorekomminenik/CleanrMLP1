@@ -33,6 +33,7 @@ let recordingSessionMeta = null;
 let recordingChunkFlushPromise = Promise.resolve();
 let recordingSessionToken = 0;
 let recordingOpLock = Promise.resolve();
+let recordingStreamSuspended = false;
 const RECORDING_CHUNK_BUFFER_LIMIT = 8;
 const RECORDING_STOP_TIMEOUT_MS = 10000;
 const FULLPAGE_CANVAS_MAX_EDGE = 16384;
@@ -823,6 +824,7 @@ function stopStreamTracks() {
     currentStream.getTracks().forEach((track) => track.stop());
     currentStream = null;
   }
+  recordingStreamSuspended = false;
 }
 
 function clearRecorderHandlers(recorder) {
@@ -835,6 +837,24 @@ function clearRecorderHandlers(recorder) {
   recorder.ondataavailable = null;
   recorder.onerror = null;
   recorder.onstop = null;
+}
+
+function setStreamTracksEnabled(enabled) {
+  if (!currentStream) {
+    return false;
+  }
+  currentStream.getTracks().forEach((track) => {
+    if (track.readyState === "ended") {
+      return;
+    }
+    try {
+      track.enabled = enabled;
+    } catch (error) {
+      // Ignore track enable/disable failures.
+    }
+  });
+  recordingStreamSuspended = !enabled;
+  return true;
 }
 
 async function cleanupRecorderAndStream(reason) {
@@ -1298,6 +1318,7 @@ async function pauseRecording() {
   }
   recordingPausedAt = nowMs();
   recordingState = "paused";
+  setStreamTracksEnabled(false);
   notifyStateChanged("pause");
   return { ok: true, ...getRecordingStateSnapshot() };
 }
@@ -1311,6 +1332,7 @@ async function resumeRecording() {
     throw new Error("Not paused.");
   }
   try {
+    setStreamTracksEnabled(true);
     mediaRecorder.resume();
   } catch (error) {
     throw new Error(

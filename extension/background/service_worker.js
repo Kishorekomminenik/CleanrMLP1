@@ -199,6 +199,8 @@ const captureState = {
   pendingFinalizePart: null,
   pendingFinalizeStartNewPart: false,
 };
+let screenshotCaptureQueue = Promise.resolve();
+let screenshotCaptureSequence = 0;
 // LOGGING V1 STABLE
 // DO NOT MODIFY WITHOUT RETESTING NORMAL STOP + DEBUGGER DETACH.
 const networkQueue = [];
@@ -6943,6 +6945,52 @@ async function ensureOffscreenReady() {
   }
 }
 
+function getCaptureDebugSnapshot() {
+  return {
+    recordingState: recordingController.state || state.recording.status || "idle",
+    sessionState: session ? session.state : null,
+    sessionMode: session ? session.mode : null,
+    logsState: captureState.logsState,
+    pausedForStorageLimit: captureState.pausedForStorageLimit,
+  };
+}
+
+function enqueueScreenshotCapture(source, handler) {
+  const queuedAt = Date.now();
+  const queueId = (screenshotCaptureSequence += 1);
+  screenshotCaptureQueue = screenshotCaptureQueue
+    .catch(() => {})
+    .then(async () => {
+      const startAt = Date.now();
+      console.log("[CAPTURE][SW][SCREENSHOT_START]", {
+        queueId,
+        source,
+        queuedMs: startAt - queuedAt,
+        ...getCaptureDebugSnapshot(),
+      });
+      try {
+        const result = await handler();
+        console.log("[CAPTURE][SW][SCREENSHOT_END]", {
+          queueId,
+          source,
+          durationMs: Date.now() - startAt,
+          ...getCaptureDebugSnapshot(),
+        });
+        return result;
+      } catch (error) {
+        console.warn("[CAPTURE][SW][SCREENSHOT_FAILED]", {
+          queueId,
+          source,
+          durationMs: Date.now() - startAt,
+          error: error && error.message ? error.message : String(error),
+          ...getCaptureDebugSnapshot(),
+        });
+        throw error;
+      }
+    });
+  return screenshotCaptureQueue;
+}
+
 async function captureScreenshot() {
   const tab = await getActiveTab();
   ensureTabIsCapturable(tab);
@@ -7174,7 +7222,9 @@ async function handlePopupCaptureRequest(request) {
   const payload = request && request.payload ? request.payload : {};
   if (mode === "snap") {
     try {
-      const dataUrl = await captureScreenshot();
+      const dataUrl = await enqueueScreenshotCapture("popup_snap", () =>
+        captureScreenshot()
+      );
       if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/png")) {
         await chrome.storage.session.set({
           latestScreenshotDataUrl: dataUrl,
@@ -10330,7 +10380,9 @@ async function handleMessage(message, sender) {
       break;
     case "TAKE_SCREENSHOT":
       try {
-        const dataUrl = await captureScreenshot();
+        const dataUrl = await enqueueScreenshotCapture("message_take_screenshot", () =>
+          captureScreenshot()
+        );
         if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png")) {
           result = {
             ok: false,
@@ -10347,8 +10399,18 @@ async function handleMessage(message, sender) {
       }
       break;
     case "CAPTURE_SCREENSHOT": {
-      const dataUrl = await captureScreenshot();
-      result = { ok: true, screenshotDataUrl: dataUrl };
+      try {
+        const dataUrl = await enqueueScreenshotCapture(
+          "message_capture_screenshot",
+          () => captureScreenshot()
+        );
+        result = { ok: true, screenshotDataUrl: dataUrl };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error && error.message ? error.message : "Screenshot failed.",
+        };
+      }
       break;
     }
     case "SET_ANNOTATION_STYLE":

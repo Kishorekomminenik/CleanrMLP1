@@ -1090,6 +1090,31 @@ async function send(type, payload = {}) {
   }
 }
 
+function sendAsync(type, payload = {}, onResponse) {
+  try {
+    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+      if (chrome.runtime.lastError) {
+        if (typeof onResponse === "function") {
+          onResponse({
+            ok: false,
+            error: chrome.runtime.lastError.message || "No response from service worker.",
+          });
+        }
+        return;
+      }
+      if (typeof onResponse === "function") {
+        onResponse(
+          response || { ok: false, error: "No response from service worker." }
+        );
+      }
+    });
+  } catch (error) {
+    if (typeof onResponse === "function") {
+      onResponse({ ok: false, error: error?.message || String(error) });
+    }
+  }
+}
+
 function detectBrowser(userAgent) {
   if (/Edg\//.test(userAgent)) {
     return "edge";
@@ -2705,14 +2730,27 @@ async function handleSessionScreenshot() {
     handleLauncherCapture("snap");
     return;
   }
-  const response = await send(MSG.CAPTURE_SCREENSHOT);
-  if (!response.ok) {
-    setLauncherError(response.error || "Screenshot capture failed.");
-    showToast(response.error || "Screenshot capture failed.", "error");
-    return;
-  }
-  showToast("Screenshot added to timeline.");
-  await refreshStatus();
+  const startedAt = Date.now();
+  console.log("[CAPTURE][popup] session screenshot click", {
+    recordingStatus: statusResponse.state.recordingStatus,
+    sessionState: statusResponse.state.session?.state || null,
+    sessionMode,
+  });
+  sendAsync(MSG.CAPTURE_SCREENSHOT, {}, (response) => {
+    const durationMs = Date.now() - startedAt;
+    console.log("[CAPTURE][popup] session screenshot response", {
+      ok: response?.ok,
+      durationMs,
+      error: response?.error || null,
+    });
+    if (!response || !response.ok) {
+      setLauncherError(response?.error || "Screenshot capture failed.");
+      showToast(response?.error || "Screenshot capture failed.", "error");
+      return;
+    }
+    showToast("Screenshot added to timeline.");
+    void refreshStatus();
+  });
 }
 
 async function handleSessionExport() {
