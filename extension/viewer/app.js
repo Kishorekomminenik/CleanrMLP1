@@ -77,12 +77,15 @@ const incidentList = document.getElementById("incidentList");
 const incidentEmpty = document.getElementById("incidentEmpty");
 const errorOnlyToggle = document.getElementById("errorOnlyToggle");
 const screenshotModal = document.getElementById("screenshotModal");
-const modalImage = document.getElementById("modalImage");
-const imageViewport = document.getElementById("imageViewport");
-const zoomInBtn = document.getElementById("zoomInBtn");
-const zoomOutBtn = document.getElementById("zoomOutBtn");
-const resetZoomBtn = document.getElementById("resetZoomBtn");
-const closeModalBtn = document.getElementById("closeModalBtn");
+const screenshotModalMeta = document.getElementById("screenshotModalMeta");
+const screenshotModalImage = document.getElementById("screenshotModalImage");
+const screenshotModalViewport = document.getElementById("screenshotModalViewport");
+const screenshotFitBtn = document.getElementById("screenshotFitBtn");
+const screenshotActualBtn = document.getElementById("screenshotActualBtn");
+const screenshotZoomOutBtn = document.getElementById("screenshotZoomOutBtn");
+const screenshotZoomInBtn = document.getElementById("screenshotZoomInBtn");
+const screenshotResetBtn = document.getElementById("screenshotResetBtn");
+const screenshotCloseBtn = document.getElementById("screenshotCloseBtn");
 const DEBUG_ENABLED = Boolean(window.DEBUGDUCK_DEBUG);
 if (DEBUG_ENABLED) {
   console.log("DEBUGDUCK_VIEWER_RUNTIME_MARKER_v2");
@@ -230,14 +233,19 @@ const state = {
 };
 
 let modalState = {
+  isOpen: false,
+  screenshotId: null,
+  imageSrc: null,
   scale: 1,
   translateX: 0,
   translateY: 0,
-  isDragging: false,
-  startX: 0,
-  startY: 0,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  fitScale: 1,
+  imageWidth: 0,
+  imageHeight: 0,
 };
-let modalImageUrl = null;
 
 function debugLog(...args) {
   if (DEBUG_ENABLED) {
@@ -2824,7 +2832,7 @@ function renderScreenshotsPanel() {
       );
       renderScreenshotsPanel();
       renderScreenshotPreview();
-      openScreenshotModal(shot);
+  openScreenshotModal(shot);
     });
     screenshotsList.appendChild(row);
   });
@@ -2872,67 +2880,141 @@ function renderScreenshotPreview() {
   screenshotPreview.appendChild(meta);
 }
 
-function applyTransform() {
-  if (!modalImage) {
-    return;
-  }
-  modalImage.style.transform = `translate(${modalState.translateX}px, ${modalState.translateY}px) scale(${modalState.scale})`;
+function clampScale(value) {
+  return Math.min(8, Math.max(0.25, value));
 }
 
-function resetModalTransform() {
-  modalState.scale = 1;
+function applyScreenshotTransform() {
+  if (!screenshotModalImage) {
+    return;
+  }
+  screenshotModalImage.style.transform = `translate(${modalState.translateX}px, ${modalState.translateY}px) scale(${modalState.scale})`;
+}
+
+function setScreenshotScale(nextScale) {
+  modalState.scale = clampScale(nextScale);
+  applyScreenshotTransform();
+}
+
+function fitScreenshotToViewport() {
+  if (!screenshotModalViewport || !modalState.imageWidth || !modalState.imageHeight) {
+    return;
+  }
+  const rect = screenshotModalViewport.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return;
+  }
+  const scaleX = rect.width / modalState.imageWidth;
+  const scaleY = rect.height / modalState.imageHeight;
+  modalState.fitScale = clampScale(Math.min(scaleX, scaleY));
   modalState.translateX = 0;
   modalState.translateY = 0;
-  applyTransform();
+  modalState.scale = modalState.fitScale;
+  applyScreenshotTransform();
+}
+
+function resetScreenshotModalView() {
+  modalState.translateX = 0;
+  modalState.translateY = 0;
+  modalState.scale = modalState.fitScale || 1;
+  applyScreenshotTransform();
+}
+
+function getActiveScreenshotForModal() {
+  if (!state.session) {
+    return null;
+  }
+  if (state.playhead.selectedScreenshotId) {
+    return state.screenshotById.get(state.playhead.selectedScreenshotId) || null;
+  }
+  if (state.currentMoment?.nearestScreenshot) {
+    return state.currentMoment.nearestScreenshot;
+  }
+  return null;
 }
 
 async function openScreenshotModal(shot) {
   if (!shot || isFailFastActive()) {
     return;
   }
-  if (!screenshotModal || !modalImage || !imageViewport) {
+  if (!screenshotModal || !screenshotModalImage || !screenshotModalViewport) {
     return;
   }
   if (shot.fullPage || shot.kind === "fullpage") {
     return;
   }
-  const path = shot.path || null;
-  if (!path || !state.pkg) {
+  if (!state.pkg || !shot.path) {
     return;
   }
-  const entry = state.pkg.resolveArtifact([path]);
+  const entry = state.pkg.resolveArtifact([shot.path]);
   if (!entry) {
     return;
   }
   let blob = null;
   try {
-    blob = await state.pkg.readBlob(entry.path || path);
+    blob = await state.pkg.readBlob(entry.path || shot.path);
   } catch (error) {
     return;
   }
   if (!blob) {
     return;
   }
-  if (modalImageUrl) {
-    URL.revokeObjectURL(modalImageUrl);
+  if (modalState.imageSrc) {
+    URL.revokeObjectURL(modalState.imageSrc);
   }
-  modalImageUrl = URL.createObjectURL(blob);
-  modalImage.src = modalImageUrl;
-  resetModalTransform();
+  const imageUrl = URL.createObjectURL(blob);
+  modalState.imageSrc = imageUrl;
+  modalState.screenshotId = shot.id || null;
+  modalState.isOpen = true;
+  modalState.translateX = 0;
+  modalState.translateY = 0;
+  modalState.scale = 1;
+  modalState.fitScale = 1;
+  modalState.imageWidth = 0;
+  modalState.imageHeight = 0;
+  screenshotModalImage.onload = () => {
+    modalState.imageWidth = screenshotModalImage.naturalWidth || 0;
+    modalState.imageHeight = screenshotModalImage.naturalHeight || 0;
+    fitScreenshotToViewport();
+  };
+  screenshotModalImage.src = imageUrl;
+  if (screenshotModalMeta) {
+    const timestampText =
+      typeof shot.timestampMs === "number"
+        ? formatTimeWithMs(shot.timestampMs)
+        : "00:00";
+    const kindLabel = shot.kind === "fullpage" ? "Full page" : "Viewport";
+    const name =
+      shot.label || (shot.path ? shot.path.split("/").pop() : "") || "";
+    screenshotModalMeta.textContent = [kindLabel, timestampText, name]
+      .filter(Boolean)
+      .join(" • ");
+  }
   screenshotModal.classList.remove("hidden");
-  imageViewport.classList.remove("dragging");
+  screenshotModalViewport.classList.remove("dragging");
 }
 
 function closeScreenshotModal() {
-  if (!screenshotModal || !modalImage) {
+  if (!screenshotModal || !screenshotModalImage) {
     return;
   }
   screenshotModal.classList.add("hidden");
-  if (modalImageUrl) {
-    URL.revokeObjectURL(modalImageUrl);
+  modalState.isOpen = false;
+  modalState.screenshotId = null;
+  modalState.imageWidth = 0;
+  modalState.imageHeight = 0;
+  modalState.translateX = 0;
+  modalState.translateY = 0;
+  modalState.scale = 1;
+  modalState.fitScale = 1;
+  if (modalState.imageSrc) {
+    URL.revokeObjectURL(modalState.imageSrc);
   }
-  modalImageUrl = null;
-  modalImage.src = "";
+  modalState.imageSrc = null;
+  screenshotModalImage.src = "";
+  if (screenshotModalMeta) {
+    screenshotModalMeta.textContent = "";
+  }
 }
 
 function renderIntegrityDisabled(container, message) {
@@ -5654,61 +5736,103 @@ if (resetBtn) {
     clearAllLoaderInputs();
   });
 }
-if (zoomInBtn) {
-  zoomInBtn.addEventListener("click", () => {
-    modalState.scale *= 1.2;
-    applyTransform();
+if (screenshotZoomInBtn) {
+  screenshotZoomInBtn.addEventListener("click", () => {
+    setScreenshotScale(modalState.scale * 1.2);
   });
 }
-if (zoomOutBtn) {
-  zoomOutBtn.addEventListener("click", () => {
-    modalState.scale /= 1.2;
-    applyTransform();
+if (screenshotZoomOutBtn) {
+  screenshotZoomOutBtn.addEventListener("click", () => {
+    setScreenshotScale(modalState.scale / 1.2);
   });
 }
-if (resetZoomBtn) {
-  resetZoomBtn.addEventListener("click", () => {
-    resetModalTransform();
+if (screenshotResetBtn) {
+  screenshotResetBtn.addEventListener("click", () => {
+    resetScreenshotModalView();
   });
 }
-if (closeModalBtn) {
-  closeModalBtn.addEventListener("click", () => {
+if (screenshotFitBtn) {
+  screenshotFitBtn.addEventListener("click", () => {
+    fitScreenshotToViewport();
+  });
+}
+if (screenshotActualBtn) {
+  screenshotActualBtn.addEventListener("click", () => {
+    modalState.translateX = 0;
+    modalState.translateY = 0;
+    setScreenshotScale(1);
+  });
+}
+if (screenshotCloseBtn) {
+  screenshotCloseBtn.addEventListener("click", () => {
     closeScreenshotModal();
   });
 }
-if (imageViewport) {
-  imageViewport.addEventListener(
+if (screenshotModalViewport) {
+  screenshotModalViewport.addEventListener(
     "wheel",
     (event) => {
+      if (!modalState.isOpen) {
+        return;
+      }
       event.preventDefault();
       const delta = event.deltaY < 0 ? 1.1 : 0.9;
-      modalState.scale *= delta;
-      applyTransform();
+      setScreenshotScale(modalState.scale * delta);
     },
     { passive: false }
   );
-  imageViewport.addEventListener("mousedown", (event) => {
-    modalState.isDragging = true;
-    modalState.startX = event.clientX - modalState.translateX;
-    modalState.startY = event.clientY - modalState.translateY;
-    imageViewport.classList.add("dragging");
+  screenshotModalViewport.addEventListener("mousedown", (event) => {
+    if (!modalState.isOpen) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    modalState.dragging = true;
+    modalState.dragStartX = event.clientX - modalState.translateX;
+    modalState.dragStartY = event.clientY - modalState.translateY;
+    screenshotModalViewport.classList.add("dragging");
+  });
+}
+if (screenshotModal) {
+  screenshotModal.addEventListener("click", (event) => {
+    if (!modalState.isOpen) {
+      return;
+    }
+    const target = event.target;
+    if (target && target.classList && target.classList.contains("dd-modal-backdrop")) {
+      closeScreenshotModal();
+    }
+  });
+}
+if (screenshotPreview) {
+  screenshotPreview.addEventListener("click", () => {
+    const shot = getActiveScreenshotForModal();
+    if (shot) {
+      openScreenshotModal(shot);
+    }
   });
 }
 window.addEventListener("mousemove", (event) => {
-  if (!modalState.isDragging) {
+  if (!modalState.dragging) {
     return;
   }
-  modalState.translateX = event.clientX - modalState.startX;
-  modalState.translateY = event.clientY - modalState.startY;
-  applyTransform();
+  modalState.translateX = event.clientX - modalState.dragStartX;
+  modalState.translateY = event.clientY - modalState.dragStartY;
+  applyScreenshotTransform();
 });
 window.addEventListener("mouseup", () => {
-  if (!modalState.isDragging) {
+  if (!modalState.dragging) {
     return;
   }
-  modalState.isDragging = false;
-  if (imageViewport) {
-    imageViewport.classList.remove("dragging");
+  modalState.dragging = false;
+  if (screenshotModalViewport) {
+    screenshotModalViewport.classList.remove("dragging");
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && modalState.isOpen) {
+    closeScreenshotModal();
   }
 });
 if (zipInput) {

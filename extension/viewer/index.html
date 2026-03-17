@@ -504,13 +504,18 @@
       <div class="dd-modal-backdrop"></div>
       <div class="dd-modal-content">
         <div class="dd-modal-toolbar">
-          <button id="zoomInBtn" type="button">+</button>
-          <button id="zoomOutBtn" type="button">-</button>
-          <button id="resetZoomBtn" type="button">Reset</button>
-          <button id="closeModalBtn" type="button">✕</button>
+          <div id="screenshotModalMeta" class="dd-modal-meta"></div>
+          <div class="dd-modal-actions">
+            <button id="screenshotFitBtn" type="button">Fit</button>
+            <button id="screenshotActualBtn" type="button">100%</button>
+            <button id="screenshotZoomOutBtn" type="button">-</button>
+            <button id="screenshotZoomInBtn" type="button">+</button>
+            <button id="screenshotResetBtn" type="button">Reset</button>
+            <button id="screenshotCloseBtn" type="button">✕</button>
+          </div>
         </div>
-        <div id="imageViewport" class="dd-image-viewport">
-          <img id="modalImage" alt="Screenshot preview" />
+        <div id="screenshotModalViewport" class="dd-modal-viewport">
+          <img id="screenshotModalImage" alt="Screenshot preview" />
         </div>
       </div>
     </div>

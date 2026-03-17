@@ -117,11 +117,27 @@ body {
 
 .dd-modal-toolbar {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
-  padding: 8px;
+  justify-content: space-between;
+  padding: 8px 10px;
   background: #0b0b0b;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dd-modal-meta {
+  color: #e2e8f0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.dd-modal-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .dd-modal-toolbar button {
@@ -138,19 +154,20 @@ body {
   background: #334155;
 }
 
-.dd-image-viewport {
+.dd-modal-viewport {
   width: 100%;
   height: calc(100% - 40px);
   overflow: hidden;
   cursor: grab;
   position: relative;
+  background: #0b0b0b;
 }
 
-.dd-image-viewport.dragging {
+.dd-modal-viewport.dragging {
   cursor: grabbing;
 }
 
-.dd-image-viewport img {
+.dd-modal-viewport img {
   transform-origin: top left;
   user-select: none;
   pointer-events: none;
