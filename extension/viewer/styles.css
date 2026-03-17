@@ -306,7 +306,7 @@ body {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
   margin-top: 8px;
 }
@@ -457,6 +457,14 @@ body {
   background: #8b5cf6;
 }
 
+.timeline-marker.warning {
+  opacity: 0.85;
+}
+
+.timeline-marker.info {
+  opacity: 0.6;
+}
+
 .timeline-marker.nearest {
   opacity: 1;
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
@@ -574,6 +582,14 @@ body {
 
 .lane-marker.error {
   background: var(--danger);
+}
+
+.lane-marker.warning {
+  opacity: 0.8;
+}
+
+.lane-marker.info {
+  opacity: 0.6;
 }
 
 .lane-marker.screenshot {
@@ -988,6 +1004,27 @@ body {
   cursor: pointer;
 }
 
+.data-row.network-group {
+  grid-template-columns: 20px 52px 1fr;
+  background: #f8fafc;
+}
+
+.data-row.network-group .network-group-toggle {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.data-row.network-group .network-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.data-row.network-subrow {
+  grid-template-columns: 64px 48px 1fr;
+  margin-left: 18px;
+}
+
 .data-row.active {
   border-color: rgba(37, 99, 235, 0.5);
   background: #eff6ff;
@@ -1069,6 +1106,10 @@ body {
 
 .incident-severity.warning {
   background: #f59e0b;
+}
+
+.incident-severity.info {
+  background: #38bdf8;
 }
 
 .incident-title {

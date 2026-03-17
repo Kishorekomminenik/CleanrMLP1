@@ -53,9 +53,10 @@ const filterScreenshots = document.getElementById("filterScreenshots");
 const filterErrors = document.getElementById("filterErrors");
 const searchInput = document.getElementById("searchInput");
 const summaryPanel = document.getElementById("summaryPanel");
-const summaryNetwork = document.getElementById("summaryNetwork");
-const summaryConsole = document.getElementById("summaryConsole");
-const summaryErrors = document.getElementById("summaryErrors");
+const summaryNetworkRequests = document.getElementById("summaryNetworkRequests");
+const summaryNetworkFailures = document.getElementById("summaryNetworkFailures");
+const summaryConsoleMessages = document.getElementById("summaryConsoleMessages");
+const summaryConsoleErrors = document.getElementById("summaryConsoleErrors");
 const summaryScreenshots = document.getElementById("summaryScreenshots");
 const summaryRecording = document.getElementById("summaryRecording");
 const summarySignals = document.getElementById("summarySignals");
@@ -232,6 +233,7 @@ const state = {
   consoleEntries: [],
   loadingNetwork: false,
   loadingConsole: false,
+  networkGroupExpanded: new Set(),
 };
 
 let modalState = {
@@ -309,6 +311,25 @@ function formatTimeWithMs(ms) {
   return `${minutes}:${seconds}.${millis}`;
 }
 
+function formatWindowLabel(windowMs) {
+  const seconds = Math.max(1, Math.round((windowMs || 0) / 1000));
+  return `±${seconds}s`;
+}
+
+function updateNearTimeLabels() {
+  const label = `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`;
+  networkModeChips.forEach((chip) => {
+    if (chip.dataset.netMode === "near") {
+      chip.textContent = label;
+    }
+  });
+  consoleModeChips.forEach((chip) => {
+    if (chip.dataset.consoleMode === "near") {
+      chip.textContent = label;
+    }
+  });
+}
+
 function normalizeConsoleLevel(level) {
   const raw = String(level || "log").toLowerCase();
   if (raw === "warn") {
@@ -329,6 +350,29 @@ function isNetworkFailureEntry(entry) {
   return hasStatusFailure || hasIncomplete || hasFinalizeReason || hasErrorText;
 }
 
+function classifyNetworkFailure(entry) {
+  if (!entry) {
+    return { severity: "info", kind: "unknown" };
+  }
+  const status = entry.response_status ?? entry.status;
+  const hasStatus = typeof status === "number";
+  const hasErrorText = Boolean(entry.error_text || entry.errorText);
+  const hasAbort = Boolean(entry.incomplete) || Boolean(entry.finalize_reason || entry.finalizeReason);
+  if (hasStatus && status >= 500) {
+    return { severity: "error", kind: "server" };
+  }
+  if (hasStatus && status >= 400) {
+    return { severity: "warning", kind: "client" };
+  }
+  if (hasErrorText) {
+    return { severity: "error", kind: "error_text" };
+  }
+  if (hasAbort) {
+    return { severity: "info", kind: "aborted" };
+  }
+  return { severity: "info", kind: "unknown" };
+}
+
 function classifyNetworkStatus(entry) {
   const status = entry.response_status ?? entry.status;
   if (typeof status === "number") {
@@ -341,14 +385,18 @@ function classifyNetworkStatus(entry) {
     return "ok";
   }
   if (isNetworkFailureEntry(entry)) {
+    const classification = classifyNetworkFailure(entry);
+    if (classification.kind === "aborted") {
+      return "aborted";
+    }
     return "failure";
   }
   return "unknown";
 }
 
 function isNetworkError(entry) {
-  const bucket = classifyNetworkStatus(entry);
-  return bucket === "4xx" || bucket === "5xx" || bucket === "failure";
+  const classification = classifyNetworkFailure(entry);
+  return classification.severity === "error" || classification.severity === "warning";
 }
 
 function getEffectiveConsoleLevels() {
@@ -371,7 +419,14 @@ function buildIncidentTitle(incident) {
     const status = incident.statusCode ? String(incident.statusCode) : "";
     const method = incident.method || "";
     const url = incident.url || "";
-    return `${status} ${method} ${url}`.trim();
+    const base = `${status} ${method} ${url}`.trim();
+    const kind =
+      incident.failureKind === "aborted"
+        ? "aborted"
+        : incident.failureKind === "error_text"
+          ? "error"
+          : "";
+    return kind ? `${base} (${kind})`.trim() : base;
   }
   if (incident.type.startsWith("console")) {
     return `Console ${incident.type.replace("console-", "")}: ${incident.message || ""}`.trim();
@@ -477,7 +532,9 @@ function formatMarkerLabel(marker) {
     marker.type === "console-error"
       ? "Console error"
       : marker.type === "network-failure"
-        ? "Network failure"
+        ? marker.failureKind === "aborted"
+          ? "Network aborted"
+          : "Network failure"
         : marker.type === "screenshot"
           ? "Screenshot"
           : marker.type === "incident"
@@ -499,7 +556,14 @@ function buildNetworkMarkerLabel(entry) {
   } catch (_) {
     // leave as-is
   }
-  return `${method} ${status} ${path}`.trim();
+  const classification = classifyNetworkFailure(entry);
+  const suffix =
+    classification.kind === "aborted"
+      ? " (aborted)"
+      : classification.kind === "error_text"
+        ? " (error)"
+        : "";
+  return `${method} ${status} ${path}`.trim() + suffix;
 }
 
 function buildConsoleMarkerLabel(entry) {
@@ -510,6 +574,35 @@ function buildConsoleMarkerLabel(entry) {
     entry.payload?.text ||
     "";
   return message ? message.slice(0, 120) : "Console error";
+}
+
+function getScreenshotDisplayLabel(shot, index = null) {
+  const rawLabel = shot?.label ? String(shot.label).trim() : "";
+  const isViewportLabel = rawLabel.toLowerCase() === "viewport";
+  const base =
+    rawLabel && !isViewportLabel
+      ? rawLabel
+      : typeof index === "number"
+        ? `Screenshot #${index + 1}`
+        : "Screenshot";
+  const timestamp =
+    typeof shot?.timestampMs === "number"
+      ? formatTimeWithMs(shot.timestampMs)
+      : null;
+  return timestamp ? `${base} • ${timestamp}` : base;
+}
+
+function getScreenshotIndexById(shot) {
+  if (!shot) {
+    return null;
+  }
+  const list = state.sortedScreenshotsByTime || [];
+  const key = shot.id || shot.path;
+  if (!key) {
+    return null;
+  }
+  const idx = list.findIndex((entry) => (entry.id || entry.path) === key);
+  return idx >= 0 ? idx : null;
 }
 
 function deriveTimelineMarkers(session) {
@@ -529,10 +622,7 @@ function deriveTimelineMarkers(session) {
     });
   });
   session.screenshots.forEach((shot, index) => {
-    const label =
-      shot.label ||
-      (shot.path ? shot.path.split("/").pop() : null) ||
-      "Screenshot";
+    const label = getScreenshotDisplayLabel(shot, index);
     markers.push({
       id: `marker_shot_${shot.id || index}`,
       type: "screenshot",
@@ -544,15 +634,17 @@ function deriveTimelineMarkers(session) {
     });
   });
   session.networkEvents.forEach((entry, index) => {
-    if (!isNetworkError(entry)) {
+    if (!isNetworkFailureEntry(entry)) {
       return;
     }
+    const classification = classifyNetworkFailure(entry);
     markers.push({
       id: `marker_net_${entry.id || index}`,
       type: "network-failure",
       timeMs: getNetworkTimestampMs(entry) || 0,
       label: buildNetworkMarkerLabel(entry),
-      severity: "error",
+      severity: classification.severity,
+      failureKind: classification.kind,
       sourceRef: entry.id || null,
       priority: 3,
     });
@@ -811,6 +903,34 @@ function buildNetworkSearchText(entry) {
   return `${method} ${status} ${url} ${path}`.toLowerCase();
 }
 
+function getNetworkGroupKey(entry) {
+  const method = (entry.method || "").trim().toUpperCase();
+  const url = (entry.url || "").trim();
+  return `${method} ${url}`.trim();
+}
+
+function buildNetworkGroupLabel(entry) {
+  const method = entry.method || "";
+  const url = entry.url || "";
+  return `${method} ${url}`.trim() || "Network request";
+}
+
+function groupNetworkEntries(entries) {
+  const groups = new Map();
+  entries.forEach((entry) => {
+    const key = getNetworkGroupKey(entry);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label: buildNetworkGroupLabel(entry),
+        items: [],
+      });
+    }
+    groups.get(key).items.push(entry);
+  });
+  return Array.from(groups.values());
+}
+
 function buildConsoleSearchText(entry) {
   const level = entry.level || "";
   const message = entry.message || entry.msg || entry.text || "";
@@ -953,6 +1073,7 @@ function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
+  updateNearTimeLabels();
   const report = state.integrityReport;
   const availability = report?.availability || null;
   if (report?.failFastGlobal) {
@@ -1555,6 +1676,7 @@ async function loadScreenshotBlobsFromPackage(paths, pkg) {
   state.missingScreenshots = [];
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
   state.screenshotUrls.clear();
+  updateNearTimeLabels();
   closeScreenshotModal();
   for (const path of paths) {
     if (!pkg || !pkg.exists(path)) {
@@ -1859,7 +1981,7 @@ function buildIntegrityDisabledMessage(scope, panelLabel) {
 }
 
 function countNetworkFailures(entries) {
-  return (entries || []).filter((entry) => isNetworkError(entry)).length;
+  return (entries || []).filter((entry) => isNetworkFailureEntry(entry)).length;
 }
 
 function countConsoleErrors(entries) {
@@ -2655,14 +2777,17 @@ function renderSummaryFromManifest(manifest) {
   }
   summaryPanel.classList.remove("hidden");
   if (report.failFastGlobal) {
-    if (summaryNetwork) {
-      summaryNetwork.textContent = "Disabled";
+    if (summaryNetworkRequests) {
+      summaryNetworkRequests.textContent = "Disabled";
     }
-    if (summaryConsole) {
-      summaryConsole.textContent = "Disabled";
+    if (summaryNetworkFailures) {
+      summaryNetworkFailures.textContent = "Disabled";
     }
-    if (summaryErrors) {
-      summaryErrors.textContent = "Disabled";
+    if (summaryConsoleMessages) {
+      summaryConsoleMessages.textContent = "Disabled";
+    }
+    if (summaryConsoleErrors) {
+      summaryConsoleErrors.textContent = "Disabled";
     }
     if (summaryScreenshots) {
       summaryScreenshots.textContent = "Disabled";
@@ -2678,7 +2803,7 @@ function renderSummaryFromManifest(manifest) {
   }
   const parsed = report.parsedCounts || {};
   const availability = report.availability || {};
-  const networkText =
+  const networkRequestsText =
     availability.network === false
       ? "Disabled"
       : manifest?.artifacts?.network?.present
@@ -2686,7 +2811,15 @@ function renderSummaryFromManifest(manifest) {
           ? String(parsed.networkRequests)
           : "Not loaded"
         : "Not available";
-  const consoleText =
+  const networkFailuresText =
+    availability.network === false
+      ? "Disabled"
+      : manifest?.artifacts?.network?.present
+        ? typeof parsed.networkFailures === "number"
+          ? String(parsed.networkFailures)
+          : "Not loaded"
+        : "Not available";
+  const consoleMessagesText =
     availability.console === false
       ? "Disabled"
       : manifest?.artifacts?.console?.present
@@ -2694,31 +2827,25 @@ function renderSummaryFromManifest(manifest) {
           ? String(parsed.consoleMessages)
           : "Not loaded"
         : "Not available";
-  const includeNetwork = availability.network !== false;
-  const includeConsole = availability.console !== false;
-  const errorsCount =
-    includeNetwork || includeConsole
-      ? (includeNetwork ? parsed.networkFailures || 0 : 0) +
-        (includeConsole ? parsed.consoleErrors || 0 : 0)
-      : null;
-  if (summaryNetwork) {
-    summaryNetwork.textContent = networkText;
+  const consoleErrorsText =
+    availability.console === false
+      ? "Disabled"
+      : manifest?.artifacts?.console?.present
+        ? typeof parsed.consoleErrors === "number"
+          ? String(parsed.consoleErrors)
+          : "Not loaded"
+        : "Not available";
+  if (summaryNetworkRequests) {
+    summaryNetworkRequests.textContent = networkRequestsText;
   }
-  if (summaryConsole) {
-    summaryConsole.textContent = consoleText;
+  if (summaryNetworkFailures) {
+    summaryNetworkFailures.textContent = networkFailuresText;
   }
-  if (summaryErrors) {
-    const hasAnyLogs =
-      Boolean(manifest?.artifacts?.network?.present) ||
-      Boolean(manifest?.artifacts?.console?.present);
-    summaryErrors.textContent =
-      availability.network === false && availability.console === false
-        ? "Disabled"
-        : hasAnyLogs
-          ? typeof errorsCount === "number"
-            ? String(errorsCount)
-            : "Not loaded"
-          : "Not available";
+  if (summaryConsoleMessages) {
+    summaryConsoleMessages.textContent = consoleMessagesText;
+  }
+  if (summaryConsoleErrors) {
+    summaryConsoleErrors.textContent = consoleErrorsText;
   }
   if (summaryScreenshots) {
     summaryScreenshots.textContent =
@@ -2784,6 +2911,9 @@ function updateTimelineSummary(manifest) {
   if (availability.console === false) {
     parts.push("console disabled");
   } else {
+    if (typeof report.parsedCounts.consoleMessages === "number") {
+      parts.push(`${report.parsedCounts.consoleMessages} console messages`);
+    }
     if (typeof report.parsedCounts.consoleErrors === "number") {
       parts.push(`${report.parsedCounts.consoleErrors} console errors`);
     }
@@ -2958,10 +3088,16 @@ function applySummaryInteractions() {
     }
     const key = label.querySelector(".summary-label")?.textContent || "";
     const availability = getIntegrityAvailability();
-    if (key === "Network" && availability && availability.network === false) {
+    if (key === "Network Requests" && availability && availability.network === false) {
       return;
     }
-    if (key === "Console" && availability && availability.console === false) {
+    if (key === "Network Failures" && availability && availability.network === false) {
+      return;
+    }
+    if (key === "Console Messages" && availability && availability.console === false) {
+      return;
+    }
+    if (key === "Console Errors" && availability && availability.console === false) {
       return;
     }
     if (key === "Screenshots" && availability && availability.screenshots === false) {
@@ -2970,25 +3106,32 @@ function applySummaryInteractions() {
     if (key === "Recording" && availability && availability.recording === false) {
       return;
     }
-    if (key === "Errors") {
-      state.filters.errorOnly = true;
-      if (errorOnlyToggle) {
-        errorOnlyToggle.checked = true;
-      }
-      renderIncidentRail();
-      renderTimelineLanes(state.session?.markers || []);
-    } else if (key === "Network") {
-      setActivePanel("network");
+    if (key === "Network Failures") {
       state.filters.networkStatusBucket = "errors";
       networkFilterChips.forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.netFilter === "errors");
       });
+      setActivePanel("network");
       ensureNetworkLogsLoaded().then(renderNetworkPanel);
-    } else if (key === "Console") {
+    } else if (key === "Network Requests") {
+      setActivePanel("network");
+      state.filters.networkStatusBucket = "all";
+      networkFilterChips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.netFilter === "all");
+      });
+      ensureNetworkLogsLoaded().then(renderNetworkPanel);
+    } else if (key === "Console Errors") {
       setActivePanel("console");
       state.filters.consoleLevels = ["error"];
       consoleLevelChips.forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.consoleLevel === "error");
+      });
+      ensureConsoleLogsLoaded().then(renderConsolePanel);
+    } else if (key === "Console Messages") {
+      setActivePanel("console");
+      state.filters.consoleLevels = ["error", "warning", "info", "log", "debug"];
+      consoleLevelChips.forEach((chip) => {
+        chip.classList.toggle("active", true);
       });
       ensureConsoleLogsLoaded().then(renderConsolePanel);
     } else if (key === "Screenshots") {
@@ -3004,25 +3147,29 @@ function applySummaryInteractions() {
 
 function buildIncidentsFromNetwork(entries) {
   return entries
-    .filter((entry) => isNetworkError(entry))
+    .filter((entry) => isNetworkFailureEntry(entry))
     .map((entry) => {
       const bucket = classifyNetworkStatus(entry);
+      const classification = classifyNetworkFailure(entry);
       const type =
         bucket === "5xx"
           ? "network-5xx"
           : bucket === "4xx"
             ? "network-4xx"
-            : "network-failure";
+            : bucket === "aborted"
+              ? "network-aborted"
+              : "network-failure";
       return {
         id: `inc_${entry.id}`,
         type,
         timestampMs: entry.timestampMs || entry.timestamp_ms || 0,
-        severity: bucket === "5xx" ? "error" : "warning",
+        severity: classification.severity,
         title: buildIncidentTitle({
           type: "network",
           statusCode: entry.response_status || entry.status,
           method: entry.method,
           url: entry.url,
+          failureKind: classification.kind,
         }),
         subtitle: formatTimeWithMs(entry.timestampMs || entry.timestamp_ms || 0),
         sourceRef: entry.id,
@@ -3030,6 +3177,7 @@ function buildIncidentsFromNetwork(entries) {
         statusCode: entry.response_status || entry.status || 0,
         consoleLevel: "",
         url: entry.url || "",
+        failureKind: classification.kind,
       };
     });
 }
@@ -3111,8 +3259,10 @@ function getFilteredIncidents() {
   const networkFilterEnabled = !availability || availability.network !== false;
   if (networkFilterEnabled && state.filters.networkStatusBucket !== "all") {
     if (state.filters.networkStatusBucket === "errors") {
-      incidents = incidents.filter((inc) =>
-        ["network-4xx", "network-5xx", "network-failure"].includes(inc.type)
+      incidents = incidents.filter(
+        (inc) =>
+          ["network-4xx", "network-5xx", "network-failure"].includes(inc.type) &&
+          inc.severity !== "info"
       );
     } else if (state.filters.networkStatusBucket === "4xx") {
       incidents = incidents.filter((inc) => inc.type === "network-4xx");
@@ -3275,10 +3425,11 @@ function renderScreenshotsPanel() {
     }
     const meta = document.createElement("div");
     const title = document.createElement("div");
-    title.textContent = shot.label || shot.kind || "Screenshot";
+    title.textContent = getScreenshotDisplayLabel(shot, index);
     const subtitle = document.createElement("div");
     subtitle.className = "muted";
-    subtitle.textContent = formatTimeWithMs(shot.timestampMs || 0);
+    subtitle.textContent =
+      shot.kind && shot.kind !== "viewport" ? `Kind: ${shot.kind}` : "Captured image";
     meta.appendChild(title);
     meta.appendChild(subtitle);
     row.appendChild(thumb);
@@ -3343,11 +3494,10 @@ function renderScreenshotPreview() {
   }
   const meta = document.createElement("div");
   meta.className = "muted";
+  const previewIndex = getScreenshotIndexById(shot);
+  const label = getScreenshotDisplayLabel(shot, previewIndex ?? undefined);
   const pieces = [
-    shot.kind ? `Kind: ${shot.kind}` : null,
-    typeof shot.timestampMs === "number"
-      ? `Time: ${formatTimeWithMs(shot.timestampMs)}`
-      : null,
+    label,
     selectedShot ? "Selected" : "Nearest",
   ].filter(Boolean);
   meta.textContent = pieces.join(" • ");
@@ -3546,22 +3696,29 @@ function renderNetworkPanel() {
   if (networkResultCount) {
     const visibleCount = Math.min(filtered.length, 500);
     const totalCount = entries.length;
-    networkResultCount.textContent = `${visibleCount} of ${filtered.length}${
-      filtered.length !== totalCount ? ` (total ${totalCount})` : ""
-    }`;
+    const modeLabel =
+      state.panelModes.network === "near"
+        ? `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`
+        : "All Time";
+    const totalLabel =
+      filtered.length !== totalCount ? ` (total ${totalCount})` : "";
+    networkResultCount.textContent = `${modeLabel} • ${filtered.length} results • showing ${visibleCount}${totalLabel}`;
   }
+  const selectedNetworkId = state.selectedNetworkId || null;
+  const grouped = groupNetworkEntries(filtered);
   const selectedHidden =
-    state.selectedNetworkId &&
-    !filtered.some((entry) => entry.id === state.selectedNetworkId);
+    selectedNetworkId &&
+    !filtered.some((entry) => entry.id === selectedNetworkId);
   if (networkSelectionNote) {
     networkSelectionNote.classList.toggle("hidden", !selectedHidden);
   }
   const maxRows = 500;
-  const rows = filtered.slice(0, maxRows);
-  rows.forEach((entry) => {
+  let renderedEntries = 0;
+  let truncated = false;
+  const renderEntryRow = (entry, options = {}) => {
     const row = document.createElement("div");
-    row.className = "data-row";
-    if (state.selectedNetworkId && entry.id === state.selectedNetworkId) {
+    row.className = `data-row${options.isChild ? " network-subrow" : ""}`;
+    if (selectedNetworkId && entry.id === selectedNetworkId) {
       row.classList.add("active");
     } else if (
       state.currentMoment?.autoHighlight?.networkId &&
@@ -3583,7 +3740,11 @@ function renderNetworkPanel() {
       Number.isFinite(entry.timestamp_ms);
     time.textContent = formatTimeWithMs(entryTime);
     const status = document.createElement("div");
-    status.textContent = entry.response_status || entry.status || "-";
+    const statusValue = entry.response_status || entry.status;
+    const statusLabel =
+      statusValue ||
+      (classifyNetworkStatus(entry) === "aborted" ? "aborted" : "-");
+    status.textContent = statusLabel;
     const url = document.createElement("div");
     url.textContent = `${entry.method || ""} ${entry.url || ""}`.trim();
     row.appendChild(time);
@@ -3605,8 +3766,71 @@ function renderNetworkPanel() {
       renderNetworkPanel();
     });
     networkList.appendChild(row);
+  };
+  grouped.forEach((group) => {
+    if (renderedEntries >= maxRows) {
+      truncated = true;
+      return;
+    }
+    if (group.items.length === 1) {
+      renderEntryRow(group.items[0]);
+      renderedEntries += 1;
+      return;
+    }
+    const groupHasSelected =
+      selectedNetworkId &&
+      group.items.some((entry) => entry.id === selectedNetworkId);
+    const groupHasNearby =
+      state.currentMoment?.autoHighlight?.networkId &&
+      group.items.some((entry) => entry.id === state.currentMoment.autoHighlight.networkId);
+    const isExpanded = state.networkGroupExpanded.has(group.key);
+    const canExpand = group.items.length > 1;
+    const header = document.createElement("div");
+    header.className = "data-row network-group";
+    if (groupHasSelected) {
+      header.classList.add("active");
+    } else if (groupHasNearby) {
+      header.classList.add("nearby");
+    }
+    const toggle = document.createElement("div");
+    toggle.className = "network-group-toggle";
+    toggle.textContent = canExpand ? (isExpanded ? "▾" : "▸") : "•";
+    const status = document.createElement("div");
+    status.className = "network-group-count";
+    status.textContent = `x${group.items.length}`;
+    const label = document.createElement("div");
+    label.textContent = group.label;
+    header.appendChild(toggle);
+    header.appendChild(status);
+    header.appendChild(label);
+    if (canExpand) {
+      header.addEventListener("click", () => {
+        if (state.networkGroupExpanded.has(group.key)) {
+          state.networkGroupExpanded.delete(group.key);
+        } else {
+          state.networkGroupExpanded.add(group.key);
+        }
+        renderNetworkPanel();
+      });
+    }
+    networkList.appendChild(header);
+    if (isExpanded) {
+      group.items.forEach((entry) => {
+        if (renderedEntries >= maxRows) {
+          truncated = true;
+          return;
+        }
+        renderEntryRow(entry, { isChild: true });
+        renderedEntries += 1;
+      });
+    } else if (group.items.length) {
+      renderedEntries += Math.min(group.items.length, maxRows - renderedEntries);
+      if (renderedEntries >= maxRows && group.items.length > 1) {
+        truncated = true;
+      }
+    }
   });
-  if (filtered.length > maxRows) {
+  if (filtered.length > maxRows || truncated) {
     const note = document.createElement("div");
     note.className = "muted";
     note.textContent = `Showing first ${maxRows} entries of ${filtered.length}.`;
@@ -3661,9 +3885,13 @@ function renderConsolePanel() {
   if (consoleResultCount) {
     const visibleCount = Math.min(filtered.length, 500);
     const totalCount = entries.length;
-    consoleResultCount.textContent = `${visibleCount} of ${filtered.length}${
-      filtered.length !== totalCount ? ` (total ${totalCount})` : ""
-    }`;
+    const modeLabel =
+      state.panelModes.console === "near"
+        ? `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`
+        : "All Time";
+    const totalLabel =
+      filtered.length !== totalCount ? ` (total ${totalCount})` : "";
+    consoleResultCount.textContent = `${modeLabel} • ${filtered.length} results • showing ${visibleCount}${totalLabel}`;
   }
   const selectedHidden =
     state.selectedConsoleId &&
@@ -4382,8 +4610,8 @@ function renderTimelineLanes(markers) {
       const markerEl = document.createElement("div");
       markerEl.className = "lane-marker";
       markerEl.classList.add(laneName === "markers" ? "marker" : laneName);
-      if (marker.severity === "error") {
-        markerEl.classList.add("error");
+      if (marker.severity) {
+        markerEl.classList.add(marker.severity);
       }
       const left = (marker.timeMs / duration) * 100;
       markerEl.style.left = `${left}%`;
@@ -5592,6 +5820,9 @@ function renderTimelineMarkers() {
             ? "console"
             : marker.type;
       el.className = `timeline-marker ${markerClass}`;
+      if (marker.severity) {
+        el.classList.add(marker.severity);
+      }
       el.dataset.markerId = marker.id;
       el.dataset.markerTime = String(marker.timeMs || 0);
       el.title = marker.label || "";
@@ -5629,8 +5860,10 @@ function renderTimelineMarkers() {
           state.playhead.selectedIncidentId === marker.sourceRef) ||
         (marker.type === "screenshot" &&
           state.playhead.selectedScreenshotId === marker.sourceRef) ||
-        (marker.type === "network" && state.selectedNetworkId === marker.sourceRef) ||
-        (marker.type === "console" && state.selectedConsoleId === marker.sourceRef);
+        (marker.type === "network-failure" &&
+          state.selectedNetworkId === marker.sourceRef) ||
+        (marker.type === "console-error" &&
+          state.selectedConsoleId === marker.sourceRef);
       child.classList.toggle("selected", isSelected);
     }
     child.classList.toggle("nearest", Boolean(nearestId && markerId === nearestId));
@@ -6120,6 +6353,7 @@ function resetState() {
   state.consoleIndex = null;
   state.networkEntries = [];
   state.consoleEntries = [];
+  state.networkGroupExpanded = new Set();
   state.loadingNetwork = false;
   state.loadingConsole = false;
   if (state.videoUrl) {
