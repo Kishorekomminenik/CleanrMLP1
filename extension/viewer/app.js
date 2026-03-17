@@ -114,7 +114,9 @@ const diagDuration = document.getElementById("diagDuration");
 const diagDurationSource = document.getElementById("diagDurationSource");
 const diagParseWarnings = document.getElementById("diagParseWarnings");
 const diagNetworkCounts = document.getElementById("diagNetworkCounts");
+const diagNetworkFailureCounts = document.getElementById("diagNetworkFailureCounts");
 const diagConsoleCounts = document.getElementById("diagConsoleCounts");
+const diagConsoleErrorCounts = document.getElementById("diagConsoleErrorCounts");
 const diagErrorCounts = document.getElementById("diagErrorCounts");
 const diagScreenshotCounts = document.getElementById("diagScreenshotCounts");
 const diagNetworkLineage = document.getElementById("diagNetworkLineage");
@@ -1724,22 +1726,43 @@ function buildIntegrityReport(session) {
   const screenshots = Array.isArray(session?.screenshots) ? session.screenshots : [];
   const incidents = Array.isArray(session?.incidents) ? session.incidents : [];
   const markerCounts = countMarkersByType(session?.markers || []);
+  const parsedSourceCounts = session?.parsedCounts || {};
+  const parsedNetworkRequests = loaded.network
+    ? typeof parsedSourceCounts.networkRequests === "number"
+      ? parsedSourceCounts.networkRequests
+      : networkEvents.length
+    : null;
+  const parsedConsoleMessages = loaded.console
+    ? typeof parsedSourceCounts.consoleMessages === "number"
+      ? parsedSourceCounts.consoleMessages
+      : consoleEvents.length
+    : null;
+  const parsedNetworkFailures = loaded.network
+    ? typeof parsedSourceCounts.networkFailures === "number"
+      ? parsedSourceCounts.networkFailures
+      : countNetworkFailures(networkEvents)
+    : null;
+  const parsedConsoleErrors = loaded.console
+    ? typeof parsedSourceCounts.consoleErrors === "number"
+      ? parsedSourceCounts.consoleErrors
+      : countConsoleErrors(consoleEvents)
+    : null;
   const parsedCounts = {
-    network: loaded.network ? networkEvents.length : null,
-    console: loaded.console ? consoleEvents.length : null,
+    networkRequests: parsedNetworkRequests,
+    consoleMessages: parsedConsoleMessages,
     screenshots: screenshots.length,
     incidents: incidents.length,
-    networkFailures: loaded.network ? countNetworkFailures(networkEvents) : null,
-    consoleErrors: loaded.console ? countConsoleErrors(consoleEvents) : null,
+    networkFailures: parsedNetworkFailures,
+    consoleErrors: parsedConsoleErrors,
     markers: Array.isArray(session?.markers) ? session.markers.length : 0,
     markersByType: markerCounts,
   };
   const manifestCounts = {
-    network: resolveManifestCount(
+    networkRequests: resolveManifestCount(
       manifest.summary?.networkRequests,
       artifacts.network?.entryCount
     ),
-    console: resolveManifestCount(
+    consoleMessages: resolveManifestCount(
       manifest.summary?.consoleMessages,
       artifacts.console?.entryCount
     ),
@@ -1815,20 +1838,20 @@ function buildIntegrityReport(session) {
     }
   }
 
-  if (!artifacts.network?.present && parsedCounts.network) {
+  if (!artifacts.network?.present && parsedCounts.networkRequests) {
     addIssue(
       errors,
       "FLAG_MISMATCH_NETWORK",
       "Manifest marks network logs as absent but parsed data exists.",
-      parsedCounts.network
+      parsedCounts.networkRequests
     );
   }
-  if (!artifacts.console?.present && parsedCounts.console) {
+  if (!artifacts.console?.present && parsedCounts.consoleMessages) {
     addIssue(
       errors,
       "FLAG_MISMATCH_CONSOLE",
       "Manifest marks console logs as absent but parsed data exists.",
-      parsedCounts.console
+      parsedCounts.consoleMessages
     );
   }
   if (!artifacts.screenshots?.present && parsedCounts.screenshots > 0) {
@@ -1849,27 +1872,33 @@ function buildIntegrityReport(session) {
   }
 
   if (
-    typeof manifestCounts.network === "number" &&
-    parsedCounts.network !== null &&
-    manifestCounts.network !== parsedCounts.network
+    typeof manifestCounts.networkRequests === "number" &&
+    parsedCounts.networkRequests !== null &&
+    manifestCounts.networkRequests !== parsedCounts.networkRequests
   ) {
     addIssue(
       errors,
       "SUMMARY_MISMATCH_NETWORK",
       "Manifest network count does not match parsed network entries.",
-      { manifest: manifestCounts.network, parsed: parsedCounts.network }
+      {
+        manifest: manifestCounts.networkRequests,
+        parsed: parsedCounts.networkRequests,
+      }
     );
   }
   if (
-    typeof manifestCounts.console === "number" &&
-    parsedCounts.console !== null &&
-    manifestCounts.console !== parsedCounts.console
+    typeof manifestCounts.consoleMessages === "number" &&
+    parsedCounts.consoleMessages !== null &&
+    manifestCounts.consoleMessages !== parsedCounts.consoleMessages
   ) {
     addIssue(
       errors,
       "SUMMARY_MISMATCH_CONSOLE",
       "Manifest console count does not match parsed console entries.",
-      { manifest: manifestCounts.console, parsed: parsedCounts.console }
+      {
+        manifest: manifestCounts.consoleMessages,
+        parsed: parsedCounts.consoleMessages,
+      }
     );
   }
   if (
@@ -2092,21 +2121,32 @@ function renderIntegrityBanner(report) {
   if (integrityCounts) {
     integrityCounts.innerHTML = "";
     const rows = [
-      { label: "Network", value: formatCountPair(report.manifestCounts.network, report.parsedCounts.network) },
-      { label: "Console", value: formatCountPair(report.manifestCounts.console, report.parsedCounts.console) },
       {
-        label: "Errors",
+        label: "Network Requests",
         value: formatCountPair(
-          typeof report.manifestCounts.networkFailures === "number" ||
-            typeof report.manifestCounts.consoleErrors === "number"
-            ? (report.manifestCounts.networkFailures || 0) +
-              (report.manifestCounts.consoleErrors || 0)
-            : null,
-          typeof report.parsedCounts.networkFailures === "number" ||
-            typeof report.parsedCounts.consoleErrors === "number"
-            ? (report.parsedCounts.networkFailures || 0) +
-              (report.parsedCounts.consoleErrors || 0)
-            : null
+          report.manifestCounts.networkRequests,
+          report.parsedCounts.networkRequests
+        ),
+      },
+      {
+        label: "Network Failures",
+        value: formatCountPair(
+          report.manifestCounts.networkFailures,
+          report.parsedCounts.networkFailures
+        ),
+      },
+      {
+        label: "Console Messages",
+        value: formatCountPair(
+          report.manifestCounts.consoleMessages,
+          report.parsedCounts.consoleMessages
+        ),
+      },
+      {
+        label: "Console Errors",
+        value: formatCountPair(
+          report.manifestCounts.consoleErrors,
+          report.parsedCounts.consoleErrors
         ),
       },
       {
@@ -2355,13 +2395,13 @@ function renderSummaryFromManifest(manifest) {
   }
   const parsed = report.parsedCounts || {};
   const networkText = manifest?.artifacts?.network?.present
-    ? typeof parsed.network === "number"
-      ? String(parsed.network)
+    ? typeof parsed.networkRequests === "number"
+      ? String(parsed.networkRequests)
       : "Not loaded"
     : "Not available";
   const consoleText = manifest?.artifacts?.console?.present
-    ? typeof parsed.console === "number"
-      ? String(parsed.console)
+    ? typeof parsed.consoleMessages === "number"
+      ? String(parsed.consoleMessages)
       : "Not loaded"
     : "Not available";
   const errorsCount =
@@ -2422,8 +2462,8 @@ function updateTimelineSummary(manifest) {
     return;
   }
   const parts = [];
-  if (typeof report.parsedCounts.network === "number") {
-    parts.push(`${report.parsedCounts.network} requests`);
+  if (typeof report.parsedCounts.networkRequests === "number") {
+    parts.push(`${report.parsedCounts.networkRequests} requests`);
   }
   if (typeof report.parsedCounts.consoleErrors === "number") {
     parts.push(`${report.parsedCounts.consoleErrors} console errors`);
@@ -3689,6 +3729,8 @@ async function ensureNetworkLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.network?.path || null;
     const { entries, parseErrors } = await loadNdjsonEntries(manifestPath);
+    const totalNetworkEntries = entries.length;
+    const totalNetworkFailures = countNetworkFailures(entries);
     const normalized = entries
       .map(normalizeNetworkEntry)
       .filter((entry) => isValidTimestampMs(getNetworkTimestampMs(entry)));
@@ -3700,6 +3742,11 @@ async function ensureNetworkLogsLoaded() {
       state.session.networkEvents = normalized;
       state.session.eventIndexes.networkById = state.networkIndex;
       state.session.artifactPresence.network = normalized.length > 0;
+      if (!state.session.parsedCounts) {
+        state.session.parsedCounts = {};
+      }
+      state.session.parsedCounts.networkRequests = totalNetworkEntries;
+      state.session.parsedCounts.networkFailures = totalNetworkFailures;
       if (!state.session.parseWarnings) {
         state.session.parseWarnings = { network: 0, console: 0, total: 0 };
       }
@@ -3732,6 +3779,8 @@ async function ensureConsoleLogsLoaded() {
   try {
     const manifestPath = state.manifest?.artifacts?.console?.path || null;
     const { entries, parseErrors } = await loadNdjsonEntries(manifestPath);
+    const totalConsoleEntries = entries.length;
+    const totalConsoleErrors = countConsoleErrors(entries);
     const normalized = entries
       .map(normalizeConsoleEntry)
       .filter((entry) => isValidTimestampMs(entry.timestampMs || 0));
@@ -3743,6 +3792,11 @@ async function ensureConsoleLogsLoaded() {
       state.session.consoleEvents = normalized;
       state.session.eventIndexes.consoleById = state.consoleIndex;
       state.session.artifactPresence.console = normalized.length > 0;
+      if (!state.session.parsedCounts) {
+        state.session.parsedCounts = {};
+      }
+      state.session.parsedCounts.consoleMessages = totalConsoleEntries;
+      state.session.parsedCounts.consoleErrors = totalConsoleErrors;
       if (!state.session.parseWarnings) {
         state.session.parseWarnings = { network: 0, console: 0, total: 0 };
       }
@@ -5224,12 +5278,34 @@ function updateDiagnosticsPanel() {
   if (diagNetworkCounts) {
     diagNetworkCounts.textContent = report.failFast
       ? "Disabled"
-      : formatCountPair(report.manifestCounts.network, report.parsedCounts.network);
+      : formatCountPair(
+          report.manifestCounts.networkRequests,
+          report.parsedCounts.networkRequests
+        );
+  }
+  if (diagNetworkFailureCounts) {
+    diagNetworkFailureCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(
+          report.manifestCounts.networkFailures,
+          report.parsedCounts.networkFailures
+        );
   }
   if (diagConsoleCounts) {
     diagConsoleCounts.textContent = report.failFast
       ? "Disabled"
-      : formatCountPair(report.manifestCounts.console, report.parsedCounts.console);
+      : formatCountPair(
+          report.manifestCounts.consoleMessages,
+          report.parsedCounts.consoleMessages
+        );
+  }
+  if (diagConsoleErrorCounts) {
+    diagConsoleErrorCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(
+          report.manifestCounts.consoleErrors,
+          report.parsedCounts.consoleErrors
+        );
   }
   if (diagErrorCounts) {
     const manifestErrors =
