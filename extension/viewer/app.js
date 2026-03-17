@@ -15,9 +15,15 @@ const errorClose = document.getElementById("errorClose");
 const loadedInfo = document.getElementById("loadedInfo");
 const emptyState = document.getElementById("emptyState");
 const dropZone = document.getElementById("dropZone");
+const loaderPanel = document.getElementById("loaderPanel");
+const loaderFull = document.getElementById("loaderFull");
+const loaderCompact = document.getElementById("loaderCompact");
+const sessionIdentityName = document.getElementById("sessionIdentityName");
+const sessionIdentityMeta = document.getElementById("sessionIdentityMeta");
 const banner = document.getElementById("howtoBanner");
 const bannerClose = document.getElementById("bannerClose");
 const headerActions = document.querySelector(".header-actions");
+const appRoot = document.querySelector(".app");
 const timeline = document.getElementById("timeline");
 const timelineCursor = document.getElementById("timelineCursor");
 const timelineLanes = document.getElementById("timelineLanes");
@@ -59,6 +65,12 @@ const summaryConsoleMessages = document.getElementById("summaryConsoleMessages")
 const summaryConsoleErrors = document.getElementById("summaryConsoleErrors");
 const summaryScreenshots = document.getElementById("summaryScreenshots");
 const summaryRecording = document.getElementById("summaryRecording");
+const summaryNetworkRequestsLabel = document.getElementById("summaryNetworkRequestsLabel");
+const summaryNetworkFailuresLabel = document.getElementById("summaryNetworkFailuresLabel");
+const summaryConsoleMessagesLabel = document.getElementById("summaryConsoleMessagesLabel");
+const summaryConsoleErrorsLabel = document.getElementById("summaryConsoleErrorsLabel");
+const summaryScreenshotsLabel = document.getElementById("summaryScreenshotsLabel");
+const summaryRecordingLabel = document.getElementById("summaryRecordingLabel");
 const summarySignals = document.getElementById("summarySignals");
 const timelineSummary = document.getElementById("timelineSummary");
 const panelTabs = Array.from(document.querySelectorAll(".tab-button"));
@@ -499,21 +511,58 @@ function clearError() {
 }
 
 function setLoadedInfo(zipName, sessionLogName) {
-  if (!loadedInfo) {
-    return;
+  const durationText = formatTime(state.playhead.durationMs || 0);
+  if (loadedInfo) {
+    loadedInfo.textContent = `Session: ${sessionLogName} • ${durationText} • ${zipName}`;
+    loadedInfo.classList.remove("hidden");
   }
-  loadedInfo.textContent = `Loaded: ${zipName} • ${sessionLogName} • ${formatTime(
-    state.playhead.durationMs
-  )}`;
-  loadedInfo.classList.remove("hidden");
+  if (sessionIdentityName) {
+    sessionIdentityName.textContent = sessionLogName || "Session loaded";
+  }
+  if (sessionIdentityMeta) {
+    sessionIdentityMeta.textContent = `${zipName} • ${durationText}`;
+  }
+  if (appRoot) {
+    appRoot.classList.add("session-loaded");
+  }
+  if (loaderFull) {
+    loaderFull.classList.add("hidden");
+  }
+  if (loaderCompact) {
+    loaderCompact.classList.remove("hidden");
+  }
 }
 
 function clearLoadedInfo() {
   if (!loadedInfo) {
+    if (appRoot) {
+      appRoot.classList.remove("session-loaded");
+    }
+    if (loaderFull) {
+      loaderFull.classList.remove("hidden");
+    }
+    if (loaderCompact) {
+      loaderCompact.classList.add("hidden");
+    }
     return;
   }
   loadedInfo.textContent = "";
   loadedInfo.classList.add("hidden");
+  if (sessionIdentityName) {
+    sessionIdentityName.textContent = "Session loaded";
+  }
+  if (sessionIdentityMeta) {
+    sessionIdentityMeta.textContent = "";
+  }
+  if (appRoot) {
+    appRoot.classList.remove("session-loaded");
+  }
+  if (loaderFull) {
+    loaderFull.classList.remove("hidden");
+  }
+  if (loaderCompact) {
+    loaderCompact.classList.add("hidden");
+  }
 }
 
 function parseTimestampFromName(name) {
@@ -1714,9 +1763,21 @@ function attachVideoDurationReconciliation() {
     refreshView();
     updateIntegrityReport();
 
+    const durationText = formatTime(mediaDurationMs);
     if (loadedInfo && loadedInfo.textContent) {
-      const prefix = loadedInfo.textContent.split(" • ").slice(0, 2).join(" • ");
-      loadedInfo.textContent = `${prefix} • ${formatTime(mediaDurationMs)}`;
+      const parts = loadedInfo.textContent.split(" • ");
+      if (parts.length >= 3) {
+        loadedInfo.textContent = `${parts[0]} • ${durationText} • ${parts[2]}`;
+      } else {
+        loadedInfo.textContent = `Session • ${durationText}`;
+      }
+    }
+    if (sessionIdentityMeta && sessionIdentityMeta.textContent) {
+      const metaParts = sessionIdentityMeta.textContent.split(" • ");
+      sessionIdentityMeta.textContent =
+        metaParts.length >= 2
+          ? `${metaParts[0]} • ${durationText}`
+          : durationText;
     }
 
     if (previousDuration && previousDuration !== mediaDurationMs) {
@@ -2875,6 +2936,14 @@ function renderSummaryFromManifest(manifest) {
     summaryPanel.classList.add("hidden");
     return;
   }
+  const pluralizeLabel = (count, singular, plural) => {
+    if (typeof count !== "number") {
+      return plural;
+    }
+    return count === 1 ? singular : plural;
+  };
+  const resolveCount = (manifestCount, parsedCount) =>
+    typeof manifestCount === "number" ? manifestCount : parsedCount;
   const formatSummaryCount = ({ manifestCount, parsedCount, present }) => {
     const hasManifest = typeof manifestCount === "number";
     const hasParsed = typeof parsedCount === "number";
@@ -2899,6 +2968,26 @@ function renderSummaryFromManifest(manifest) {
   summaryPanel.classList.remove("hidden");
   const parsed = report.parsedCounts || {};
   const manifestCounts = report.manifestCounts || {};
+  const requestsCount = resolveCount(
+    manifestCounts.networkRequests,
+    parsed.networkRequests
+  );
+  const failuresCount = resolveCount(
+    manifestCounts.networkFailures,
+    parsed.networkFailures
+  );
+  const consoleCount = resolveCount(
+    manifestCounts.consoleMessages,
+    parsed.consoleMessages
+  );
+  const consoleErrorCount = resolveCount(
+    manifestCounts.consoleErrors,
+    parsed.consoleErrors
+  );
+  const screenshotCount = resolveCount(
+    manifestCounts.screenshots,
+    parsed.screenshots
+  );
   const networkRequestsText = formatSummaryCount({
     manifestCount: manifestCounts.networkRequests,
     parsedCount: parsed.networkRequests,
@@ -2931,6 +3020,44 @@ function renderSummaryFromManifest(manifest) {
   if (summaryConsoleErrors) {
     summaryConsoleErrors.textContent = consoleErrorsText;
   }
+  if (summaryNetworkRequestsLabel) {
+    summaryNetworkRequestsLabel.textContent = pluralizeLabel(
+      requestsCount,
+      "Request",
+      "Requests"
+    );
+  }
+  if (summaryNetworkFailuresLabel) {
+    summaryNetworkFailuresLabel.textContent = pluralizeLabel(
+      failuresCount,
+      "Failure",
+      "Failures"
+    );
+  }
+  if (summaryConsoleMessagesLabel) {
+    summaryConsoleMessagesLabel.textContent = pluralizeLabel(
+      consoleCount,
+      "Console",
+      "Console"
+    );
+  }
+  if (summaryConsoleErrorsLabel) {
+    summaryConsoleErrorsLabel.textContent = pluralizeLabel(
+      consoleErrorCount,
+      "Error",
+      "Errors"
+    );
+  }
+  if (summaryScreenshotsLabel) {
+    summaryScreenshotsLabel.textContent = pluralizeLabel(
+      screenshotCount,
+      "Screenshot",
+      "Screenshots"
+    );
+  }
+  if (summaryRecordingLabel) {
+    summaryRecordingLabel.textContent = "Recording";
+  }
   if (summaryScreenshots) {
     summaryScreenshots.textContent = formatSummaryCount({
       manifestCount: manifestCounts.screenshots,
@@ -2944,15 +3071,6 @@ function renderSummaryFromManifest(manifest) {
   }
   if (summarySignals) {
     const signals = [];
-    if (typeof parsed.networkFailures === "number" && parsed.networkFailures > 0) {
-      signals.push(`${parsed.networkFailures} network failures`);
-    }
-    if (typeof parsed.consoleErrors === "number" && parsed.consoleErrors > 0) {
-      signals.push(`${parsed.consoleErrors} console errors`);
-    }
-    if (parsed.screenshots) {
-      signals.push(`${parsed.screenshots} screenshots`);
-    }
     appendMismatchSignal(
       signals,
       "Network Requests",
@@ -4880,6 +4998,13 @@ function renderEventList() {
         "Event details"
       );
     }
+    return;
+  }
+  if (!state.filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state muted";
+    empty.textContent = "No matching events.";
+    eventList.appendChild(empty);
     return;
   }
   state.filtered.forEach((ev, index) => {
@@ -6842,6 +6967,12 @@ function resetState() {
   setActivePanel("timeline");
   clearError();
   clearLoadedInfo();
+  if (diagnosticsPanel) {
+    diagnosticsPanel.open = false;
+  }
+  if (incidentPanel) {
+    incidentPanel.open = false;
+  }
   renderInspector();
 }
 

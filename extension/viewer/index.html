@@ -18,10 +18,15 @@
         <div class="header-actions hidden">
           <button id="openUnifiedBtn" class="primary">Open ZIP</button>
           <button id="openSessionFolderBtn" class="primary">Open Folder</button>
-          <button id="openSessionBtn" class="secondary">Open session.json</button>
-          <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
-          <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
           <button id="resetBtn" class="secondary">Reset</button>
+          <details class="advanced-actions">
+            <summary>Advanced</summary>
+            <div class="advanced-actions-body">
+              <button id="openSessionBtn" class="secondary">Open session.json</button>
+              <button id="openZipBtn" class="secondary">Open Evidence ZIP</button>
+              <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
+            </div>
+          </details>
           <input id="zipInput" type="file" accept=".zip" class="hidden" />
           <input
             id="sessionAnyInput"
@@ -71,21 +76,32 @@
 
       <main class="layout">
         <section class="left">
-          <div class="panel loader">
-            <h2>Evidence Loader</h2>
-            <p id="emptyState" class="muted">
-              Open session.json, the session folder, or the ZIP package. If this viewer is running
-              from inside the same evidence folder, use Open Evidence ZIP or move the viewer
-              outside the package first.
-            </p>
-            <div class="loader-hints">
-              <div><strong>Open ZIP</strong> — Load a DebugDuck ZIP export</div>
-              <div><strong>Open Folder</strong> — Load an extracted session folder</div>
+          <div class="panel loader" id="loaderPanel">
+            <div id="loaderFull" class="loader-full">
+              <h2>Evidence Loader</h2>
+              <p id="emptyState" class="muted">
+                Open session.json, the session folder, or the ZIP package. If this viewer is running
+                from inside the same evidence folder, use Open Evidence ZIP or move the viewer
+                outside the package first.
+              </p>
+              <div class="loader-hints">
+                <div><strong>Open ZIP</strong> — Load a DebugDuck ZIP export</div>
+                <div><strong>Open Folder</strong> — Load an extracted session folder</div>
+              </div>
+              <div id="dropZone" class="drop-zone">
+                <div class="drop-title">Drag &amp; drop a session package</div>
+                <div class="drop-subtitle muted">
+                  Supports ZIP exports, extracted session folders, or session.json
+                </div>
+              </div>
             </div>
-            <div id="dropZone" class="drop-zone">
-              <div class="drop-title">Drag &amp; drop a session package</div>
-              <div class="drop-subtitle muted">
-                Supports ZIP exports, extracted session folders, or session.json
+            <div id="loaderCompact" class="loader-compact hidden">
+              <div class="session-identity">
+                <div id="sessionIdentityName" class="session-title">Session loaded</div>
+                <div id="sessionIdentityMeta" class="session-meta muted"></div>
+              </div>
+              <div class="session-actions muted">
+                Open another session or reset to clear the workspace.
               </div>
             </div>
             <div id="errorPanel" class="error-panel hidden" role="alert">
@@ -204,209 +220,225 @@
             <div class="summary-grid">
               <div class="summary-item">
                 <div id="summaryNetworkRequests" class="summary-value">0</div>
-                <div class="summary-label">Requests</div>
+                <div id="summaryNetworkRequestsLabel" class="summary-label">Requests</div>
               </div>
               <div class="summary-item">
                 <div id="summaryNetworkFailures" class="summary-value">0</div>
-                <div class="summary-label">Failures</div>
+                <div id="summaryNetworkFailuresLabel" class="summary-label">Failures</div>
               </div>
               <div class="summary-item">
                 <div id="summaryConsoleMessages" class="summary-value">0</div>
-                <div class="summary-label">Console</div>
+                <div id="summaryConsoleMessagesLabel" class="summary-label">Console</div>
               </div>
               <div class="summary-item">
                 <div id="summaryConsoleErrors" class="summary-value">0</div>
-                <div class="summary-label">Errors</div>
+                <div id="summaryConsoleErrorsLabel" class="summary-label">Errors</div>
               </div>
               <div class="summary-item">
                 <div id="summaryScreenshots" class="summary-value">0</div>
-                <div class="summary-label">Screenshots</div>
+                <div id="summaryScreenshotsLabel" class="summary-label">Screenshots</div>
               </div>
               <div class="summary-item">
                 <div id="summaryRecording" class="summary-value">No</div>
-                <div class="summary-label">Recording</div>
+                <div id="summaryRecordingLabel" class="summary-label">Recording</div>
               </div>
             </div>
             <div id="summarySignals" class="summary-signals muted"></div>
           </div>
-          <div id="diagnosticsPanel" class="panel diagnostics-panel hidden">
-            <h2>Diagnostics</h2>
-            <div class="diagnostics-grid">
-              <div class="diagnostics-row">
-                <span class="muted">Source</span>
-                <span id="diagSource">-</span>
+          <details id="diagnosticsPanel" class="panel diagnostics-panel hidden">
+            <summary>Session diagnostics</summary>
+            <div class="diagnostics-body">
+              <div class="diagnostics-grid">
+                <div class="diagnostics-row">
+                  <span class="muted">Source</span>
+                  <span id="diagSource">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Root normalized</span>
+                  <span id="diagRoot">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Recording</span>
+                  <span id="diagRecording">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Network</span>
+                  <span id="diagNetwork">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Console</span>
+                  <span id="diagConsole">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Screenshots</span>
+                  <span id="diagScreenshots">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Incidents</span>
+                  <span id="diagIncidents">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Duration</span>
+                  <span id="diagDuration">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Duration source</span>
+                  <span id="diagDurationSource">-</span>
+                </div>
+                <div class="diagnostics-row">
+                  <span class="muted">Parse warnings</span>
+                  <span id="diagParseWarnings">-</span>
+                </div>
               </div>
-              <div class="diagnostics-row">
-                <span class="muted">Root normalized</span>
-                <span id="diagRoot">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Recording</span>
-                <span id="diagRecording">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Network</span>
-                <span id="diagNetwork">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Console</span>
-                <span id="diagConsole">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Screenshots</span>
-                <span id="diagScreenshots">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Incidents</span>
-                <span id="diagIncidents">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Duration</span>
-                <span id="diagDuration">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Duration source</span>
-                <span id="diagDurationSource">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Parse warnings</span>
-                <span id="diagParseWarnings">-</span>
-              </div>
+              <details class="diagnostics-details">
+                <summary>Counts &amp; lineage</summary>
+                <div class="diagnostics-subtitle">Counts (manifest / parsed)</div>
+                <div class="diagnostics-grid">
+                  <div class="diagnostics-row">
+                    <span class="muted">Requests</span>
+                    <span id="diagNetworkCounts">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Failures</span>
+                    <span id="diagNetworkFailureCounts">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Console</span>
+                    <span id="diagConsoleCounts">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Errors</span>
+                    <span id="diagConsoleErrorCounts">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Combined Errors</span>
+                    <span id="diagErrorCounts">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Screenshots</span>
+                    <span id="diagScreenshotCounts">-</span>
+                  </div>
+                </div>
+                <div class="diagnostics-subtitle">Lineage</div>
+                <div class="diagnostics-grid">
+                  <div class="diagnostics-row">
+                    <span class="muted">Network</span>
+                    <span id="diagNetworkLineage">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Console</span>
+                    <span id="diagConsoleLineage">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Screenshots</span>
+                    <span id="diagScreenshotLineage">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Incidents</span>
+                    <span id="diagIncidentLineage">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Markers</span>
+                    <span id="diagMarkerLineage">-</span>
+                  </div>
+                </div>
+              </details>
             </div>
-            <div class="diagnostics-subtitle">Counts (manifest / parsed)</div>
-            <div class="diagnostics-grid">
-              <div class="diagnostics-row">
-                <span class="muted">Requests</span>
-                <span id="diagNetworkCounts">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Failures</span>
-                <span id="diagNetworkFailureCounts">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Console</span>
-                <span id="diagConsoleCounts">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Errors</span>
-                <span id="diagConsoleErrorCounts">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Combined Errors</span>
-                <span id="diagErrorCounts">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Screenshots</span>
-                <span id="diagScreenshotCounts">-</span>
-              </div>
-            </div>
-            <div class="diagnostics-subtitle">Lineage</div>
-            <div class="diagnostics-grid">
-              <div class="diagnostics-row">
-                <span class="muted">Network</span>
-                <span id="diagNetworkLineage">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Console</span>
-                <span id="diagConsoleLineage">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Screenshots</span>
-                <span id="diagScreenshotLineage">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Incidents</span>
-                <span id="diagIncidentLineage">-</span>
-              </div>
-              <div class="diagnostics-row">
-                <span class="muted">Markers</span>
-                <span id="diagMarkerLineage">-</span>
-              </div>
-            </div>
-          </div>
+          </details>
 
-          <div id="incidentPanel" class="panel incident-panel hidden">
-            <div class="incident-header">
-              <h2>Incidents</h2>
+          <details id="incidentPanel" class="panel incident-panel hidden">
+            <summary>Issues</summary>
+            <div class="incident-body">
               <label class="incident-toggle">
                 <input type="checkbox" id="errorOnlyToggle" />
-                Error-only
+                Errors only
               </label>
-            </div>
-            <div id="incidentList" class="incident-list"></div>
-            <div id="incidentEmpty" class="empty-state muted hidden">
-              No incidents match current filters.
-            </div>
-          </div>
-
-          <div class="panel panel-tabs">
-            <button class="tab-button active" type="button" data-panel="timeline">
-              Timeline
-            </button>
-            <button class="tab-button" type="button" data-panel="screenshots">
-              Screenshots
-            </button>
-            <button class="tab-button" type="button" data-panel="network">
-              Network
-            </button>
-            <button class="tab-button" type="button" data-panel="console">
-              Console
-            </button>
-          </div>
-
-          <div class="panel filters" data-panel="timeline">
-            <h2>Filters</h2>
-            <div class="filter-row">
-              <label><input type="checkbox" id="filterMarkers" checked /> Markers</label>
-              <label><input type="checkbox" id="filterNetwork" checked /> Network</label>
-              <label><input type="checkbox" id="filterConsole" checked /> Console</label>
-              <label><input type="checkbox" id="filterScreenshots" checked /> Screenshots</label>
-            </div>
-            <div class="filter-row">
-              <label><input type="checkbox" id="filterErrors" /> Errors only</label>
-            </div>
-            <input
-              id="searchInput"
-              class="search"
-              type="search"
-              placeholder="Search by URL or text"
-            />
-          </div>
-
-          <div class="panel-group" data-panel="timeline">
-            <div class="panel event-list-panel">
-              <h2>Events</h2>
-              <div id="eventList" class="event-list"></div>
-            </div>
-
-            <div class="panel details-panel">
-              <h2>Details</h2>
-              <div id="detailsBody" class="details-body muted">
-                Select an event to see details.
+              <div id="incidentList" class="incident-list"></div>
+              <div id="incidentEmpty" class="empty-state muted hidden">
+                No issues match current filters.
               </div>
             </div>
-          </div>
+          </details>
 
-          <div class="panel-group hidden" data-panel="screenshots">
-            <div class="panel screenshots-panel">
-              <h2>Screenshots</h2>
-              <div id="screenshotsList" class="screenshots-list"></div>
-              <div id="screenshotsEmpty" class="empty-state muted hidden">
-                No screenshots available for this session.
+          <div class="panel workspace-panel">
+            <div class="panel panel-tabs">
+              <button class="tab-button active" type="button" data-panel="timeline">
+                Timeline
+              </button>
+              <button class="tab-button" type="button" data-panel="screenshots">
+                Screenshots
+              </button>
+              <button class="tab-button" type="button" data-panel="network">
+                Network
+              </button>
+              <button class="tab-button" type="button" data-panel="console">
+                Console
+              </button>
+            </div>
+
+            <div class="panel-group" data-panel="timeline">
+              <div class="event-workspace">
+                <div class="event-list-column">
+                  <div class="filters" data-panel="timeline">
+                    <div class="filter-row">
+                      <label><input type="checkbox" id="filterMarkers" checked /> Markers</label>
+                      <label><input type="checkbox" id="filterNetwork" checked /> Network</label>
+                      <label><input type="checkbox" id="filterConsole" checked /> Console</label>
+                      <label><input type="checkbox" id="filterScreenshots" checked /> Screenshots</label>
+                    </div>
+                    <div class="filter-row">
+                      <label><input type="checkbox" id="filterErrors" /> Errors only</label>
+                    </div>
+                    <input
+                      id="searchInput"
+                      class="search"
+                      type="search"
+                      placeholder="Search by URL or text"
+                    />
+                  </div>
+                  <div class="panel event-list-panel">
+                    <h2>Events</h2>
+                    <div id="eventList" class="event-list"></div>
+                  </div>
+                </div>
+
+                <div class="inspector-column">
+                  <div class="panel details-panel">
+                    <h2>Details</h2>
+                    <div id="detailsBody" class="details-body muted">
+                      Select an event to see details.
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div class="panel screenshot-preview-panel">
-              <h2>Preview</h2>
-              <div id="screenshotPreview" class="screenshot-preview muted">
-                Select a screenshot to preview.
+
+            <div class="panel-group hidden" data-panel="screenshots">
+              <div class="event-workspace">
+                <div class="event-list-column">
+                  <div class="panel screenshots-panel">
+                    <h2>Screenshots</h2>
+                    <div id="screenshotsList" class="screenshots-list"></div>
+                    <div id="screenshotsEmpty" class="empty-state muted hidden">
+                      No screenshots available for this session.
+                    </div>
+                  </div>
+                </div>
+                <div class="inspector-column">
+                  <div class="panel screenshot-preview-panel">
+                    <h2>Preview</h2>
+                    <div id="screenshotPreview" class="screenshot-preview muted">
+                      Select a screenshot to preview.
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="panel-group hidden" data-panel="network">
-            <div class="event-workspace">
-              <div class="event-list-column">
-                <div class="panel network-panel">
+            <div class="panel-group hidden" data-panel="network">
+              <div class="event-workspace">
+                <div class="event-list-column">
+                  <div class="panel network-panel">
                   <h2>Network</h2>
                   <div class="filter-row search-row">
                     <input
@@ -529,6 +561,7 @@
               Select an item to see details.
             </div>
           </div>
+        </div>
         </section>
       </main>
     </div>

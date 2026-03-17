@@ -51,6 +51,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .loaded-info {
@@ -58,18 +59,111 @@ body {
   font-size: 12px;
 }
 
+.loaded-info {
+  font-weight: 500;
+}
+
+.advanced-actions {
+  position: relative;
+}
+
+.advanced-actions summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.advanced-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-actions[open] summary {
+  color: var(--text);
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.advanced-actions-body {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  z-index: 10;
+  min-width: 200px;
+}
+
+.advanced-actions:not([open]) .advanced-actions-body {
+  display: none;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px;
   box-shadow: var(--shadow);
+}
+
+.loader-full.hidden {
+  display: none;
+}
+
+.loader-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.loader-compact.hidden {
+  display: none;
+}
+
+.session-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.session-meta {
+  font-size: 12px;
+}
+
+.session-actions {
+  font-size: 12px;
+  text-align: right;
+  max-width: 220px;
+}
+
+.app.session-loaded .loader-full {
+  display: none;
+}
+
+.app.session-loaded .loader-compact {
+  display: flex;
 }
 
 .loader-hints {
@@ -335,9 +429,53 @@ body {
   font-size: 12px;
 }
 
+.summary-signals:empty {
+  display: none;
+}
+
 .panel h2 {
   margin: 0 0 8px;
   font-size: 14px;
+}
+
+.diagnostics-panel > summary,
+.incident-panel > summary {
+  list-style: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.diagnostics-panel > summary::-webkit-details-marker,
+.incident-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.diagnostics-panel[open] > summary,
+.incident-panel[open] > summary {
+  margin-bottom: 8px;
+}
+
+.diagnostics-body {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostics-details > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+
+.diagnostics-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.incident-body {
+  display: grid;
+  gap: 8px;
 }
 
 .error-panel {
@@ -1030,6 +1168,34 @@ body {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+.workspace-panel {
+  padding: 0;
+}
+
+.workspace-panel .panel-tabs {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-panel .panel-group {
+  padding: 12px;
+}
+
+.workspace-panel .filters {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.workspace-panel .filters .filter-row {
+  margin-bottom: 6px;
+}
+
+.workspace-panel .panel {
+  box-shadow: none;
 }
 
 .tab-button {
