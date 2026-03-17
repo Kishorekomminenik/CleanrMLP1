@@ -49,6 +49,30 @@
         </div>
       </header>
 
+    <div id="integrityBanner" class="integrity-banner hidden" role="alert">
+      <div class="integrity-banner-main">
+        <div id="integrityTitle" class="integrity-title">Integrity check</div>
+        <div id="integritySummary" class="integrity-summary muted"></div>
+      </div>
+      <details id="integrityDetails" class="integrity-details">
+        <summary>Integrity details</summary>
+        <div class="integrity-details-body">
+          <div class="integrity-section">
+            <div class="integrity-section-title">Errors</div>
+            <ul id="integrityErrors" class="integrity-list"></ul>
+          </div>
+          <div class="integrity-section">
+            <div class="integrity-section-title">Warnings</div>
+            <ul id="integrityWarnings" class="integrity-list"></ul>
+          </div>
+          <div class="integrity-section">
+            <div class="integrity-section-title">Manifest vs parsed</div>
+            <div id="integrityCounts" class="integrity-grid"></div>
+          </div>
+        </div>
+      </details>
+    </div>
+
       <main class="layout">
         <section class="left">
           <div class="panel loader">
@@ -241,6 +265,48 @@
               <div class="diagnostics-row">
                 <span class="muted">Parse warnings</span>
                 <span id="diagParseWarnings">-</span>
+              </div>
+            </div>
+            <div class="diagnostics-subtitle">Counts (manifest / parsed)</div>
+            <div class="diagnostics-grid">
+              <div class="diagnostics-row">
+                <span class="muted">Network</span>
+                <span id="diagNetworkCounts">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Console</span>
+                <span id="diagConsoleCounts">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Errors</span>
+                <span id="diagErrorCounts">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Screenshots</span>
+                <span id="diagScreenshotCounts">-</span>
+              </div>
+            </div>
+            <div class="diagnostics-subtitle">Lineage</div>
+            <div class="diagnostics-grid">
+              <div class="diagnostics-row">
+                <span class="muted">Network</span>
+                <span id="diagNetworkLineage">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Console</span>
+                <span id="diagConsoleLineage">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Screenshots</span>
+                <span id="diagScreenshotLineage">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Incidents</span>
+                <span id="diagIncidentLineage">-</span>
+              </div>
+              <div class="diagnostics-row">
+                <span class="muted">Markers</span>
+                <span id="diagMarkerLineage">-</span>
               </div>
             </div>
           </div>

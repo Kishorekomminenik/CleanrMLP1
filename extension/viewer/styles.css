@@ -97,6 +97,99 @@ body {
   gap: 12px;
 }
 
+.diagnostics-subtitle {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.integrity-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  background: rgba(254, 226, 226, 0.7);
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+
+.integrity-banner.warn {
+  border-color: rgba(234, 179, 8, 0.3);
+  background: rgba(254, 249, 195, 0.7);
+}
+
+.integrity-banner.hidden {
+  display: none;
+}
+
+.integrity-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.integrity-summary {
+  font-size: 12px;
+}
+
+.integrity-details {
+  font-size: 12px;
+}
+
+.integrity-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.integrity-details-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.integrity-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.integrity-list {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.integrity-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.integrity-grid .integrity-row,
+.integrity-grid div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.integrity-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.integrity-disabled-note {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .search-row {
   align-items: center;
   gap: 8px;

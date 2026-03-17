@@ -103,6 +103,22 @@ const diagIncidents = document.getElementById("diagIncidents");
 const diagDuration = document.getElementById("diagDuration");
 const diagDurationSource = document.getElementById("diagDurationSource");
 const diagParseWarnings = document.getElementById("diagParseWarnings");
+const diagNetworkCounts = document.getElementById("diagNetworkCounts");
+const diagConsoleCounts = document.getElementById("diagConsoleCounts");
+const diagErrorCounts = document.getElementById("diagErrorCounts");
+const diagScreenshotCounts = document.getElementById("diagScreenshotCounts");
+const diagNetworkLineage = document.getElementById("diagNetworkLineage");
+const diagConsoleLineage = document.getElementById("diagConsoleLineage");
+const diagScreenshotLineage = document.getElementById("diagScreenshotLineage");
+const diagIncidentLineage = document.getElementById("diagIncidentLineage");
+const diagMarkerLineage = document.getElementById("diagMarkerLineage");
+const integrityBanner = document.getElementById("integrityBanner");
+const integrityTitle = document.getElementById("integrityTitle");
+const integritySummary = document.getElementById("integritySummary");
+const integrityDetails = document.getElementById("integrityDetails");
+const integrityErrors = document.getElementById("integrityErrors");
+const integrityWarnings = document.getElementById("integrityWarnings");
+const integrityCounts = document.getElementById("integrityCounts");
 const networkSearchInput = document.getElementById("networkSearchInput");
 const networkSearchClear = document.getElementById("networkSearchClear");
 const networkResultCount = document.getElementById("networkResultCount");
@@ -118,6 +134,7 @@ const consoleQuickChips = Array.from(
 const state = {
   pkg: null,
   session: null,
+  integrityReport: null,
   sessionLog: null,
   manifest: null,
   packageMode: false,
@@ -659,6 +676,9 @@ function findNearestTimelineEvent(currentTimeMs, events) {
 }
 
 function getImportantMarkers() {
+  if (isFailFastActive()) {
+    return [];
+  }
   return state.session?.markers || [];
 }
 
@@ -886,6 +906,23 @@ function getCurrentMomentContext() {
 
 function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
+    return;
+  }
+  if (isFailFastActive()) {
+    state.currentMoment = null;
+    state.playhead.nearestIncidentId = null;
+    state.playhead.nearestScreenshotId = null;
+    contextIncident.textContent = "Integrity check failed.";
+    contextScreenshot.textContent = "Integrity check failed.";
+    if (contextNetworkCount) {
+      contextNetworkCount.textContent = "Disabled";
+    }
+    if (contextConsoleCount) {
+      contextConsoleCount.textContent = "Disabled";
+    }
+    if (contextWindow) {
+      contextWindow.textContent = "±0s";
+    }
     return;
   }
   const moment = getCurrentMomentContext();
@@ -1428,7 +1465,7 @@ function attachVideoDurationReconciliation() {
     updateTimeline();
     updateCurrentTimeContext();
     refreshView();
-    updateDiagnosticsPanel();
+    updateIntegrityReport();
 
     if (loadedInfo && loadedInfo.textContent) {
       const prefix = loadedInfo.textContent.split(" • ").slice(0, 2).join(" • ");
@@ -1593,6 +1630,513 @@ function normalizeTimelineEvents(events) {
     .sort((a, b) => a.t_ms - b.t_ms);
 }
 
+function isFailFastActive() {
+  return Boolean(state.integrityReport?.failFast);
+}
+
+function countNetworkFailures(entries) {
+  return (entries || []).filter((entry) => isNetworkError(entry)).length;
+}
+
+function countConsoleErrors(entries) {
+  return (entries || []).filter((entry) => normalizeConsoleLevel(entry.level) === "error")
+    .length;
+}
+
+function countMarkersByType(markers) {
+  const counts = {
+    incident: 0,
+    screenshot: 0,
+    "network-failure": 0,
+    "console-error": 0,
+  };
+  (markers || []).forEach((marker) => {
+    if (marker?.type && Object.prototype.hasOwnProperty.call(counts, marker.type)) {
+      counts[marker.type] += 1;
+    }
+  });
+  return counts;
+}
+
+function resolveManifestCount(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function formatCountPair(manifestValue, parsedValue) {
+  const manifestText =
+    typeof manifestValue === "number" && Number.isFinite(manifestValue)
+      ? String(manifestValue)
+      : "-";
+  const parsedText =
+    typeof parsedValue === "number" && Number.isFinite(parsedValue)
+      ? String(parsedValue)
+      : "not loaded";
+  return `${manifestText} / ${parsedText}`;
+}
+
+function buildIntegrityReport(session) {
+  const manifest = session?.manifest || {};
+  const artifacts = manifest.artifacts || {};
+  const pkg = session?.pkg || null;
+  const loaded = {
+    network: Boolean(state.loadedArtifacts.network),
+    console: Boolean(state.loadedArtifacts.console),
+    screenshots: Boolean(state.loadedArtifacts.screenshots),
+    recording: Boolean(state.loadedArtifacts.recording),
+  };
+  const networkEvents = Array.isArray(session?.networkEvents)
+    ? session.networkEvents
+    : [];
+  const consoleEvents = Array.isArray(session?.consoleEvents)
+    ? session.consoleEvents
+    : [];
+  const screenshots = Array.isArray(session?.screenshots) ? session.screenshots : [];
+  const incidents = Array.isArray(session?.incidents) ? session.incidents : [];
+  const markerCounts = countMarkersByType(session?.markers || []);
+  const parsedCounts = {
+    network: loaded.network ? networkEvents.length : null,
+    console: loaded.console ? consoleEvents.length : null,
+    screenshots: screenshots.length,
+    incidents: incidents.length,
+    networkFailures: loaded.network ? countNetworkFailures(networkEvents) : null,
+    consoleErrors: loaded.console ? countConsoleErrors(consoleEvents) : null,
+    markers: Array.isArray(session?.markers) ? session.markers.length : 0,
+    markersByType: markerCounts,
+  };
+  const manifestCounts = {
+    network: resolveManifestCount(
+      manifest.summary?.networkRequests,
+      artifacts.network?.entryCount
+    ),
+    console: resolveManifestCount(
+      manifest.summary?.consoleMessages,
+      artifacts.console?.entryCount
+    ),
+    screenshots: resolveManifestCount(
+      manifest.summary?.screenshots,
+      artifacts.screenshots?.count,
+      artifacts.screenshots?.items?.length
+    ),
+    networkFailures: resolveManifestCount(manifest.summary?.networkFailures),
+    consoleErrors: resolveManifestCount(manifest.summary?.consoleErrors),
+  };
+  const lineage = {
+    network: artifacts.network?.path
+      ? `pkg:${artifacts.network.path} • ${loaded.network ? "parsed:ndjson" : "parsed:not-loaded"}`
+      : "pkg:(missing)",
+    console: artifacts.console?.path
+      ? `pkg:${artifacts.console.path} • ${loaded.console ? "parsed:ndjson" : "parsed:not-loaded"}`
+      : "pkg:(missing)",
+    screenshots: artifacts.screenshots?.items?.length
+      ? `manifest:artifacts.screenshots.items (${artifacts.screenshots.items.length})`
+      : "manifest:artifacts.screenshots",
+    incidents: "derived:incidents",
+    markers: "derived:timelineMarkers",
+  };
+
+  const errors = [];
+  const warnings = [];
+  const addIssue = (list, code, message, detail) => {
+    list.push({ code, message, detail });
+  };
+
+  if (pkg && artifacts.recording?.present && artifacts.recording?.path) {
+    if (!pkg.exists(artifacts.recording.path)) {
+      addIssue(
+        errors,
+        "MISSING_RECORDING_FILE",
+        "Recording artifact declared but missing from package.",
+        artifacts.recording.path
+      );
+    }
+  }
+  if (pkg && artifacts.network?.present && artifacts.network?.path) {
+    if (!pkg.exists(artifacts.network.path)) {
+      addIssue(
+        errors,
+        "MISSING_NETWORK_FILE",
+        "Network log artifact declared but missing from package.",
+        artifacts.network.path
+      );
+    }
+  }
+  if (pkg && artifacts.console?.present && artifacts.console?.path) {
+    if (!pkg.exists(artifacts.console.path)) {
+      addIssue(
+        errors,
+        "MISSING_CONSOLE_FILE",
+        "Console log artifact declared but missing from package.",
+        artifacts.console.path
+      );
+    }
+  }
+  if (pkg && artifacts.screenshots?.present) {
+    const missingShots = (session?.screenshotFiles || []).filter(
+      (path) => !pkg.exists(path)
+    );
+    if (missingShots.length) {
+      addIssue(
+        errors,
+        "MISSING_SCREENSHOT_FILES",
+        `${missingShots.length} screenshot files are missing from the package.`,
+        missingShots.slice(0, 5)
+      );
+    }
+  }
+
+  if (!artifacts.network?.present && parsedCounts.network) {
+    addIssue(
+      errors,
+      "FLAG_MISMATCH_NETWORK",
+      "Manifest marks network logs as absent but parsed data exists.",
+      parsedCounts.network
+    );
+  }
+  if (!artifacts.console?.present && parsedCounts.console) {
+    addIssue(
+      errors,
+      "FLAG_MISMATCH_CONSOLE",
+      "Manifest marks console logs as absent but parsed data exists.",
+      parsedCounts.console
+    );
+  }
+  if (!artifacts.screenshots?.present && parsedCounts.screenshots > 0) {
+    addIssue(
+      errors,
+      "FLAG_MISMATCH_SCREENSHOTS",
+      "Manifest marks screenshots as absent but screenshot metadata exists.",
+      parsedCounts.screenshots
+    );
+  }
+  if (!artifacts.recording?.present && loaded.recording) {
+    addIssue(
+      errors,
+      "FLAG_MISMATCH_RECORDING",
+      "Manifest marks recording as absent but recording is loaded.",
+      null
+    );
+  }
+
+  if (
+    typeof manifestCounts.network === "number" &&
+    parsedCounts.network !== null &&
+    manifestCounts.network !== parsedCounts.network
+  ) {
+    addIssue(
+      errors,
+      "SUMMARY_MISMATCH_NETWORK",
+      "Manifest network count does not match parsed network entries.",
+      { manifest: manifestCounts.network, parsed: parsedCounts.network }
+    );
+  }
+  if (
+    typeof manifestCounts.console === "number" &&
+    parsedCounts.console !== null &&
+    manifestCounts.console !== parsedCounts.console
+  ) {
+    addIssue(
+      errors,
+      "SUMMARY_MISMATCH_CONSOLE",
+      "Manifest console count does not match parsed console entries.",
+      { manifest: manifestCounts.console, parsed: parsedCounts.console }
+    );
+  }
+  if (
+    typeof manifestCounts.screenshots === "number" &&
+    manifestCounts.screenshots !== parsedCounts.screenshots
+  ) {
+    addIssue(
+      errors,
+      "SUMMARY_MISMATCH_SCREENSHOTS",
+      "Manifest screenshot count does not match parsed screenshot items.",
+      { manifest: manifestCounts.screenshots, parsed: parsedCounts.screenshots }
+    );
+  }
+  if (
+    typeof manifestCounts.networkFailures === "number" &&
+    parsedCounts.networkFailures !== null &&
+    manifestCounts.networkFailures !== parsedCounts.networkFailures
+  ) {
+    addIssue(
+      errors,
+      "SUMMARY_MISMATCH_NETWORK_FAILURES",
+      "Manifest network failure count does not match parsed data.",
+      { manifest: manifestCounts.networkFailures, parsed: parsedCounts.networkFailures }
+    );
+  }
+  if (
+    typeof manifestCounts.consoleErrors === "number" &&
+    parsedCounts.consoleErrors !== null &&
+    manifestCounts.consoleErrors !== parsedCounts.consoleErrors
+  ) {
+    addIssue(
+      errors,
+      "SUMMARY_MISMATCH_CONSOLE_ERRORS",
+      "Manifest console error count does not match parsed data.",
+      { manifest: manifestCounts.consoleErrors, parsed: parsedCounts.consoleErrors }
+    );
+  }
+
+  if (
+    parsedCounts.networkFailures !== null &&
+    markerCounts["network-failure"] > parsedCounts.networkFailures
+  ) {
+    addIssue(
+      errors,
+      "MARKER_SOURCE_MISMATCH_NETWORK",
+      "Network failure markers exceed parsed network failure count.",
+      { markers: markerCounts["network-failure"], parsed: parsedCounts.networkFailures }
+    );
+  }
+  if (
+    parsedCounts.consoleErrors !== null &&
+    markerCounts["console-error"] > parsedCounts.consoleErrors
+  ) {
+    addIssue(
+      errors,
+      "MARKER_SOURCE_MISMATCH_CONSOLE",
+      "Console error markers exceed parsed console error count.",
+      { markers: markerCounts["console-error"], parsed: parsedCounts.consoleErrors }
+    );
+  }
+  if (markerCounts.screenshot > parsedCounts.screenshots) {
+    addIssue(
+      errors,
+      "MARKER_SOURCE_MISMATCH_SCREENSHOTS",
+      "Screenshot markers exceed parsed screenshot count.",
+      { markers: markerCounts.screenshot, parsed: parsedCounts.screenshots }
+    );
+  }
+  if (markerCounts.incident > parsedCounts.incidents) {
+    addIssue(
+      errors,
+      "MARKER_SOURCE_MISMATCH_INCIDENTS",
+      "Incident markers exceed parsed incident count.",
+      { markers: markerCounts.incident, parsed: parsedCounts.incidents }
+    );
+  }
+
+  if (!loaded.network && networkEvents.length > 0) {
+    addIssue(
+      errors,
+      "STALE_STATE_SUSPECTED_NETWORK",
+      "Network events exist but network logs are not marked as loaded.",
+      networkEvents.length
+    );
+  }
+  if (!loaded.console && consoleEvents.length > 0) {
+    addIssue(
+      errors,
+      "STALE_STATE_SUSPECTED_CONSOLE",
+      "Console events exist but console logs are not marked as loaded.",
+      consoleEvents.length
+    );
+  }
+
+  if (
+    Array.isArray(state.events) &&
+    Array.isArray(session?.allEventsSorted) &&
+    state.events.length !== session.allEventsSorted.length
+  ) {
+    addIssue(
+      errors,
+      "RENDER_STATE_MISMATCH",
+      "Rendered event list length does not match normalized events.",
+      { rendered: state.events.length, normalized: session.allEventsSorted.length }
+    );
+  }
+
+  const manifestDuration =
+    manifest?.timeline?.endOffsetMs || manifest?.session?.durationMs || 0;
+  if (isValidTimestampMs(manifestDuration) && isValidTimestampMs(session?.durationMs)) {
+    const diff = Math.abs((session.durationMs || 0) - manifestDuration);
+    const thresholdMs = 3000;
+    if (diff > thresholdMs) {
+      const target = loaded.recording && session?.durationSource === "media" ? errors : warnings;
+      addIssue(
+        target,
+        "DURATION_MISMATCH_LARGE",
+        "Session duration differs materially from manifest duration.",
+        { manifest: manifestDuration, session: session.durationMs, diff }
+      );
+    }
+  }
+
+  return {
+    errors,
+    warnings,
+    manifestCounts,
+    parsedCounts,
+    lineage,
+    failFast: errors.length > 0,
+  };
+}
+
+function setIntegrityControlsDisabled(disabled) {
+  if (!disabled) {
+    applyManifestAvailability(state.manifest);
+  }
+  if (summaryPanel) {
+    summaryPanel.classList.toggle("integrity-disabled", disabled);
+  }
+  if (errorOnlyToggle) {
+    errorOnlyToggle.disabled = disabled;
+  }
+  [filterMarkers, filterNetwork, filterConsole, filterScreenshots, filterErrors].forEach(
+    (input) => {
+      if (input) {
+        input.disabled = disabled;
+      }
+    }
+  );
+  networkFilterChips.forEach((chip) => {
+    chip.disabled = disabled;
+  });
+  networkModeChips.forEach((chip) => {
+    chip.disabled = disabled;
+  });
+  consoleLevelChips.forEach((chip) => {
+    chip.disabled = disabled;
+  });
+  consoleModeChips.forEach((chip) => {
+    chip.disabled = disabled;
+  });
+  if (networkSearchInput) {
+    networkSearchInput.disabled = disabled;
+  }
+  if (consoleSearchInput) {
+    consoleSearchInput.disabled = disabled;
+  }
+  if (networkSearchClear) {
+    networkSearchClear.disabled = disabled || !networkSearchInput?.value;
+  }
+  if (consoleSearchClear) {
+    consoleSearchClear.disabled = disabled || !consoleSearchInput?.value;
+  }
+}
+
+function renderIntegrityBanner(report) {
+  if (!integrityBanner) {
+    return;
+  }
+  if (!report || (report.errors.length === 0 && report.warnings.length === 0)) {
+    integrityBanner.classList.add("hidden");
+    return;
+  }
+  integrityBanner.classList.remove("hidden");
+  integrityBanner.classList.toggle("warn", report.errors.length === 0);
+  if (integrityTitle) {
+    integrityTitle.textContent =
+      report.errors.length > 0 ? "Integrity check failed" : "Integrity warnings";
+  }
+  if (integritySummary) {
+    const parts = [
+      `Errors: ${report.errors.length}`,
+      `Warnings: ${report.warnings.length}`,
+    ];
+    if (report.failFast) {
+      parts.push("Fail-fast mode enabled");
+    }
+    integritySummary.textContent = parts.join(" • ");
+  }
+  const renderList = (target, items, emptyLabel) => {
+    if (!target) {
+      return;
+    }
+    target.innerHTML = "";
+    if (!items.length) {
+      const li = document.createElement("li");
+      li.textContent = emptyLabel;
+      target.appendChild(li);
+      return;
+    }
+    items.forEach((item) => {
+      const li = document.createElement("li");
+      li.textContent = `${item.code}: ${item.message}`;
+      target.appendChild(li);
+    });
+  };
+  renderList(integrityErrors, report.errors, "No integrity errors.");
+  renderList(integrityWarnings, report.warnings, "No integrity warnings.");
+  if (integrityCounts) {
+    integrityCounts.innerHTML = "";
+    const rows = [
+      { label: "Network", value: formatCountPair(report.manifestCounts.network, report.parsedCounts.network) },
+      { label: "Console", value: formatCountPair(report.manifestCounts.console, report.parsedCounts.console) },
+      {
+        label: "Errors",
+        value: formatCountPair(
+          typeof report.manifestCounts.networkFailures === "number" ||
+            typeof report.manifestCounts.consoleErrors === "number"
+            ? (report.manifestCounts.networkFailures || 0) +
+              (report.manifestCounts.consoleErrors || 0)
+            : null,
+          typeof report.parsedCounts.networkFailures === "number" ||
+            typeof report.parsedCounts.consoleErrors === "number"
+            ? (report.parsedCounts.networkFailures || 0) +
+              (report.parsedCounts.consoleErrors || 0)
+            : null
+        ),
+      },
+      {
+        label: "Screenshots",
+        value: formatCountPair(
+          report.manifestCounts.screenshots,
+          report.parsedCounts.screenshots
+        ),
+      },
+    ];
+    rows.forEach((row) => {
+      const line = document.createElement("div");
+      line.className = "integrity-row";
+      const label = document.createElement("span");
+      label.className = "muted";
+      label.textContent = row.label;
+      const value = document.createElement("span");
+      value.textContent = row.value;
+      line.appendChild(label);
+      line.appendChild(value);
+      integrityCounts.appendChild(line);
+    });
+  }
+  if (integrityDetails) {
+    integrityDetails.open = report.failFast;
+  }
+}
+
+function updateIntegrityReport() {
+  if (!state.session) {
+    state.integrityReport = null;
+    renderIntegrityBanner(null);
+    return;
+  }
+  const previousFailFast = state.integrityReport?.failFast || false;
+  const report = buildIntegrityReport(state.session);
+  state.integrityReport = report;
+  renderIntegrityBanner(report);
+  setIntegrityControlsDisabled(report.failFast);
+  updateCurrentTimeContext();
+  renderSummaryFromManifest(state.manifest);
+  updateTimelineSummary(state.manifest);
+  updateDiagnosticsPanel();
+  if (report.failFast && detailsBody) {
+    detailsBody.textContent = "Integrity check failed. Event details disabled.";
+  }
+  if (previousFailFast !== report.failFast) {
+    refreshView();
+    renderIncidentRail();
+    renderScreenshotsPanel();
+    renderNetworkPanel();
+    renderConsolePanel();
+    renderInspector();
+  }
+}
+
 function buildNormalizedSessionState(manifest, pkg) {
   const manifestShots = normalizeScreenshotItems(
     manifest?.artifacts?.screenshots?.items || []
@@ -1685,8 +2229,6 @@ function applyNormalizedSessionState(normalized) {
   setIncidents(normalized.incidents);
 
   applyManifestAvailability(normalized.manifest);
-  renderSummaryFromManifest(normalized.manifest);
-  updateTimelineSummary(normalized.manifest);
   renderScreenshotsPanel();
   setActivePanel("timeline");
   renderIncidentRail();
@@ -1694,7 +2236,7 @@ function applyNormalizedSessionState(normalized) {
   updatePlayheadDisplay();
   updateCurrentTimeContext();
   renderInspector();
-  updateDiagnosticsPanel();
+  updateIntegrityReport();
 }
 
 function applyManifestAvailability(manifest) {
@@ -1753,32 +2295,88 @@ function renderSummaryFromManifest(manifest) {
   if (!summaryPanel) {
     return;
   }
-  if (!manifest || !manifest.summary) {
+  if (!manifest) {
+    summaryPanel.classList.add("hidden");
+    return;
+  }
+  const report = state.integrityReport;
+  if (!report) {
     summaryPanel.classList.add("hidden");
     return;
   }
   summaryPanel.classList.remove("hidden");
+  if (report.failFast) {
+    if (summaryNetwork) {
+      summaryNetwork.textContent = "Disabled";
+    }
+    if (summaryConsole) {
+      summaryConsole.textContent = "Disabled";
+    }
+    if (summaryErrors) {
+      summaryErrors.textContent = "Disabled";
+    }
+    if (summaryScreenshots) {
+      summaryScreenshots.textContent = "Disabled";
+    }
+    if (summaryRecording) {
+      summaryRecording.textContent = manifest?.artifacts?.recording?.present ? "Yes" : "No";
+    }
+    if (summarySignals) {
+      summarySignals.textContent =
+        "Integrity errors detected. Summary metrics are disabled.";
+    }
+    return;
+  }
+  const parsed = report.parsedCounts || {};
+  const networkText = manifest?.artifacts?.network?.present
+    ? typeof parsed.network === "number"
+      ? String(parsed.network)
+      : "Not loaded"
+    : "Not available";
+  const consoleText = manifest?.artifacts?.console?.present
+    ? typeof parsed.console === "number"
+      ? String(parsed.console)
+      : "Not loaded"
+    : "Not available";
+  const errorsCount =
+    typeof parsed.networkFailures === "number" || typeof parsed.consoleErrors === "number"
+      ? (parsed.networkFailures || 0) + (parsed.consoleErrors || 0)
+      : null;
   if (summaryNetwork) {
-    summaryNetwork.textContent = String(manifest.summary.networkRequests || 0);
+    summaryNetwork.textContent = networkText;
   }
   if (summaryConsole) {
-    summaryConsole.textContent = String(manifest.summary.consoleMessages || 0);
+    summaryConsole.textContent = consoleText;
   }
   if (summaryErrors) {
-    summaryErrors.textContent = String(
-      (manifest.summary.consoleErrors || 0) + (manifest.summary.networkFailures || 0)
-    );
+    const hasAnyLogs =
+      Boolean(manifest?.artifacts?.network?.present) ||
+      Boolean(manifest?.artifacts?.console?.present);
+    summaryErrors.textContent = hasAnyLogs
+      ? typeof errorsCount === "number"
+        ? String(errorsCount)
+        : "Not loaded"
+      : "Not available";
   }
   if (summaryScreenshots) {
-    summaryScreenshots.textContent = String(manifest.summary.screenshots || 0);
+    summaryScreenshots.textContent = manifest?.artifacts?.screenshots?.present
+      ? String(parsed.screenshots || 0)
+      : "Not available";
   }
   if (summaryRecording) {
-    summaryRecording.textContent = manifest.summary.hasRecording ? "Yes" : "No";
+    summaryRecording.textContent = manifest?.artifacts?.recording?.present ? "Yes" : "No";
   }
   if (summarySignals) {
-    const signals = Array.isArray(manifest.summary.topSignals)
-      ? manifest.summary.topSignals
-      : [];
+    const signals = [];
+    if (typeof parsed.networkFailures === "number" && parsed.networkFailures > 0) {
+      signals.push(`${parsed.networkFailures} network failures`);
+    }
+    if (typeof parsed.consoleErrors === "number" && parsed.consoleErrors > 0) {
+      signals.push(`${parsed.consoleErrors} console errors`);
+    }
+    if (parsed.screenshots) {
+      signals.push(`${parsed.screenshots} screenshots`);
+    }
     summarySignals.textContent = signals.length ? signals.join(" • ") : "";
   }
 }
@@ -1787,25 +2385,31 @@ function updateTimelineSummary(manifest) {
   if (!timelineSummary) {
     return;
   }
-  if (!manifest || !manifest.summary) {
+  const report = state.integrityReport;
+  if (!manifest || !report) {
     timelineSummary.textContent = "";
     return;
   }
+  if (report.failFast) {
+    timelineSummary.textContent =
+      "Integrity errors detected — timeline summary disabled.";
+    return;
+  }
   const parts = [];
-  if (typeof manifest.summary.networkRequests === "number") {
-    parts.push(`${manifest.summary.networkRequests} requests`);
+  if (typeof report.parsedCounts.network === "number") {
+    parts.push(`${report.parsedCounts.network} requests`);
   }
-  if (typeof manifest.summary.consoleErrors === "number") {
-    parts.push(`${manifest.summary.consoleErrors} console errors`);
+  if (typeof report.parsedCounts.consoleErrors === "number") {
+    parts.push(`${report.parsedCounts.consoleErrors} console errors`);
   }
-  if (typeof manifest.summary.networkFailures === "number") {
-    parts.push(`${manifest.summary.networkFailures} network failures`);
+  if (typeof report.parsedCounts.networkFailures === "number") {
+    parts.push(`${report.parsedCounts.networkFailures} network failures`);
   }
-  if (typeof manifest.summary.screenshots === "number") {
-    parts.push(`${manifest.summary.screenshots} screenshots`);
+  if (typeof report.parsedCounts.screenshots === "number") {
+    parts.push(`${report.parsedCounts.screenshots} screenshots`);
   }
-  if (typeof manifest.summary.hasRecording === "boolean") {
-    parts.push(manifest.summary.hasRecording ? "recording" : "no recording");
+  if (typeof manifest?.artifacts?.recording?.present === "boolean") {
+    parts.push(manifest.artifacts.recording.present ? "recording" : "no recording");
   }
   timelineSummary.textContent = parts.join(" • ");
 }
@@ -1862,6 +2466,9 @@ function applySummaryInteractions() {
   }
   summaryPanel.dataset.bound = "true";
   summaryPanel.addEventListener("click", (event) => {
+    if (isFailFastActive()) {
+      return;
+    }
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
@@ -1987,6 +2594,7 @@ function setIncidents(nextIncidents) {
     rebuildTimelineMarkers();
     renderTimelineMarkers();
     renderTimelineLanes(state.session?.markers || []);
+    updateIntegrityReport();
   }
 }
 
@@ -2031,6 +2639,16 @@ function getFilteredIncidents() {
 
 function renderIncidentRail() {
   if (!incidentPanel || !incidentList || !incidentEmpty) {
+    return;
+  }
+  if (isFailFastActive()) {
+    incidentPanel.classList.remove("hidden");
+    incidentEmpty.classList.add("hidden");
+    renderIntegrityDisabled(
+      incidentList,
+      "Integrity check failed. Incident list disabled."
+    );
+    updateIncidentNavControls();
     return;
   }
   if (!state.filters.showIncidentRail) {
@@ -2120,6 +2738,18 @@ function renderScreenshotsPanel() {
   if (!screenshotsList || !screenshotsEmpty) {
     return;
   }
+  if (isFailFastActive()) {
+    screenshotsEmpty.classList.add("hidden");
+    renderIntegrityDisabled(
+      screenshotsList,
+      "Integrity check failed. Screenshots list disabled."
+    );
+    if (screenshotPreview) {
+      screenshotPreview.textContent =
+        "Integrity check failed. Screenshot preview disabled.";
+    }
+    return;
+  }
   const items = state.manifest?.artifacts?.screenshots?.items || [];
   screenshotsList.innerHTML = "";
   if (!items.length) {
@@ -2186,6 +2816,11 @@ function renderScreenshotPreview() {
   if (!screenshotPreview) {
     return;
   }
+  if (isFailFastActive()) {
+    screenshotPreview.textContent =
+      "Integrity check failed. Screenshot preview disabled.";
+    return;
+  }
   const selectedShot = state.playhead.selectedScreenshotId
     ? state.screenshotById.get(state.playhead.selectedScreenshotId)
     : null;
@@ -2218,8 +2853,34 @@ function renderScreenshotPreview() {
   screenshotPreview.appendChild(meta);
 }
 
+function renderIntegrityDisabled(container, message) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  const note = document.createElement("div");
+  note.className = "integrity-disabled-note";
+  note.textContent = message;
+  container.appendChild(note);
+}
+
 function renderNetworkPanel() {
   if (!networkList || !networkEmpty) {
+    return;
+  }
+  if (isFailFastActive()) {
+    networkEmpty.classList.add("hidden");
+    networkFilteredEmpty?.classList.add("hidden");
+    if (networkResultCount) {
+      networkResultCount.textContent = "";
+    }
+    if (networkSelectionNote) {
+      networkSelectionNote.classList.add("hidden");
+    }
+    renderIntegrityDisabled(
+      networkList,
+      "Integrity check failed. Network list disabled."
+    );
     return;
   }
   const entries = state.networkEntries || [];
@@ -2320,6 +2981,21 @@ function renderNetworkPanel() {
 
 function renderConsolePanel() {
   if (!consoleList || !consoleEmpty) {
+    return;
+  }
+  if (isFailFastActive()) {
+    consoleEmpty.classList.add("hidden");
+    consoleFilteredEmpty?.classList.add("hidden");
+    if (consoleResultCount) {
+      consoleResultCount.textContent = "";
+    }
+    if (consoleSelectionNote) {
+      consoleSelectionNote.classList.add("hidden");
+    }
+    renderIntegrityDisabled(
+      consoleList,
+      "Integrity check failed. Console list disabled."
+    );
     return;
   }
   const entries = state.consoleEntries || [];
@@ -2869,7 +3545,7 @@ async function ensureNetworkLogsLoaded() {
       rebuildTimelineMarkers();
       renderTimelineMarkers();
       renderTimelineLanes(state.session?.markers || []);
-      updateDiagnosticsPanel();
+      updateIntegrityReport();
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -2912,7 +3588,7 @@ async function ensureConsoleLogsLoaded() {
       rebuildTimelineMarkers();
       renderTimelineMarkers();
       renderTimelineLanes(state.session?.markers || []);
-      updateDiagnosticsPanel();
+      updateIntegrityReport();
     }
     setIncidents(mergeIncidents(
       state.incidents,
@@ -3008,6 +3684,13 @@ function getTimelineMarkerClass(ev) {
 
 function renderTimelineLanes(markers) {
   if (!timelineLanes) {
+    return;
+  }
+  if (isFailFastActive()) {
+    const tracks = Array.from(timelineLanes.querySelectorAll(".lane-track"));
+    tracks.forEach((track) => {
+      track.innerHTML = "";
+    });
     return;
   }
   const duration = state.playhead.durationMs || 0;
@@ -3166,6 +3849,16 @@ function afterSelectionOrSeek(source) {
 
 function renderEventList() {
   eventList.innerHTML = "";
+  if (isFailFastActive()) {
+    renderIntegrityDisabled(
+      eventList,
+      "Integrity check failed. Timeline events disabled."
+    );
+    if (detailsBody) {
+      detailsBody.textContent = "Integrity check failed. Event details disabled.";
+    }
+    return;
+  }
   state.filtered.forEach((ev, index) => {
     const item = document.createElement("div");
     item.className = "event-item";
@@ -3578,6 +4271,13 @@ function renderInspector() {
     return;
   }
   inspectorBody.innerHTML = "";
+  if (isFailFastActive()) {
+    inspectorTitle.textContent = "Inspector disabled";
+    inspectorBody.textContent =
+      "Integrity check failed. Inspector is disabled to avoid stale evidence.";
+    inspectorBody.classList.add("muted");
+    return;
+  }
   const { type, id } = state.inspector;
   if (!type || !id) {
     inspectorTitle.textContent = "Select an item";
@@ -3914,6 +4614,9 @@ function handleEventSelection(ev, source = "timeline") {
   if (!ev) {
     return;
   }
+  if (isFailFastActive()) {
+    return;
+  }
   const panel = mapEventToPanel(ev);
   const matched = ev.refs?.ref
     ? state.incidents.find((inc) => inc.sourceRef === ev.refs.ref)
@@ -3952,6 +4655,9 @@ function handleEventSelection(ev, source = "timeline") {
 
 function handleIncidentSelection(incident, source = "incident-click") {
   if (!incident) {
+    return;
+  }
+  if (isFailFastActive()) {
     return;
   }
   const eventMatch = state.events.find(
@@ -4116,6 +4822,9 @@ function jumpToMarker(marker) {
   if (!marker) {
     return;
   }
+  if (isFailFastActive()) {
+    return;
+  }
   const panel = mapMarkerToPanel(marker);
   const resolved = resolveMarkerSelection(marker);
   seekTo(marker.timeMs || 0, "marker-click", {
@@ -4147,6 +4856,13 @@ function jumpToMarker(marker) {
 
 function renderTimelineMarkers() {
   if (!timelineMarkers || !state.session) {
+    return;
+  }
+  if (isFailFastActive()) {
+    timelineMarkers.innerHTML = "";
+    if (markerHover) {
+      markerHover.classList.add("hidden");
+    }
     return;
   }
   const markers = state.session.markers || [];
@@ -4301,7 +5017,8 @@ function updateDiagnosticsPanel() {
     return;
   }
   const session = state.session;
-  if (!session) {
+  const report = state.integrityReport;
+  if (!session || !report) {
     diagnosticsPanel.classList.add("hidden");
     return;
   }
@@ -4319,18 +5036,10 @@ function updateDiagnosticsPanel() {
     diagRecording.textContent = session.artifactPresence.recording ? "Yes" : "No";
   }
   if (diagNetwork) {
-    diagNetwork.textContent = session.artifactPresence.network
-      ? state.loadedArtifacts.network
-        ? String(session.networkEvents.length)
-        : "Present (not loaded)"
-      : "No";
+    diagNetwork.textContent = session.artifactPresence.network ? "Present" : "No";
   }
   if (diagConsole) {
-    diagConsole.textContent = session.artifactPresence.console
-      ? state.loadedArtifacts.console
-        ? String(session.consoleEvents.length)
-        : "Present (not loaded)"
-      : "No";
+    diagConsole.textContent = session.artifactPresence.console ? "Present" : "No";
   }
   if (diagScreenshots) {
     diagScreenshots.textContent = String(session.screenshots.length);
@@ -4347,6 +5056,53 @@ function updateDiagnosticsPanel() {
   if (diagParseWarnings) {
     const warnings = session.parseWarnings || { network: 0, console: 0, total: 0 };
     diagParseWarnings.textContent = `${warnings.total} (net ${warnings.network}, con ${warnings.console})`;
+  }
+  if (diagNetworkCounts) {
+    diagNetworkCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(report.manifestCounts.network, report.parsedCounts.network);
+  }
+  if (diagConsoleCounts) {
+    diagConsoleCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(report.manifestCounts.console, report.parsedCounts.console);
+  }
+  if (diagErrorCounts) {
+    const manifestErrors =
+      typeof report.manifestCounts.networkFailures === "number" ||
+      typeof report.manifestCounts.consoleErrors === "number"
+        ? (report.manifestCounts.networkFailures || 0) +
+          (report.manifestCounts.consoleErrors || 0)
+        : null;
+    const parsedErrors =
+      typeof report.parsedCounts.networkFailures === "number" ||
+      typeof report.parsedCounts.consoleErrors === "number"
+        ? (report.parsedCounts.networkFailures || 0) +
+          (report.parsedCounts.consoleErrors || 0)
+        : null;
+    diagErrorCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(manifestErrors, parsedErrors);
+  }
+  if (diagScreenshotCounts) {
+    diagScreenshotCounts.textContent = report.failFast
+      ? "Disabled"
+      : formatCountPair(report.manifestCounts.screenshots, report.parsedCounts.screenshots);
+  }
+  if (diagNetworkLineage) {
+    diagNetworkLineage.textContent = report.lineage.network || "-";
+  }
+  if (diagConsoleLineage) {
+    diagConsoleLineage.textContent = report.lineage.console || "-";
+  }
+  if (diagScreenshotLineage) {
+    diagScreenshotLineage.textContent = report.lineage.screenshots || "-";
+  }
+  if (diagIncidentLineage) {
+    diagIncidentLineage.textContent = report.lineage.incidents || "-";
+  }
+  if (diagMarkerLineage) {
+    diagMarkerLineage.textContent = report.lineage.markers || "-";
   }
 }
 
@@ -4438,6 +5194,7 @@ async function hydrateViewerFromPackage(pkg, loadedLabel, options = {}) {
     await loadScreenshotBlobsFromPackage(normalized.screenshotFiles, pkg);
     state.loadedArtifacts.screenshots = true;
   }
+  updateIntegrityReport();
   logPackageDiagnostics(pkg, manifest, loadedLabel);
   return true;
 }
@@ -4558,6 +5315,7 @@ async function tryLoadPackageSession() {
 function resetState() {
   state.pkg = null;
   state.session = null;
+  state.integrityReport = null;
   state.sessionLog = null;
   state.manifest = null;
   state.packageMode = false;
@@ -4634,6 +5392,8 @@ function resetState() {
   state.screenshotById.clear();
   state.networkIndex = null;
   state.consoleIndex = null;
+  state.networkEntries = [];
+  state.consoleEntries = [];
   state.loadingNetwork = false;
   state.loadingConsole = false;
   if (state.videoUrl) {
@@ -4702,7 +5462,12 @@ function resetState() {
     "Open a DebugDuck session ZIP, folder, or session.json to replay locally. You can also drag and drop files here.";
   if (summaryPanel) {
     summaryPanel.classList.add("hidden");
+    summaryPanel.classList.remove("integrity-disabled");
   }
+  if (integrityBanner) {
+    integrityBanner.classList.add("hidden");
+  }
+  setIntegrityControlsDisabled(false);
   updateDiagnosticsPanel();
   if (timelineSummary) {
     timelineSummary.textContent = "";
