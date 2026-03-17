@@ -1,3 +1,5 @@
+console.log("[DebugDuck Popup] boot start");
+
 const statusElements = {
   message: document.getElementById("status_message"),
   mode: document.getElementById("status_mode"),
@@ -145,6 +147,45 @@ let recordingDurationMsSnapshot = null;
 let toastTimer = null;
 let helpIsOpen = false;
 let helpReturnFocusEl = null;
+
+const REQUIRED_SELECTORS = [
+  "#launcher_help_button",
+  "#launcher_help_modal",
+  "#launcher_help_close",
+  "#launcher_session_status",
+  "#btn_session_start",
+  "#btn_record_screen",
+  "#btn_session_screenshot",
+  "#btn_session_fullpage",
+  "#btn_session_pause",
+  "#btn_session_resume",
+  "#btn_session_stop",
+  "#btn_session_export",
+  "#btn_session_viewer",
+  "#btn_session_reset",
+  "#btn_session_clear_all",
+  "#btn_take_screenshot",
+  "#btn_fullpage_screenshot_mode",
+  "#btn_start_recording",
+  "#btn_stop_recording",
+  "#btn_start_capture",
+  "#btn_stop_capture",
+  "#btn_download_zip",
+  "#btn_reset_session",
+];
+
+function assertRequiredPopupElements() {
+  const missing = REQUIRED_SELECTORS.filter(
+    (selector) => !document.querySelector(selector)
+  );
+  if (!missing.length) {
+    return;
+  }
+  console.error("[DebugDuck Popup] Missing required elements:", missing);
+  throw new Error(
+    `DebugDuck popup boot failed: missing required elements: ${missing.join(", ")}`
+  );
+}
 
 const STATUS_COLORS = {
   default: "#4b5563",
@@ -3900,7 +3941,11 @@ async function setLastExportFilename(filename) {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target;
+  const rawTarget = event.target;
+  const target =
+    rawTarget && rawTarget.nodeType === Node.TEXT_NODE
+      ? rawTarget.parentElement
+      : rawTarget;
   const actionEl =
     target && typeof target.closest === "function"
       ? target.closest("[data-action]")
@@ -4209,6 +4254,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function initPopup() {
+  console.log("[DebugDuck Popup] DOM ready");
+  assertRequiredPopupElements();
   const manifest = chrome.runtime.getManifest();
   const appName = manifest && manifest.name ? manifest.name : "DebugDuck";
   const headerText = `${appName} — ${APP_TAGLINE}`;
@@ -4252,7 +4299,19 @@ async function initPopup() {
       }
     });
   }
+  console.log("[DebugDuck Popup] bind controls start");
   bindLauncherActions();
+  console.log("[DebugDuck Popup] bind controls complete");
 }
 
-initPopup();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    initPopup().catch((error) => {
+      console.error("[DebugDuck Popup] init failed", error);
+    });
+  });
+} else {
+  initPopup().catch((error) => {
+    console.error("[DebugDuck Popup] init failed", error);
+  });
+}
