@@ -931,6 +931,28 @@ function groupNetworkEntries(entries) {
   return Array.from(groups.values());
 }
 
+function findEventForNetworkEntry(entry) {
+  if (!entry || !state.session) {
+    return null;
+  }
+  const ref = entry.id || entry.request_id || null;
+  if (ref && state.session.eventIndexes?.eventByRef?.has(ref)) {
+    return state.session.eventIndexes.eventByRef.get(ref);
+  }
+  return null;
+}
+
+function findEventForConsoleEntry(entry) {
+  if (!entry || !state.session) {
+    return null;
+  }
+  const ref = entry.id || null;
+  if (ref && state.session.eventIndexes?.eventByRef?.has(ref)) {
+    return state.session.eventIndexes.eventByRef.get(ref);
+  }
+  return null;
+}
+
 function buildConsoleSearchText(entry) {
   const level = entry.level || "";
   const message = entry.message || entry.msg || entry.text || "";
@@ -3686,6 +3708,10 @@ function renderNetworkPanel() {
     }
     return;
   }
+  if (state.selectedNetworkId && !entries.some((entry) => entry.id === state.selectedNetworkId)) {
+    state.selectedNetworkId = null;
+    state.playhead.selectedEventId = null;
+  }
   networkEmpty.classList.add("hidden");
   networkFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   if (networkFilteredEmpty && filtered.length === 0 && state.panelModes.network === "near") {
@@ -3752,6 +3778,8 @@ function renderNetworkPanel() {
     row.appendChild(url);
     row.addEventListener("click", () => {
       state.selectedNetworkId = entry.id;
+      const linkedEvent = findEventForNetworkEntry(entry);
+      state.playhead.selectedEventId = linkedEvent ? linkedEvent.id : null;
       setInspector("network", entry.id);
       if (hasTimestamp) {
         const delta = Math.abs(
@@ -3875,6 +3903,10 @@ function renderConsolePanel() {
     }
     return;
   }
+  if (state.selectedConsoleId && !entries.some((entry) => entry.id === state.selectedConsoleId)) {
+    state.selectedConsoleId = null;
+    state.playhead.selectedEventId = null;
+  }
   consoleEmpty.classList.add("hidden");
   consoleFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   if (consoleFilteredEmpty && filtered.length === 0 && state.panelModes.console === "near") {
@@ -3930,6 +3962,8 @@ function renderConsolePanel() {
     row.appendChild(msg);
     row.addEventListener("click", () => {
       state.selectedConsoleId = entry.id;
+      const linkedEvent = findEventForConsoleEntry(entry);
+      state.playhead.selectedEventId = linkedEvent ? linkedEvent.id : null;
       setInspector("console", entry.id);
       if (hasTimestamp) {
         const delta = Math.abs(
@@ -5018,7 +5052,8 @@ function createInspectorRow(label, value, options = {}) {
   if (options.align) {
     val.style.textAlign = options.align;
   }
-  val.textContent = value || value === 0 ? String(value) : "-";
+  const emptyLabel = options.emptyLabel || "Not available";
+  val.textContent = value || value === 0 ? String(value) : emptyLabel;
   row.appendChild(key);
   row.appendChild(val);
   return row;
@@ -5157,11 +5192,20 @@ function setInspector(type, id) {
 }
 
 function renderInspector() {
-  if (!inspectorBody || !inspectorTitle) {
+  if (!inspectorBody || !inspectorTitle || !inspectorPanel) {
     return;
   }
   inspectorBody.innerHTML = "";
   const { type, id } = state.inspector;
+  if (!type || !id) {
+    inspectorPanel.classList.add("hidden");
+    inspectorTitle.textContent = "Inspector";
+    inspectorBody.textContent =
+      "Select an item to see details.";
+    inspectorBody.classList.add("muted");
+    return;
+  }
+  inspectorPanel.classList.remove("hidden");
   const scope =
     type === "network"
       ? "network"
@@ -5178,13 +5222,6 @@ function renderInspector() {
       scope === "timeline" ? "incidents" : scope,
       "Inspector"
     );
-    inspectorBody.classList.add("muted");
-    return;
-  }
-  if (!type || !id) {
-    inspectorTitle.textContent = "Select an item";
-    inspectorBody.textContent =
-      "Inspect a network request, console entry, screenshot, or incident.";
     inspectorBody.classList.add("muted");
     return;
   }
@@ -5342,12 +5379,22 @@ function renderInspector() {
     summary.className = "inspector-section inspector-summary";
     summary.appendChild(createInspectorHeadline(levelLabel));
     summary.appendChild(createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true }));
-    const source = entry.source || entry.location || entry.url || entry.file || "";
-    if (source) {
-      summary.appendChild(createInspectorRow("Source", source, { muted: true, align: "left" }));
-    }
+    const source =
+      entry.source ||
+      entry.location ||
+      (entry.url && entry.line
+        ? `${entry.url}:${entry.line}${entry.column ? `:${entry.column}` : ""}`
+        : entry.url) ||
+      entry.file ||
+      "";
     summary.appendChild(
-      createInspectorRow("Message", summaryMessage || "-", {
+      createInspectorRow("Source", source || "Not available", {
+        muted: true,
+        align: "left",
+      })
+    );
+    summary.appendChild(
+      createInspectorRow("Message", summaryMessage || "Not available", {
         muted: false,
         align: "left",
       })
@@ -5357,7 +5404,7 @@ function renderInspector() {
     actions.className = "inspector-actions";
     actions.appendChild(createCopyButton("Copy message", message || ""));
     actions.appendChild(
-      createCopyButton("Copy raw entry", () => normalizeInspectorValue(entry))
+      createCopyButton("Copy full JSON", () => normalizeInspectorValue(entry))
     );
     inspectorBody.appendChild(actions);
     inspectorBody.appendChild(
