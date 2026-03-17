@@ -322,18 +322,33 @@ function formatWindowLabel(windowMs) {
   return `±${seconds}s`;
 }
 
-function updateNearTimeLabels() {
-  const label = `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`;
-  networkModeChips.forEach((chip) => {
-    if (chip.dataset.netMode === "near") {
-      chip.textContent = label;
-    }
-  });
-  consoleModeChips.forEach((chip) => {
-    if (chip.dataset.consoleMode === "near") {
-      chip.textContent = label;
-    }
-  });
+function updateNearTimeLabels(options = {}) {
+  const { networkCount, consoleCount, forceNetwork = false, forceConsole = false } = options;
+  const baseLabel = `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`;
+  const shouldUpdateNetwork = forceNetwork || networkCount !== undefined;
+  const shouldUpdateConsole = forceConsole || consoleCount !== undefined;
+  if (shouldUpdateNetwork) {
+    const networkLabel =
+      typeof networkCount === "number"
+        ? `${baseLabel} → ${networkCount} results`
+        : baseLabel;
+    networkModeChips.forEach((chip) => {
+      if (chip.dataset.netMode === "near") {
+        chip.textContent = networkLabel;
+      }
+    });
+  }
+  if (shouldUpdateConsole) {
+    const consoleLabel =
+      typeof consoleCount === "number"
+        ? `${baseLabel} → ${consoleCount} results`
+        : baseLabel;
+    consoleModeChips.forEach((chip) => {
+      if (chip.dataset.consoleMode === "near") {
+        chip.textContent = consoleLabel;
+      }
+    });
+  }
 }
 
 function normalizeConsoleLevel(level) {
@@ -374,7 +389,7 @@ function classifyNetworkFailure(entry) {
     return { severity: "error", kind: "error_text" };
   }
   if (hasAbort) {
-    return { severity: "info", kind: "aborted" };
+    return { severity: "warning", kind: "aborted" };
   }
   return { severity: "info", kind: "unknown" };
 }
@@ -583,19 +598,15 @@ function buildConsoleMarkerLabel(entry) {
 }
 
 function getScreenshotDisplayLabel(shot, index = null) {
-  const rawLabel = shot?.label ? String(shot.label).trim() : "";
-  const isViewportLabel = rawLabel.toLowerCase() === "viewport";
   const base =
-    rawLabel && !isViewportLabel
-      ? rawLabel
-      : typeof index === "number"
-        ? `Screenshot #${index + 1}`
-        : "Screenshot";
+    typeof index === "number"
+      ? `Screenshot #${index + 1}`
+      : "Screenshot";
   const timestamp =
     typeof shot?.timestampMs === "number"
-      ? formatTimeWithMs(shot.timestampMs)
+      ? formatTime(shot.timestampMs)
       : null;
-  return timestamp ? `${base} • ${timestamp}` : base;
+  return timestamp ? `${base} @ ${timestamp}` : base;
 }
 
 function getScreenshotIndexById(shot) {
@@ -1101,7 +1112,7 @@ function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
-  updateNearTimeLabels();
+  updateNearTimeLabels({ forceNetwork: true, forceConsole: true });
   const report = state.integrityReport;
   const availability = report?.availability || null;
   if (report?.failFastGlobal) {
@@ -1146,9 +1157,10 @@ function updateCurrentTimeContext() {
     availability && availability.screenshots === false
       ? "Disabled"
       : nearestShot
-        ? `${nearestShot.label || nearestShot.kind || "Screenshot"} (${formatTimeWithMs(
-            nearestShot.timestampMs || 0
-          )})`
+        ? `${getScreenshotDisplayLabel(
+            nearestShot,
+            getScreenshotIndexById(nearestShot) ?? undefined
+          )}`
         : "None";
   if (contextNetworkCount) {
     contextNetworkCount.textContent =
@@ -1704,7 +1716,7 @@ async function loadScreenshotBlobsFromPackage(paths, pkg) {
   state.missingScreenshots = [];
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
   state.screenshotUrls.clear();
-  updateNearTimeLabels();
+  updateNearTimeLabels({ forceNetwork: true, forceConsole: true });
   closeScreenshotModal();
   for (const path of paths) {
     if (!pkg || !pkg.exists(path)) {
@@ -2932,32 +2944,27 @@ function updateTimelineSummary(manifest) {
   const availability = report.availability || {};
   const parts = [];
   if (availability.network === false) {
-    parts.push("network disabled");
-  } else if (typeof report.parsedCounts.networkRequests === "number") {
-    parts.push(`${report.parsedCounts.networkRequests} requests`);
+    parts.push("requests disabled");
+  } else {
+    if (typeof report.parsedCounts.networkRequests === "number") {
+      parts.push(`${report.parsedCounts.networkRequests} requests`);
+    }
   }
   if (availability.console === false) {
     parts.push("console disabled");
+    parts.push("errors disabled");
   } else {
     if (typeof report.parsedCounts.consoleMessages === "number") {
-      parts.push(`${report.parsedCounts.consoleMessages} console messages`);
+      parts.push(`${report.parsedCounts.consoleMessages} console`);
     }
     if (typeof report.parsedCounts.consoleErrors === "number") {
-      parts.push(`${report.parsedCounts.consoleErrors} console errors`);
+      parts.push(`${report.parsedCounts.consoleErrors} errors`);
     }
   }
-  if (availability.network !== false && typeof report.parsedCounts.networkFailures === "number") {
-    parts.push(`${report.parsedCounts.networkFailures} network failures`);
-  }
-  if (availability.screenshots === false) {
-    parts.push("screenshots disabled");
-  } else if (typeof report.parsedCounts.screenshots === "number") {
-    parts.push(`${report.parsedCounts.screenshots} screenshots`);
-  }
-  if (availability.recording === false) {
-    parts.push("recording disabled");
-  } else if (typeof manifest?.artifacts?.recording?.present === "boolean") {
-    parts.push(manifest.artifacts.recording.present ? "recording" : "no recording");
+  if (availability.network === false) {
+    parts.push("failures disabled");
+  } else if (typeof report.parsedCounts.networkFailures === "number") {
+    parts.push(`${report.parsedCounts.networkFailures} failures`);
   }
   timelineSummary.textContent = parts.join(" • ");
 }
@@ -3457,7 +3464,7 @@ function renderScreenshotsPanel() {
     const subtitle = document.createElement("div");
     subtitle.className = "muted";
     subtitle.textContent =
-      shot.kind && shot.kind !== "viewport" ? `Kind: ${shot.kind}` : "Captured image";
+      shot.kind ? `Kind: ${shot.kind}` : "Captured image";
     meta.appendChild(title);
     meta.appendChild(subtitle);
     row.appendChild(thumb);
@@ -3526,6 +3533,7 @@ function renderScreenshotPreview() {
   const label = getScreenshotDisplayLabel(shot, previewIndex ?? undefined);
   const pieces = [
     label,
+    shot.kind ? `Kind: ${shot.kind}` : null,
     selectedShot ? "Selected" : "Nearest",
   ].filter(Boolean);
   meta.textContent = pieces.join(" • ");
@@ -3702,6 +3710,9 @@ function renderNetworkPanel() {
   }
   const entries = state.networkEntries || [];
   const filtered = getVisibleNetworkEvents();
+  updateNearTimeLabels({
+    networkCount: state.panelModes.network === "near" ? filtered.length : null,
+  });
   networkList.innerHTML = "";
   if (!entries.length) {
     networkEmpty.classList.remove("hidden");
@@ -3750,6 +3761,14 @@ function renderNetworkPanel() {
   const renderEntryRow = (entry, options = {}) => {
     const row = document.createElement("div");
     row.className = `data-row${options.isChild ? " network-subrow" : ""}`;
+    if (isNetworkFailureEntry(entry)) {
+      const classification = classifyNetworkFailure(entry);
+      if (classification.severity === "error") {
+        row.classList.add("network-error");
+      } else if (classification.severity === "warning") {
+        row.classList.add("network-warning");
+      }
+    }
     if (selectedNetworkId && entry.id === selectedNetworkId) {
       row.classList.add("active");
     } else if (
@@ -3821,6 +3840,11 @@ function renderNetworkPanel() {
     const canExpand = group.items.length > 1;
     const header = document.createElement("div");
     header.className = "data-row network-group";
+    if (group.items.some((entry) => classifyNetworkFailure(entry).severity === "error")) {
+      header.classList.add("network-error");
+    } else if (group.items.some((entry) => classifyNetworkFailure(entry).severity === "warning")) {
+      header.classList.add("network-warning");
+    }
     if (groupHasSelected) {
       header.classList.add("active");
     } else if (groupHasNearby) {
@@ -3897,6 +3921,9 @@ function renderConsolePanel() {
   }
   const entries = state.consoleEntries || [];
   const filtered = getVisibleConsoleEvents();
+  updateNearTimeLabels({
+    consoleCount: state.panelModes.console === "near" ? filtered.length : null,
+  });
   consoleList.innerHTML = "";
   if (!entries.length) {
     consoleEmpty.classList.remove("hidden");

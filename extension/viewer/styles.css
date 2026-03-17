@@ -1142,6 +1142,16 @@ body {
   background: #f0f9ff;
 }
 
+.data-row.network-error {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: #fef2f2;
+}
+
+.data-row.network-warning {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: #fffbeb;
+}
+
 .data-row .muted {
   color: var(--muted);
 }
