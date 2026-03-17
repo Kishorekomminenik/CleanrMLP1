@@ -3492,7 +3492,7 @@ function renderScreenshotsPanel() {
     return;
   }
   screenshotsEmpty.classList.add("hidden");
-  items.forEach((shot) => {
+  items.forEach((shot, index) => {
     const row = document.createElement("div");
     row.className = "screenshot-item";
     if (state.playhead.selectedScreenshotId && shot.id === state.playhead.selectedScreenshotId) {
@@ -3511,7 +3511,17 @@ function renderScreenshotsPanel() {
     }
     const meta = document.createElement("div");
     const title = document.createElement("div");
-    title.textContent = getScreenshotDisplayLabel(shot, index);
+    let labelText = "Screenshot";
+    try {
+      labelText = getScreenshotDisplayLabel(shot, index) || "Screenshot";
+    } catch (error) {
+      console.warn("[DebugDuck] Screenshot label fallback", {
+        error: error?.message || String(error),
+        shotId: shot?.id || null,
+      });
+      labelText = "Screenshot";
+    }
+    title.textContent = labelText;
     const subtitle = document.createElement("div");
     subtitle.className = "muted";
     subtitle.textContent =
