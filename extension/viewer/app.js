@@ -317,8 +317,20 @@ function normalizeConsoleLevel(level) {
   return raw;
 }
 
+function isNetworkFailureEntry(entry) {
+  if (!entry) {
+    return false;
+  }
+  const status = entry.response_status ?? entry.status;
+  const hasStatusFailure = typeof status === "number" && status >= 400;
+  const hasIncomplete = Boolean(entry.incomplete);
+  const hasFinalizeReason = Boolean(entry.finalize_reason || entry.finalizeReason);
+  const hasErrorText = Boolean(entry.error_text || entry.errorText);
+  return hasStatusFailure || hasIncomplete || hasFinalizeReason || hasErrorText;
+}
+
 function classifyNetworkStatus(entry) {
-  const status = entry.response_status || entry.status;
+  const status = entry.response_status ?? entry.status;
   if (typeof status === "number") {
     if (status >= 500) {
       return "5xx";
@@ -328,7 +340,7 @@ function classifyNetworkStatus(entry) {
     }
     return "ok";
   }
-  if (entry.error_text || entry.errorText) {
+  if (isNetworkFailureEntry(entry)) {
     return "failure";
   }
   return "unknown";
@@ -703,7 +715,7 @@ function findNearestTimelineEvent(currentTimeMs, events) {
 }
 
 function getImportantMarkers() {
-  if (isFailFastActive()) {
+  if (isFailFastActive("screenshots")) {
     return [];
   }
   return state.session?.markers || [];
@@ -935,7 +947,7 @@ function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
-  if (isFailFastActive()) {
+  if (isFailFastActive("screenshots")) {
     state.currentMoment = null;
     state.playhead.nearestIncidentId = null;
     state.playhead.nearestScreenshotId = null;
@@ -1658,8 +1670,62 @@ function normalizeTimelineEvents(events) {
     .sort((a, b) => a.t_ms - b.t_ms);
 }
 
-function isFailFastActive() {
-  return Boolean(state.integrityReport?.failFast);
+const FAIL_FAST_SCOPE_MAP = {
+  network: new Set([
+    "MISSING_NETWORK_FILE",
+    "FLAG_MISMATCH_NETWORK",
+    "SUMMARY_MISMATCH_NETWORK",
+    "SUMMARY_MISMATCH_NETWORK_FAILURES",
+    "MARKER_SOURCE_MISMATCH_NETWORK",
+  ]),
+  console: new Set([
+    "MISSING_CONSOLE_FILE",
+    "FLAG_MISMATCH_CONSOLE",
+    "SUMMARY_MISMATCH_CONSOLE",
+    "SUMMARY_MISMATCH_CONSOLE_ERRORS",
+    "MARKER_SOURCE_MISMATCH_CONSOLE",
+  ]),
+  screenshots: new Set([
+    "MISSING_SCREENSHOT_FILES",
+    "FLAG_MISMATCH_SCREENSHOTS",
+    "SUMMARY_MISMATCH_SCREENSHOTS",
+    "MARKER_SOURCE_MISMATCH_SCREENSHOTS",
+  ]),
+  recording: new Set(["MISSING_RECORDING_FILE", "FLAG_MISMATCH_RECORDING"]),
+  timeline: new Set(["RENDER_STATE_MISMATCH", "DURATION_MISMATCH_LARGE"]),
+};
+
+function deriveFailFastScopes(errors) {
+  const scopes = new Set();
+  (errors || []).forEach((err) => {
+    const code = err?.code;
+    let matched = false;
+    Object.entries(FAIL_FAST_SCOPE_MAP).forEach(([scope, codes]) => {
+      if (codes.has(code)) {
+        scopes.add(scope);
+        matched = true;
+      }
+    });
+    if (!matched) {
+      scopes.add("global");
+    }
+  });
+  return scopes;
+}
+
+function isFailFastActive(scope = null) {
+  const report = state.integrityReport;
+  if (!report?.failFast) {
+    return false;
+  }
+  if (!scope) {
+    return true;
+  }
+  const scopes = report.failFastScopes;
+  if (!scopes || !scopes.size) {
+    return true;
+  }
+  return scopes.has(scope) || scopes.has("global");
 }
 
 function countNetworkFailures(entries) {
@@ -2029,6 +2095,7 @@ function buildIntegrityReport(session) {
     parsedCounts,
     lineage,
     failFast: errors.length > 0,
+    failFastScopes: errors.length ? deriveFailFastScopes(errors) : new Set(),
   };
 }
 
@@ -2707,7 +2774,7 @@ function renderIncidentRail() {
   if (!incidentPanel || !incidentList || !incidentEmpty) {
     return;
   }
-  if (isFailFastActive()) {
+  if (isFailFastActive("network")) {
     incidentPanel.classList.remove("hidden");
     incidentEmpty.classList.add("hidden");
     renderIntegrityDisabled(
@@ -2804,7 +2871,7 @@ function renderScreenshotsPanel() {
   if (!screenshotsList || !screenshotsEmpty) {
     return;
   }
-  if (isFailFastActive()) {
+  if (isFailFastActive("console")) {
     screenshotsEmpty.classList.add("hidden");
     renderIntegrityDisabled(
       screenshotsList,
@@ -2974,7 +3041,7 @@ function getActiveScreenshotForModal() {
 }
 
 async function openScreenshotModal(shot) {
-  if (!shot || isFailFastActive()) {
+  if (!shot || isFailFastActive("screenshots")) {
     return;
   }
   if (!screenshotModal || !screenshotModalImage || !screenshotModalViewport) {
@@ -4489,14 +4556,24 @@ function renderInspector() {
     return;
   }
   inspectorBody.innerHTML = "";
-  if (isFailFastActive()) {
+  const { type, id } = state.inspector;
+  const scope =
+    type === "network"
+      ? "network"
+      : type === "console"
+        ? "console"
+        : type === "screenshot"
+          ? "screenshots"
+          : type === "incident"
+            ? "timeline"
+            : "global";
+  if (isFailFastActive(scope)) {
     inspectorTitle.textContent = "Inspector disabled";
     inspectorBody.textContent =
       "Integrity check failed. Inspector is disabled to avoid stale evidence.";
     inspectorBody.classList.add("muted");
     return;
   }
-  const { type, id } = state.inspector;
   if (!type || !id) {
     inspectorTitle.textContent = "Select an item";
     inspectorBody.textContent =
@@ -4832,10 +4909,18 @@ function handleEventSelection(ev, source = "timeline") {
   if (!ev) {
     return;
   }
-  if (isFailFastActive()) {
+  const panel = mapEventToPanel(ev);
+  const scope =
+    panel === "screenshots"
+      ? "screenshots"
+      : panel === "network"
+        ? "network"
+        : panel === "console"
+          ? "console"
+          : "timeline";
+  if (isFailFastActive(scope)) {
     return;
   }
-  const panel = mapEventToPanel(ev);
   const matched = ev.refs?.ref
     ? state.incidents.find((inc) => inc.sourceRef === ev.refs.ref)
     : null;
@@ -4875,7 +4960,13 @@ function handleIncidentSelection(incident, source = "incident-click") {
   if (!incident) {
     return;
   }
-  if (isFailFastActive()) {
+  const scope =
+    incident.panelTarget === "network"
+      ? "network"
+      : incident.panelTarget === "console"
+        ? "console"
+        : "timeline";
+  if (isFailFastActive(scope)) {
     return;
   }
   const eventMatch = state.events.find(

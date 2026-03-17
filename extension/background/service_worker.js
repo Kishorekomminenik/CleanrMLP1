@@ -4226,6 +4226,25 @@ function getRelativeMs(timestampIso, startIso) {
   return Math.max(0, eventMs - startMs);
 }
 
+const isNetworkFailureEntry = (entry) => {
+  if (!entry) {
+    return false;
+  }
+  const status =
+    typeof entry.response_status === "number"
+      ? entry.response_status
+      : typeof entry.status === "number"
+        ? entry.status
+        : null;
+  return (
+    (typeof status === "number" && status >= 400) ||
+    entry.incomplete ||
+    entry.finalize_reason ||
+    entry.error_text ||
+    entry.errorText
+  );
+};
+
 function buildSessionManifest(options) {
   const {
     data,
@@ -4351,9 +4370,7 @@ function buildSessionManifest(options) {
 
   exportedNetworkEntries.forEach((entry) => {
     const status = entry.response_status || entry.status;
-    const hasError =
-      typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
-    if (!hasError) {
+    if (!isNetworkFailureEntry(entry)) {
       return;
     }
     const severity = typeof status === "number" && status >= 500 ? "error" : "warning";
@@ -4390,10 +4407,7 @@ function buildSessionManifest(options) {
   const networkFailures =
     typeof exported?.networkFailures === "number"
       ? exported.networkFailures
-      : exportedNetworkEntries.filter((entry) => {
-    const status = entry.response_status || entry.status;
-    return typeof status === "number" ? status >= 400 : Boolean(entry.error_text);
-      }).length;
+      : exportedNetworkEntries.filter((entry) => isNetworkFailureEntry(entry)).length;
   const consoleErrors =
     typeof exported?.consoleErrors === "number"
       ? exported.consoleErrors
@@ -5472,13 +5486,7 @@ async function runEvidenceZipExport(context) {
       if (!entry) {
         return;
       }
-      const status =
-        typeof entry.response_status === "number" ? entry.response_status : null;
-      const isFailed =
-        (typeof status === "number" && status >= 400) ||
-        entry.incomplete ||
-        entry.finalize_reason;
-      if (!isFailed) {
+      if (!isNetworkFailureEntry(entry)) {
         return;
       }
       summaryCounts.failedRequests += 1;
@@ -5511,17 +5519,7 @@ async function runEvidenceZipExport(context) {
       return json;
     };
     const isFailedRequest = (entry) => {
-      if (!entry) {
-        return false;
-      }
-      const status =
-        typeof entry.response_status === "number" ? entry.response_status : null;
-      return (
-        (typeof status === "number" && status >= 400) ||
-        entry.incomplete ||
-        entry.finalize_reason ||
-        entry.error_text
-      );
+      return isNetworkFailureEntry(entry);
     };
     const truncationCounts = { request: 0, response: 0 };
     let networkBuilt = false;
