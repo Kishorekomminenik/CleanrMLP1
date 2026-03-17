@@ -2272,6 +2272,21 @@ function isFullPageScreenshotFileName(name) {
   return name.includes("fullpage");
 }
 
+async function loadCaptureArtifactBlob(artifactKey) {
+  if (!artifactKey || !isIdbAvailable() || !globalThis.ReproIdb) {
+    return null;
+  }
+  const artifact = await ReproIdb.getByKey("capture_artifacts", artifactKey);
+  if (!artifact || !artifact.blobKey) {
+    return null;
+  }
+  const blobRecord = await ReproIdb.getByKey("capture_blobs", artifact.blobKey);
+  if (!blobRecord || !(blobRecord.blob instanceof Blob)) {
+    return null;
+  }
+  return blobRecord.blob;
+}
+
 async function buildEntriesJsonBlob(options) {
   const entries = Array.isArray(options.entries) ? options.entries : [];
   const version = options.version || "1.0";
@@ -4286,6 +4301,7 @@ function buildSessionManifest(options) {
             ? shot.t_ms
             : getRelativeMs(shot?.timestampIso, startedAt),
         kind: shot && shot.fullPage ? "fullpage" : "viewport",
+        fullPage: Boolean(shot && shot.fullPage),
         width: dims && dims.width ? dims.width : null,
         height: dims && dims.height ? dims.height : null,
         sizeBytes: blob ? blob.size : null,
@@ -4956,17 +4972,27 @@ async function buildEvidenceExportData(context) {
           ? entry.t_ms
           : computeSessionOffsetMs(timestampIso),
       fileName: isFullPage
-        ? `debugduck-screenshot-fullpage-${exportTimestamp}.png`
+        ? `debugduck-screenshot-fullpage-${String(displayIndex).padStart(
+            3,
+            "0"
+          )}-${exportTimestamp}.png`
         : `debugduck-screenshot-${String(displayIndex).padStart(
             3,
             "0"
           )}-${exportTimestamp}.png`,
+      fullPage: isFullPage,
+      artifactKey: entry && entry.artifactKey ? entry.artifactKey : null,
     };
   });
   const markerList = [];
   const screenshotDownloads = screenshotList.map((meta, index) => ({
     ...meta,
     dataUrl: screenshotEntries[index] ? screenshotEntries[index].dataUrl : null,
+    fullPage: Boolean(screenshotEntries[index]?.fullPage),
+    artifactKey:
+      (screenshotEntries[index] && screenshotEntries[index].artifactKey) ||
+      meta.artifactKey ||
+      null,
   }));
   let sessionExport = buildSessionExport();
   if (!sessionExport && hasExportableArtifacts()) {
@@ -5315,22 +5341,38 @@ async function runEvidenceZipExport(context) {
       screenshotCount,
     });
     const screenshotCandidates = Array.isArray(data.screenshots)
-      ? data.screenshots.filter(
-          (shot) => shot && !isFullPageScreenshotFileName(shot.fileName)
-        )
+      ? data.screenshots.filter((shot) => Boolean(shot))
       : data.screenshotDataUrl
         ? [{ dataUrl: data.screenshotDataUrl, fileName: "screenshot.png" }]
         : [];
-    const skippedFullPage = Array.isArray(data.screenshots)
-      ? data.screenshots.length - screenshotCandidates.length
-      : 0;
-    if (skippedFullPage > 0) {
-      logExportPhase("skip_fullpage", { skipped: skippedFullPage });
+    const screenshotArtifactBlobs = new Map();
+    const resolveScreenshotBlob = async (shot) => {
+      if (!shot || !shot.artifactKey) {
+        return null;
+      }
+      if (screenshotArtifactBlobs.has(shot.artifactKey)) {
+        return screenshotArtifactBlobs.get(shot.artifactKey);
+      }
+      const blob = await loadCaptureArtifactBlob(shot.artifactKey);
+      screenshotArtifactBlobs.set(shot.artifactKey, blob);
+      return blob;
+    };
+    let estimatedScreenshotBytes = 0;
+    for (const shot of screenshotCandidates) {
+      if (!shot) {
+        continue;
+      }
+      if (shot.dataUrl) {
+        estimatedScreenshotBytes += estimateDataUrlBytes(shot.dataUrl);
+        continue;
+      }
+      if (shot.artifactKey) {
+        const blob = await resolveScreenshotBlob(shot);
+        if (blob && blob.size) {
+          estimatedScreenshotBytes += blob.size;
+        }
+      }
     }
-    const estimatedScreenshotBytes = screenshotCandidates.reduce(
-      (total, shot) => total + estimateDataUrlBytes(shot.dataUrl),
-      0
-    );
     if (estimatedScreenshotBytes > EXPORT_SIZE_GUARDS.maxScreenshotBytes) {
       throw buildExportSizeError(
         "Export too large (screenshots). Reduce screenshots and try again.",
@@ -6360,18 +6402,27 @@ async function runEvidenceZipExport(context) {
     logExportPhase("stringify_done", jsonSizes);
 
     const screenshotItems = [];
-    screenshotCandidates.forEach((shot) => {
-      if (!shot || !shot.dataUrl) {
-        return;
+    for (const shot of screenshotCandidates) {
+      if (!shot) {
+        continue;
+      }
+      let blob = null;
+      if (shot.dataUrl) {
+        blob = dataUrlToBlob(shot.dataUrl);
+      } else if (shot.artifactKey) {
+        blob = await resolveScreenshotBlob(shot);
+      }
+      if (!blob) {
+        continue;
       }
       const name =
         shot.fileName || `debugduck-screenshot-${formatZipTimestamp(new Date())}.png`;
       screenshotItems.push({
         path: `screenshots/${name}`,
-        getData: () => dataUrlToBlob(shot.dataUrl),
+        getData: () => blob,
         options: { date: zipDate },
       });
-    });
+    }
     if (screenshotItems.length > 0) {
       logExportPhase("zip_add_screenshots", { count: screenshotItems.length });
       await ZipBuilderChunked.addItemsInBatches(zip, screenshotItems, {
@@ -8011,6 +8062,23 @@ async function captureFullPageScreenshotOnce(requestedTabId, attemptIndex = 0) {
       tileCountExpected,
     });
     setStatusMessage("Full page screenshot captured.", "success");
+    if (session && session.mode === "session" && !session.lightweight) {
+      const timestampIso = nowIso();
+      const tMs = computeSessionOffsetMs(timestampIso);
+      const index = session.screenshots.length + 1;
+      const fileName = `debugduck-screenshot-fullpage-${String(index).padStart(
+        3,
+        "0"
+      )}.png`;
+      session.screenshots.push({
+        index,
+        timestampIso,
+        t_ms: tMs,
+        fileName,
+        fullPage: true,
+        artifactKey: finalArtifact.artifactKey,
+      });
+    }
     return {
       status: "complete",
       captureRunId,
