@@ -76,6 +76,13 @@ const incidentPanel = document.getElementById("incidentPanel");
 const incidentList = document.getElementById("incidentList");
 const incidentEmpty = document.getElementById("incidentEmpty");
 const errorOnlyToggle = document.getElementById("errorOnlyToggle");
+const screenshotModal = document.getElementById("screenshotModal");
+const modalImage = document.getElementById("modalImage");
+const imageViewport = document.getElementById("imageViewport");
+const zoomInBtn = document.getElementById("zoomInBtn");
+const zoomOutBtn = document.getElementById("zoomOutBtn");
+const resetZoomBtn = document.getElementById("resetZoomBtn");
+const closeModalBtn = document.getElementById("closeModalBtn");
 const DEBUG_ENABLED = Boolean(window.DEBUGDUCK_DEBUG);
 if (DEBUG_ENABLED) {
   console.log("DEBUGDUCK_VIEWER_RUNTIME_MARKER_v2");
@@ -221,6 +228,16 @@ const state = {
   loadingNetwork: false,
   loadingConsole: false,
 };
+
+let modalState = {
+  scale: 1,
+  translateX: 0,
+  translateY: 0,
+  isDragging: false,
+  startX: 0,
+  startY: 0,
+};
+let modalImageUrl = null;
 
 function debugLog(...args) {
   if (DEBUG_ENABLED) {
@@ -1484,6 +1501,7 @@ async function loadScreenshotBlobsFromPackage(paths, pkg) {
   state.missingScreenshots = [];
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
   state.screenshotUrls.clear();
+  closeScreenshotModal();
   for (const path of paths) {
     if (!pkg || !pkg.exists(path)) {
       const baseName = path.split("/").pop();
@@ -2806,6 +2824,7 @@ function renderScreenshotsPanel() {
       );
       renderScreenshotsPanel();
       renderScreenshotPreview();
+      openScreenshotModal(shot);
     });
     screenshotsList.appendChild(row);
   });
@@ -2851,6 +2870,69 @@ function renderScreenshotPreview() {
   meta.textContent = pieces.join(" • ");
   screenshotPreview.appendChild(img);
   screenshotPreview.appendChild(meta);
+}
+
+function applyTransform() {
+  if (!modalImage) {
+    return;
+  }
+  modalImage.style.transform = `translate(${modalState.translateX}px, ${modalState.translateY}px) scale(${modalState.scale})`;
+}
+
+function resetModalTransform() {
+  modalState.scale = 1;
+  modalState.translateX = 0;
+  modalState.translateY = 0;
+  applyTransform();
+}
+
+async function openScreenshotModal(shot) {
+  if (!shot || isFailFastActive()) {
+    return;
+  }
+  if (!screenshotModal || !modalImage || !imageViewport) {
+    return;
+  }
+  if (shot.fullPage || shot.kind === "fullpage") {
+    return;
+  }
+  const path = shot.path || null;
+  if (!path || !state.pkg) {
+    return;
+  }
+  const entry = state.pkg.resolveArtifact([path]);
+  if (!entry) {
+    return;
+  }
+  let blob = null;
+  try {
+    blob = await state.pkg.readBlob(entry.path || path);
+  } catch (error) {
+    return;
+  }
+  if (!blob) {
+    return;
+  }
+  if (modalImageUrl) {
+    URL.revokeObjectURL(modalImageUrl);
+  }
+  modalImageUrl = URL.createObjectURL(blob);
+  modalImage.src = modalImageUrl;
+  resetModalTransform();
+  screenshotModal.classList.remove("hidden");
+  imageViewport.classList.remove("dragging");
+}
+
+function closeScreenshotModal() {
+  if (!screenshotModal || !modalImage) {
+    return;
+  }
+  screenshotModal.classList.add("hidden");
+  if (modalImageUrl) {
+    URL.revokeObjectURL(modalImageUrl);
+  }
+  modalImageUrl = null;
+  modalImage.src = "";
 }
 
 function renderIntegrityDisabled(container, message) {
@@ -5572,6 +5654,63 @@ if (resetBtn) {
     clearAllLoaderInputs();
   });
 }
+if (zoomInBtn) {
+  zoomInBtn.addEventListener("click", () => {
+    modalState.scale *= 1.2;
+    applyTransform();
+  });
+}
+if (zoomOutBtn) {
+  zoomOutBtn.addEventListener("click", () => {
+    modalState.scale /= 1.2;
+    applyTransform();
+  });
+}
+if (resetZoomBtn) {
+  resetZoomBtn.addEventListener("click", () => {
+    resetModalTransform();
+  });
+}
+if (closeModalBtn) {
+  closeModalBtn.addEventListener("click", () => {
+    closeScreenshotModal();
+  });
+}
+if (imageViewport) {
+  imageViewport.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const delta = event.deltaY < 0 ? 1.1 : 0.9;
+      modalState.scale *= delta;
+      applyTransform();
+    },
+    { passive: false }
+  );
+  imageViewport.addEventListener("mousedown", (event) => {
+    modalState.isDragging = true;
+    modalState.startX = event.clientX - modalState.translateX;
+    modalState.startY = event.clientY - modalState.translateY;
+    imageViewport.classList.add("dragging");
+  });
+}
+window.addEventListener("mousemove", (event) => {
+  if (!modalState.isDragging) {
+    return;
+  }
+  modalState.translateX = event.clientX - modalState.startX;
+  modalState.translateY = event.clientY - modalState.startY;
+  applyTransform();
+});
+window.addEventListener("mouseup", () => {
+  if (!modalState.isDragging) {
+    return;
+  }
+  modalState.isDragging = false;
+  if (imageViewport) {
+    imageViewport.classList.remove("dragging");
+  }
+});
 if (zipInput) {
   zipInput.addEventListener("change", (event) => {
     const file = event.target.files[0];

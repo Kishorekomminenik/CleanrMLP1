@@ -86,6 +86,76 @@ body {
   font-weight: 600;
 }
 
+.dd-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.dd-modal.hidden {
+  display: none;
+}
+
+.dd-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.dd-modal-content {
+  position: relative;
+  margin: auto;
+  top: 5%;
+  width: 90%;
+  height: 85%;
+  background: #111;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dd-modal-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: #0b0b0b;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dd-modal-toolbar button {
+  background: #1f2937;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dd-modal-toolbar button:hover {
+  background: #334155;
+}
+
+.dd-image-viewport {
+  width: 100%;
+  height: calc(100% - 40px);
+  overflow: hidden;
+  cursor: grab;
+  position: relative;
+}
+
+.dd-image-viewport.dragging {
+  cursor: grabbing;
+}
+
+.dd-image-viewport img {
+  transform-origin: top left;
+  user-select: none;
+  pointer-events: none;
+}
+
 .hidden {
   display: none;
 }

@@ -500,6 +500,21 @@
       </main>
     </div>
 
+    <div id="screenshotModal" class="dd-modal hidden">
+      <div class="dd-modal-backdrop"></div>
+      <div class="dd-modal-content">
+        <div class="dd-modal-toolbar">
+          <button id="zoomInBtn" type="button">+</button>
+          <button id="zoomOutBtn" type="button">-</button>
+          <button id="resetZoomBtn" type="button">Reset</button>
+          <button id="closeModalBtn" type="button">✕</button>
+        </div>
+        <div id="imageViewport" class="dd-image-viewport">
+          <img id="modalImage" alt="Screenshot preview" />
+        </div>
+      </div>
+    </div>
+
     <script src="./viewer.js"></script>
   </body>
 </html>
