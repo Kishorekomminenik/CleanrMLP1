@@ -203,6 +203,10 @@ const state = {
     id: null,
     expandState: {},
     lastKey: null,
+    activeTabs: {
+      network: "Overview",
+      console: "Overview",
+    },
   },
   incidents: [],
   sortedIncidentsByTime: [],
@@ -5180,6 +5184,33 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
   return section;
 }
 
+function renderInspectorTabs(type, tabs) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "inspector-tabs";
+  const active = state.inspector.activeTabs?.[type] || tabs[0];
+  tabs.forEach((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "inspector-tab";
+    button.textContent = tab;
+    button.classList.toggle("active", tab === active);
+    button.addEventListener("click", () => {
+      if (!state.inspector.activeTabs) {
+        state.inspector.activeTabs = {};
+      }
+      state.inspector.activeTabs[type] = tab;
+      renderInspector();
+    });
+    wrapper.appendChild(button);
+  });
+  return wrapper;
+}
+
+function getActiveInspectorTab(type, fallback) {
+  const active = state.inspector.activeTabs?.[type] || fallback;
+  return active;
+}
+
 function setInspector(type, id) {
   const nextKey = getInspectorKey(type, id);
   if (state.inspector.lastKey !== nextKey) {
@@ -5246,8 +5277,6 @@ function renderInspector() {
         : "Network logs not available.";
       return;
     }
-    const summary = document.createElement("div");
-    summary.className = "inspector-section inspector-summary";
     const headlineText = `${entry.method || ""} ${entry.url || ""}`.trim();
     const methodText = entry.method || "Not available";
     const urlText = entry.url || "Not available";
@@ -5261,37 +5290,75 @@ function renderInspector() {
     const timeValue = Number.isFinite(entryTime)
       ? formatTimeWithMs(entryTime)
       : "Not available";
-    summary.appendChild(createInspectorHeadline(headlineText || "Network request"));
-    summary.appendChild(createInspectorRow("Method", methodText, { muted: true }));
-    summary.appendChild(createInspectorRow("URL", urlText, { muted: true, align: "left" }));
-    summary.appendChild(createInspectorRow("Status", statusText, { muted: true }));
-    summary.appendChild(createInspectorRow("Duration", durationValue, { muted: true }));
-    summary.appendChild(createInspectorRow("Time", timeValue, { muted: true }));
-    if (entry.url) {
-      const path = (() => {
-        try {
-          const parsed = new URL(entry.url);
-          return parsed.pathname || entry.url;
-        } catch (_) {
-          return entry.url;
-        }
-      })();
-      summary.appendChild(
-        createInspectorRow("Path", path, { muted: true, align: "left" })
-      );
-    } else {
-      summary.appendChild(
-        createInspectorRow("Path", "Not available", { muted: true, align: "left" })
-      );
-    }
-    inspectorBody.appendChild(summary);
-    const actions = document.createElement("div");
-    actions.className = "inspector-actions";
-    actions.appendChild(createCopyButton("Copy URL", entry.url || ""));
-    actions.appendChild(
-      createCopyButton("Copy raw event", () => normalizeInspectorValue(entry))
+    const pathValue = (() => {
+      if (!entry.url) {
+        return "Not available";
+      }
+      try {
+        const parsed = new URL(entry.url);
+        return parsed.pathname || entry.url;
+      } catch (_) {
+        return entry.url;
+      }
+    })();
+    const resourceType =
+      entry.resource_type ||
+      entry.resourceType ||
+      entry.initiator_type ||
+      entry.initiatorType ||
+      "Not available";
+    const fromCache =
+      typeof entry.from_disk_cache === "boolean"
+        ? entry.from_disk_cache
+          ? "Yes"
+          : "No"
+        : "Not available";
+    const fromServiceWorker =
+      typeof entry.from_service_worker === "boolean"
+        ? entry.from_service_worker
+          ? "Yes"
+          : "No"
+        : "Not available";
+    const header = document.createElement("div");
+    header.className = "inspector-header-bar";
+    const headerLeft = document.createElement("div");
+    headerLeft.className = "inspector-header-left";
+    const typeBadge = document.createElement("span");
+    typeBadge.className = "inspector-badge";
+    typeBadge.textContent = "Network";
+    const statusBadge = document.createElement("span");
+    statusBadge.className = "inspector-badge status";
+    statusBadge.textContent = statusText;
+    const title = document.createElement("div");
+    title.className = "inspector-title";
+    title.textContent = headlineText || "Network request";
+    const meta = document.createElement("div");
+    meta.className = "inspector-meta";
+    meta.textContent = `${timeValue} • ${durationValue}`;
+    headerLeft.appendChild(typeBadge);
+    headerLeft.appendChild(statusBadge);
+    headerLeft.appendChild(title);
+    headerLeft.appendChild(meta);
+    const headerActions = document.createElement("div");
+    headerActions.className = "inspector-actions";
+    headerActions.appendChild(createCopyButton("Copy URL", entry.url || ""));
+    headerActions.appendChild(
+      createCopyButton("Copy raw JSON", () => normalizeInspectorValue(entry))
     );
-    inspectorBody.appendChild(actions);
+    header.appendChild(headerLeft);
+    header.appendChild(headerActions);
+    inspectorBody.appendChild(header);
+    const summaryGrid = document.createElement("div");
+    summaryGrid.className = "inspector-summary-grid";
+    summaryGrid.appendChild(createInspectorRow("Method", methodText, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("URL", urlText, { muted: true, align: "left" }));
+    summaryGrid.appendChild(createInspectorRow("Status", statusText, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Resource Type", resourceType, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Time", timeValue, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Duration", durationValue, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("From Cache", fromCache, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("From Service Worker", fromServiceWorker, { muted: true }));
+    inspectorBody.appendChild(summaryGrid);
     const requestHeaders =
       entry.request_headers || entry.requestHeaders || entry.request_header;
     const responseHeaders =
@@ -5310,38 +5377,98 @@ function renderInspector() {
       entry.request_timing ||
       entry.response_timing ||
       (entry.total_time_ms ? { total_time_ms: entry.total_time_ms } : null);
-    inspectorBody.appendChild(
-      renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
-        sectionId: "network-request-headers",
-        previewValue: formatHeadersPreview,
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Request Body", requestBody, "Copy request body", {
-        sectionId: "network-request-body",
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Response Headers", responseHeaders, "Copy response headers", {
-        sectionId: "network-response-headers",
-        previewValue: formatHeadersPreview,
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Response Body", responseBody, "Copy response body", {
-        sectionId: "network-response-body",
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Timing", timing, "Copy timing", {
-        sectionId: "network-timing",
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Raw Event", entry, "Copy raw event", {
-        sectionId: "network-raw-entry",
-      })
-    );
+    const tabs = [
+      "Overview",
+      "Headers",
+      "Request",
+      "Response",
+      "Timing",
+      "Raw",
+    ];
+    inspectorBody.appendChild(renderInspectorTabs("network", tabs));
+    const activeTab = getActiveInspectorTab("network", "Overview");
+    const tabBody = document.createElement("div");
+    tabBody.className = "inspector-tab-body";
+    if (activeTab === "Overview") {
+      tabBody.appendChild(
+        renderExpandableSection(
+          "Request Summary",
+          {
+            method: methodText,
+            url: urlText,
+            status: statusText,
+            time: timeValue,
+            duration: durationValue,
+          },
+          "Copy request summary",
+          { sectionId: "network-overview-request" }
+        )
+      );
+      tabBody.appendChild(
+        renderExpandableSection(
+          "Response Summary",
+          {
+            status: statusText,
+            resourceType,
+            fromCache,
+            fromServiceWorker,
+          },
+          "Copy response summary",
+          { sectionId: "network-overview-response" }
+        )
+      );
+      if (entry.error_text || entry.finalize_reason) {
+        tabBody.appendChild(
+          renderExpandableSection(
+            "Error",
+            {
+              error_text: entry.error_text || null,
+              finalize_reason: entry.finalize_reason || null,
+            },
+            "Copy error info",
+            { sectionId: "network-overview-error" }
+          )
+        );
+      }
+    } else if (activeTab === "Headers") {
+      tabBody.appendChild(
+        renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
+          sectionId: "network-request-headers",
+          previewValue: formatHeadersPreview,
+        })
+      );
+      tabBody.appendChild(
+        renderExpandableSection("Response Headers", responseHeaders, "Copy response headers", {
+          sectionId: "network-response-headers",
+          previewValue: formatHeadersPreview,
+        })
+      );
+    } else if (activeTab === "Request") {
+      tabBody.appendChild(
+        renderExpandableSection("Request Body", requestBody, "Copy request body", {
+          sectionId: "network-request-body",
+        })
+      );
+    } else if (activeTab === "Response") {
+      tabBody.appendChild(
+        renderExpandableSection("Response Body", responseBody, "Copy response body", {
+          sectionId: "network-response-body",
+        })
+      );
+    } else if (activeTab === "Timing") {
+      tabBody.appendChild(
+        renderExpandableSection("Timing", timing, "Copy timing", {
+          sectionId: "network-timing",
+        })
+      );
+    } else if (activeTab === "Raw") {
+      tabBody.appendChild(
+        renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
+          sectionId: "network-raw-entry",
+        })
+      );
+    }
+    inspectorBody.appendChild(tabBody);
     return;
   }
   if (type === "console") {
@@ -5375,10 +5502,6 @@ function renderInspector() {
       entry.context ||
       entry.params ||
       entry.details;
-    const summary = document.createElement("div");
-    summary.className = "inspector-section inspector-summary";
-    summary.appendChild(createInspectorHeadline(levelLabel));
-    summary.appendChild(createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true }));
     const source =
       entry.source ||
       entry.location ||
@@ -5387,41 +5510,104 @@ function renderInspector() {
         : entry.url) ||
       entry.file ||
       "";
-    summary.appendChild(
+    const messageLine =
+      summaryMessage || message || "Not available";
+    const header = document.createElement("div");
+    header.className = "inspector-header-bar";
+    const headerLeft = document.createElement("div");
+    headerLeft.className = "inspector-header-left";
+    const typeBadge = document.createElement("span");
+    typeBadge.className = "inspector-badge";
+    typeBadge.textContent = "Console";
+    const levelBadge = document.createElement("span");
+    levelBadge.className = "inspector-badge level";
+    levelBadge.textContent = levelLabel;
+    const title = document.createElement("div");
+    title.className = "inspector-title";
+    title.textContent = messageLine;
+    const meta = document.createElement("div");
+    meta.className = "inspector-meta";
+    meta.textContent = `${formatTimeWithMs(entry.timestampMs || 0)} • ${
+      source || "Not available"
+    }`;
+    headerLeft.appendChild(typeBadge);
+    headerLeft.appendChild(levelBadge);
+    headerLeft.appendChild(title);
+    headerLeft.appendChild(meta);
+    const headerActions = document.createElement("div");
+    headerActions.className = "inspector-actions";
+    headerActions.appendChild(createCopyButton("Copy message", message || ""));
+    headerActions.appendChild(
+      createCopyButton("Copy raw JSON", () => normalizeInspectorValue(entry))
+    );
+    header.appendChild(headerLeft);
+    header.appendChild(headerActions);
+    inspectorBody.appendChild(header);
+    const summaryGrid = document.createElement("div");
+    summaryGrid.className = "inspector-summary-grid";
+    summaryGrid.appendChild(createInspectorRow("Level", levelLabel, { muted: true }));
+    summaryGrid.appendChild(
+      createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true })
+    );
+    summaryGrid.appendChild(
       createInspectorRow("Source", source || "Not available", {
         muted: true,
         align: "left",
       })
     );
-    summary.appendChild(
-      createInspectorRow("Message", summaryMessage || "Not available", {
-        muted: false,
-        align: "left",
+    summaryGrid.appendChild(
+      createInspectorRow("Message Length", message ? message.length : "Not available", {
+        muted: true,
       })
     );
-    inspectorBody.appendChild(summary);
-    const actions = document.createElement("div");
-    actions.className = "inspector-actions";
-    actions.appendChild(createCopyButton("Copy message", message || ""));
-    actions.appendChild(
-      createCopyButton("Copy full JSON", () => normalizeInspectorValue(entry))
-    );
-    inspectorBody.appendChild(actions);
-    inspectorBody.appendChild(
-      renderExpandableSection("Stack Trace", entry.stack, "Copy stack", {
-        sectionId: "console-stack",
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Payload", payload, "Copy payload", {
-        sectionId: "console-payload",
-      })
-    );
-    inspectorBody.appendChild(
-      renderExpandableSection("Raw Entry", entry, "Copy raw entry", {
-        sectionId: "console-raw-entry",
-      })
-    );
+    inspectorBody.appendChild(summaryGrid);
+    const tabs = ["Overview", "Stack", "Payload", "Raw"];
+    inspectorBody.appendChild(renderInspectorTabs("console", tabs));
+    const activeTab = getActiveInspectorTab("console", "Overview");
+    const tabBody = document.createElement("div");
+    tabBody.className = "inspector-tab-body";
+    if (activeTab === "Overview") {
+      tabBody.appendChild(
+        renderExpandableSection("Message", message || "", "Copy message", {
+          sectionId: "console-message",
+          emptyLabel: "Not available",
+        })
+      );
+      tabBody.appendChild(
+        renderExpandableSection("Source", source || "", "Copy source", {
+          sectionId: "console-source",
+          emptyLabel: "Not available",
+        })
+      );
+      const stackPreview = entry.stack
+        ? String(entry.stack).split("\n").slice(0, 3).join("\n")
+        : "";
+      tabBody.appendChild(
+        renderExpandableSection("Stack Preview", stackPreview, "Copy stack", {
+          sectionId: "console-stack-preview",
+          emptyLabel: "Not available",
+        })
+      );
+    } else if (activeTab === "Stack") {
+      tabBody.appendChild(
+        renderExpandableSection("Stack Trace", entry.stack, "Copy stack", {
+          sectionId: "console-stack",
+        })
+      );
+    } else if (activeTab === "Payload") {
+      tabBody.appendChild(
+        renderExpandableSection("Payload", payload, "Copy payload", {
+          sectionId: "console-payload",
+        })
+      );
+    } else if (activeTab === "Raw") {
+      tabBody.appendChild(
+        renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
+          sectionId: "console-raw-entry",
+        })
+      );
+    }
+    inspectorBody.appendChild(tabBody);
     return;
   }
   if (type === "screenshot") {
@@ -6384,6 +6570,10 @@ function resetState() {
     id: null,
     expandState: {},
     lastKey: null,
+    activeTabs: {
+      network: "Overview",
+      console: "Overview",
+    },
   };
   state.incidents = [];
   state.sortedIncidentsByTime = [];
