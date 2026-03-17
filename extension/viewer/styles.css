@@ -72,6 +72,20 @@ body {
   box-shadow: var(--shadow);
 }
 
+.loader-hints {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.loader-hints strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .hidden {
   display: none;
 }

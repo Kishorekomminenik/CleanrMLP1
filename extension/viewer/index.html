@@ -16,12 +16,8 @@
           <p id="loadedInfo" class="loaded-info muted hidden"></p>
         </div>
         <div class="header-actions hidden">
-          <button id="openUnifiedBtn" class="primary">
-            Open DebugDuck Session
-          </button>
-          <button id="openSessionFolderBtn" class="primary">
-            Open Session Package
-          </button>
+          <button id="openUnifiedBtn" class="primary">Open ZIP</button>
+          <button id="openSessionFolderBtn" class="primary">Open Folder</button>
           <button id="openSessionBtn" class="secondary">Open session.json</button>
           <button id="openZipBtn" class="primary">Open Evidence ZIP</button>
           <button id="openAnotherBtn" class="secondary">Open another ZIP</button>
@@ -82,6 +78,10 @@
               from inside the same evidence folder, use Open Evidence ZIP or move the viewer
               outside the package first.
             </p>
+            <div class="loader-hints">
+              <div><strong>Open ZIP</strong> — Load a DebugDuck ZIP export</div>
+              <div><strong>Open Folder</strong> — Load an extracted session folder</div>
+            </div>
             <div id="dropZone" class="drop-zone">
               <div class="drop-title">Drag &amp; drop a session package</div>
               <div class="drop-subtitle muted">
