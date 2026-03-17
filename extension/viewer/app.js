@@ -715,10 +715,12 @@ function findNearestTimelineEvent(currentTimeMs, events) {
 }
 
 function getImportantMarkers() {
-  if (isFailFastActive("screenshots")) {
+  const markers = state.session?.markers || [];
+  const availability = getIntegrityAvailability();
+  if (availability && availability.global === false) {
     return [];
   }
-  return state.session?.markers || [];
+  return markers.filter((marker) => isMarkerAvailable(marker, availability));
 }
 
 function getSnapTargets() {
@@ -884,22 +886,25 @@ function getVisibleConsoleEventsAt(timeMs, windowMs) {
   );
 }
 
-function getCurrentMomentContextAt(timeMs, windowMs) {
+function getCurrentMomentContextAt(timeMs, windowMs, availability = getIntegrityAvailability()) {
   const nearestIncident = getNearestIncident(timeMs);
-  const nearestScreenshot = getNearestScreenshot(timeMs);
+  const nearestScreenshot =
+    availability && availability.screenshots === false ? null : getNearestScreenshot(timeMs);
 
-  const networkWindow = state.loadedArtifacts.network
-    ? getWindowSlice(state.networkEntries, timeMs, windowMs, getNetworkTimestampMs)
-    : { items: [], start: 0, end: 0 };
-  const consoleWindow = state.loadedArtifacts.console
-    ? getWindowSlice(
-        state.consoleEntries,
-        timeMs,
-        windowMs,
-        (entry) =>
-          typeof entry.timestamp_ms === "number" ? entry.timestamp_ms : entry.timestampMs || 0
-      )
-    : { items: [], start: 0, end: 0 };
+  const networkWindow =
+    state.loadedArtifacts.network && (!availability || availability.network !== false)
+      ? getWindowSlice(state.networkEntries, timeMs, windowMs, getNetworkTimestampMs)
+      : { items: [], start: 0, end: 0 };
+  const consoleWindow =
+    state.loadedArtifacts.console && (!availability || availability.console !== false)
+      ? getWindowSlice(
+          state.consoleEntries,
+          timeMs,
+          windowMs,
+          (entry) =>
+            typeof entry.timestamp_ms === "number" ? entry.timestamp_ms : entry.timestampMs || 0
+        )
+      : { items: [], start: 0, end: 0 };
 
   const nearestNetwork = networkWindow.items.length
     ? findNearestInSorted(networkWindow.items, timeMs, getNetworkTimestampMs)
@@ -939,7 +944,8 @@ function getCurrentMomentContextAt(timeMs, windowMs) {
 function getCurrentMomentContext() {
   return getCurrentMomentContextAt(
     state.playhead.currentTimeMs || 0,
-    state.playhead.timeWindowMs || 0
+    state.playhead.timeWindowMs || 0,
+    getIntegrityAvailability()
   );
 }
 
@@ -947,7 +953,9 @@ function updateCurrentTimeContext() {
   if (!contextIncident || !contextScreenshot) {
     return;
   }
-  if (isFailFastActive("screenshots")) {
+  const report = state.integrityReport;
+  const availability = report?.availability || null;
+  if (report?.failFastGlobal) {
     state.currentMoment = null;
     state.playhead.nearestIncidentId = null;
     state.playhead.nearestScreenshotId = null;
@@ -967,44 +975,68 @@ function updateCurrentTimeContext() {
   const moment = getCurrentMomentContext();
   state.currentMoment = moment;
   const nearestIncident = moment.nearestIncident;
-  state.playhead.nearestIncidentId = nearestIncident ? nearestIncident.id : null;
+  state.playhead.nearestIncidentId =
+    availability && availability.incidents === false ? null : nearestIncident ? nearestIncident.id : null;
   const incidentSeverity = nearestIncident?.severity
     ? String(nearestIncident.severity).toUpperCase()
     : "";
-  contextIncident.textContent = nearestIncident
-    ? `${incidentSeverity ? `${incidentSeverity} ` : ""}${buildIncidentTitle(
-        nearestIncident
-      )} (${formatTimeWithMs(
-        nearestIncident.timestampMs || 0
-      )})`
-    : "None";
+  contextIncident.textContent =
+    availability && availability.incidents === false
+      ? "Disabled"
+      : nearestIncident
+        ? `${incidentSeverity ? `${incidentSeverity} ` : ""}${buildIncidentTitle(
+            nearestIncident
+          )} (${formatTimeWithMs(
+            nearestIncident.timestampMs || 0
+          )})`
+        : "None";
   const nearestShot = moment.nearestScreenshot;
-  state.playhead.nearestScreenshotId = nearestShot ? nearestShot.id : null;
-  contextScreenshot.textContent = nearestShot
-    ? `${nearestShot.label || nearestShot.kind || "Screenshot"} (${formatTimeWithMs(
-        nearestShot.timestampMs || 0
-      )})`
-    : "None";
+  state.playhead.nearestScreenshotId =
+    availability && availability.screenshots === false ? null : nearestShot ? nearestShot.id : null;
+  contextScreenshot.textContent =
+    availability && availability.screenshots === false
+      ? "Disabled"
+      : nearestShot
+        ? `${nearestShot.label || nearestShot.kind || "Screenshot"} (${formatTimeWithMs(
+            nearestShot.timestampMs || 0
+          )})`
+        : "None";
   if (contextNetworkCount) {
-    contextNetworkCount.textContent = state.loadedArtifacts.network
-      ? String(moment.nearbyNetworkCount)
-      : "Not loaded";
+    contextNetworkCount.textContent =
+      availability && availability.network === false
+        ? "Disabled"
+        : state.loadedArtifacts.network
+          ? String(moment.nearbyNetworkCount)
+          : "Not loaded";
   }
   if (contextConsoleCount) {
-    contextConsoleCount.textContent = state.loadedArtifacts.console
-      ? String(moment.nearbyConsoleCount)
-      : "Not loaded";
+    contextConsoleCount.textContent =
+      availability && availability.console === false
+        ? "Disabled"
+        : state.loadedArtifacts.console
+          ? String(moment.nearbyConsoleCount)
+          : "Not loaded";
   }
   if (contextWindow) {
-    contextWindow.textContent = moment.windowLabel;
+    contextWindow.textContent =
+      availability && availability.timeline === false ? "±0s" : moment.windowLabel;
   }
 }
 
 function updateTimeAwarePanels() {
-  if (state.loadedArtifacts.network && state.panelModes.network === "near") {
+  const availability = getIntegrityAvailability();
+  if (
+    state.loadedArtifacts.network &&
+    state.panelModes.network === "near" &&
+    (!availability || availability.network !== false)
+  ) {
     renderNetworkPanel();
   }
-  if (state.loadedArtifacts.console && state.panelModes.console === "near") {
+  if (
+    state.loadedArtifacts.console &&
+    state.panelModes.console === "near" &&
+    (!availability || availability.console !== false)
+  ) {
     renderConsolePanel();
   }
 }
@@ -1677,6 +1709,7 @@ const FAIL_FAST_SCOPE_MAP = {
     "SUMMARY_MISMATCH_NETWORK",
     "SUMMARY_MISMATCH_NETWORK_FAILURES",
     "MARKER_SOURCE_MISMATCH_NETWORK",
+    "STALE_STATE_SUSPECTED_NETWORK",
   ]),
   console: new Set([
     "MISSING_CONSOLE_FILE",
@@ -1684,6 +1717,7 @@ const FAIL_FAST_SCOPE_MAP = {
     "SUMMARY_MISMATCH_CONSOLE",
     "SUMMARY_MISMATCH_CONSOLE_ERRORS",
     "MARKER_SOURCE_MISMATCH_CONSOLE",
+    "STALE_STATE_SUSPECTED_CONSOLE",
   ]),
   screenshots: new Set([
     "MISSING_SCREENSHOT_FILES",
@@ -1692,13 +1726,20 @@ const FAIL_FAST_SCOPE_MAP = {
     "MARKER_SOURCE_MISMATCH_SCREENSHOTS",
   ]),
   recording: new Set(["MISSING_RECORDING_FILE", "FLAG_MISMATCH_RECORDING"]),
+  incidents: new Set(["MARKER_SOURCE_MISMATCH_INCIDENTS"]),
   timeline: new Set(["RENDER_STATE_MISMATCH", "DURATION_MISMATCH_LARGE"]),
 };
+
+const GLOBAL_FAIL_FAST_CODES = new Set(["RENDER_STATE_MISMATCH", "DURATION_MISMATCH_LARGE"]);
 
 function deriveFailFastScopes(errors) {
   const scopes = new Set();
   (errors || []).forEach((err) => {
     const code = err?.code;
+    if (GLOBAL_FAIL_FAST_CODES.has(code)) {
+      scopes.add("global");
+      return;
+    }
     let matched = false;
     Object.entries(FAIL_FAST_SCOPE_MAP).forEach(([scope, codes]) => {
       if (codes.has(code)) {
@@ -1715,17 +1756,106 @@ function deriveFailFastScopes(errors) {
 
 function isFailFastActive(scope = null) {
   const report = state.integrityReport;
-  if (!report?.failFast) {
+  if (!report?.hasErrors) {
     return false;
   }
   if (!scope) {
-    return true;
+    return Boolean(report.failFastGlobal);
   }
-  const scopes = report.failFastScopes;
-  if (!scopes || !scopes.size) {
-    return true;
+  const availability = report.availability;
+  if (!availability) {
+    return Boolean(report.failFastGlobal);
   }
-  return scopes.has(scope) || scopes.has("global");
+  if (scope === "network") {
+    return !availability.network;
+  }
+  if (scope === "console") {
+    return !availability.console;
+  }
+  if (scope === "screenshots") {
+    return !availability.screenshots;
+  }
+  if (scope === "recording") {
+    return !availability.recording;
+  }
+  if (scope === "timeline") {
+    return !availability.timeline;
+  }
+  if (scope === "incidents") {
+    return !availability.incidents;
+  }
+  return Boolean(report.failFastGlobal);
+}
+
+function buildIntegrityAvailability(scopes, failFastGlobal) {
+  const globalDisabled = Boolean(failFastGlobal || scopes.has("global"));
+  const availability = {
+    global: !globalDisabled,
+    recording: !globalDisabled && !scopes.has("recording"),
+    network: !globalDisabled && !scopes.has("network"),
+    console: !globalDisabled && !scopes.has("console"),
+    screenshots: !globalDisabled && !scopes.has("screenshots"),
+    timeline: !globalDisabled && !scopes.has("timeline"),
+    incidents: !globalDisabled && !scopes.has("timeline") && !scopes.has("incidents"),
+  };
+  availability.markers = {
+    incident: availability.incidents,
+    screenshot: availability.screenshots,
+    network: availability.network,
+    console: availability.console,
+  };
+  return availability;
+}
+
+const INTEGRITY_REASON_LABELS = {
+  MISSING_RECORDING_FILE: "recording missing from package",
+  FLAG_MISMATCH_RECORDING: "recording presence mismatch",
+  MISSING_NETWORK_FILE: "network log missing from package",
+  FLAG_MISMATCH_NETWORK: "network presence mismatch",
+  SUMMARY_MISMATCH_NETWORK: "network request count mismatch",
+  SUMMARY_MISMATCH_NETWORK_FAILURES: "network failure count mismatch",
+  MARKER_SOURCE_MISMATCH_NETWORK: "network markers exceed parsed failures",
+  STALE_STATE_SUSPECTED_NETWORK: "network logs loaded state mismatch",
+  MISSING_CONSOLE_FILE: "console log missing from package",
+  FLAG_MISMATCH_CONSOLE: "console presence mismatch",
+  SUMMARY_MISMATCH_CONSOLE: "console message count mismatch",
+  SUMMARY_MISMATCH_CONSOLE_ERRORS: "console error count mismatch",
+  MARKER_SOURCE_MISMATCH_CONSOLE: "console markers exceed parsed errors",
+  STALE_STATE_SUSPECTED_CONSOLE: "console logs loaded state mismatch",
+  MISSING_SCREENSHOT_FILES: "screenshot files missing from package",
+  FLAG_MISMATCH_SCREENSHOTS: "screenshot presence mismatch",
+  SUMMARY_MISMATCH_SCREENSHOTS: "screenshot count mismatch",
+  MARKER_SOURCE_MISMATCH_SCREENSHOTS: "screenshot markers exceed parsed items",
+  MARKER_SOURCE_MISMATCH_INCIDENTS: "incident markers exceed parsed incidents",
+  RENDER_STATE_MISMATCH: "rendered events mismatch normalized events",
+  DURATION_MISMATCH_LARGE: "session duration mismatch",
+};
+
+function getIntegrityIssuesForScope(scope) {
+  const report = state.integrityReport;
+  if (!report?.errors?.length) {
+    return [];
+  }
+  const scopeSet = FAIL_FAST_SCOPE_MAP[scope] || null;
+  return report.errors
+    .filter((err) => {
+      if (scope === "global") {
+        return GLOBAL_FAIL_FAST_CODES.has(err.code);
+      }
+      return scopeSet ? scopeSet.has(err.code) : false;
+    })
+    .map((err) => INTEGRITY_REASON_LABELS[err.code] || err.message || err.code);
+}
+
+function buildIntegrityDisabledMessage(scope, panelLabel) {
+  const issues = getIntegrityIssuesForScope(scope);
+  if (!issues.length) {
+    return `${panelLabel} disabled due to integrity mismatch.`;
+  }
+  const unique = Array.from(new Set(issues));
+  const detail =
+    unique.length > 2 ? `${unique.slice(0, 2).join("; ")}; +${unique.length - 2} more` : unique.join("; ");
+  return `${panelLabel} disabled due to integrity mismatch: ${detail}.`;
 }
 
 function countNetworkFailures(entries) {
@@ -2088,57 +2218,134 @@ function buildIntegrityReport(session) {
     }
   }
 
+  const hasErrors = errors.length > 0;
+  const failFastScopes = hasErrors ? deriveFailFastScopes(errors) : new Set();
+  const failFastGlobal = hasErrors && failFastScopes.has("global");
+  const availability = buildIntegrityAvailability(failFastScopes, failFastGlobal);
   return {
     errors,
     warnings,
     manifestCounts,
     parsedCounts,
     lineage,
-    failFast: errors.length > 0,
-    failFastScopes: errors.length ? deriveFailFastScopes(errors) : new Set(),
+    hasErrors,
+    failFast: failFastGlobal,
+    failFastGlobal,
+    failFastScopes,
+    availability,
   };
 }
 
-function setIntegrityControlsDisabled(disabled) {
-  if (!disabled) {
+function setIntegrityControlsDisabled(report) {
+  if (!report || !report.availability) {
     applyManifestAvailability(state.manifest);
-  }
-  if (summaryPanel) {
-    summaryPanel.classList.toggle("integrity-disabled", disabled);
-  }
-  if (errorOnlyToggle) {
-    errorOnlyToggle.disabled = disabled;
-  }
-  [filterMarkers, filterNetwork, filterConsole, filterScreenshots, filterErrors].forEach(
-    (input) => {
-      if (input) {
-        input.disabled = disabled;
-      }
+    if (summaryPanel) {
+      summaryPanel.classList.toggle("integrity-disabled", false);
     }
-  );
+    return;
+  }
+  const availability = report.availability;
+  const globalDisabled = !availability.global;
+  applyManifestAvailability(state.manifest);
+  if (summaryPanel) {
+    summaryPanel.classList.toggle("integrity-disabled", globalDisabled);
+  }
+  panelTabs.forEach((tab) => {
+    const panel = tab.dataset.panel;
+    let enabled = !globalDisabled;
+    if (panel === "network") {
+      enabled = enabled && availability.network !== false;
+    } else if (panel === "console") {
+      enabled = enabled && availability.console !== false;
+    } else if (panel === "screenshots") {
+      enabled = enabled && availability.screenshots !== false;
+    } else if (panel === "timeline") {
+      enabled = enabled && availability.timeline !== false;
+    }
+    tab.disabled = !enabled;
+    tab.classList.toggle("disabled", !enabled);
+  });
+  if (errorOnlyToggle) {
+    errorOnlyToggle.disabled = globalDisabled || !availability.timeline;
+  }
+  if (filterMarkers) {
+    filterMarkers.disabled = globalDisabled || !availability.timeline;
+    if (!availability.timeline) {
+      filterMarkers.checked = false;
+    }
+  }
+  if (filterErrors) {
+    filterErrors.disabled = globalDisabled || !availability.timeline;
+    if (!availability.timeline) {
+      filterErrors.checked = false;
+    }
+  }
+  if (filterNetwork) {
+    filterNetwork.disabled = globalDisabled || !availability.network;
+    if (!availability.network) {
+      filterNetwork.checked = false;
+    }
+  }
+  if (filterConsole) {
+    filterConsole.disabled = globalDisabled || !availability.console;
+    if (!availability.console) {
+      filterConsole.checked = false;
+    }
+  }
+  if (filterScreenshots) {
+    filterScreenshots.disabled = globalDisabled || !availability.screenshots;
+    if (!availability.screenshots) {
+      filterScreenshots.checked = false;
+    }
+  }
+  if (timeline) {
+    timeline.disabled = globalDisabled || !availability.timeline;
+  }
+  const hasRecording = Boolean(state.manifest?.artifacts?.recording?.present);
+  if (playToggleBtn) {
+    playToggleBtn.disabled =
+      globalDisabled || !availability.timeline || !availability.recording || !hasRecording;
+  }
+  if (videoPlay) {
+    videoPlay.disabled = globalDisabled || !availability.recording || !hasRecording;
+  }
+  if (videoSyncNote && availability.recording === false) {
+    videoSyncNote.textContent = buildIntegrityDisabledMessage(
+      "recording",
+      "Video playback"
+    );
+    videoSyncNote.dataset.integrity = "1";
+    videoSyncNote.classList.remove("hidden");
+  } else if (videoSyncNote && videoSyncNote.dataset.integrity === "1") {
+    videoSyncNote.textContent = "";
+    videoSyncNote.classList.add("hidden");
+    delete videoSyncNote.dataset.integrity;
+  }
   networkFilterChips.forEach((chip) => {
-    chip.disabled = disabled;
+    chip.disabled = globalDisabled || !availability.network;
   });
   networkModeChips.forEach((chip) => {
-    chip.disabled = disabled;
+    chip.disabled = globalDisabled || !availability.network;
   });
   consoleLevelChips.forEach((chip) => {
-    chip.disabled = disabled;
+    chip.disabled = globalDisabled || !availability.console;
   });
   consoleModeChips.forEach((chip) => {
-    chip.disabled = disabled;
+    chip.disabled = globalDisabled || !availability.console;
   });
   if (networkSearchInput) {
-    networkSearchInput.disabled = disabled;
+    networkSearchInput.disabled = globalDisabled || !availability.network;
   }
   if (consoleSearchInput) {
-    consoleSearchInput.disabled = disabled;
+    consoleSearchInput.disabled = globalDisabled || !availability.console;
   }
   if (networkSearchClear) {
-    networkSearchClear.disabled = disabled || !networkSearchInput?.value;
+    networkSearchClear.disabled =
+      globalDisabled || !availability.network || !networkSearchInput?.value;
   }
   if (consoleSearchClear) {
-    consoleSearchClear.disabled = disabled || !consoleSearchInput?.value;
+    consoleSearchClear.disabled =
+      globalDisabled || !availability.console || !consoleSearchInput?.value;
   }
 }
 
@@ -2161,8 +2368,10 @@ function renderIntegrityBanner(report) {
       `Errors: ${report.errors.length}`,
       `Warnings: ${report.warnings.length}`,
     ];
-    if (report.failFast) {
+    if (report.failFastGlobal) {
       parts.push("Fail-fast mode enabled");
+    } else if (report.hasErrors) {
+      parts.push("Scoped integrity protections enabled");
     }
     integritySummary.textContent = parts.join(" • ");
   }
@@ -2238,7 +2447,7 @@ function renderIntegrityBanner(report) {
     });
   }
   if (integrityDetails) {
-    integrityDetails.open = report.failFast;
+    integrityDetails.open = report.failFastGlobal;
   }
 }
 
@@ -2248,19 +2457,26 @@ function updateIntegrityReport() {
     renderIntegrityBanner(null);
     return;
   }
-  const previousFailFast = state.integrityReport?.failFast || false;
+  const previousFailFastGlobal = state.integrityReport?.failFastGlobal || false;
+  const previousAvailabilityKey = JSON.stringify(
+    state.integrityReport?.availability || {}
+  );
   const report = buildIntegrityReport(state.session);
   state.integrityReport = report;
   renderIntegrityBanner(report);
-  setIntegrityControlsDisabled(report.failFast);
+  setIntegrityControlsDisabled(report);
   updateCurrentTimeContext();
   renderSummaryFromManifest(state.manifest);
   updateTimelineSummary(state.manifest);
   updateDiagnosticsPanel();
-  if (report.failFast && detailsBody) {
+  if (report.failFastGlobal && detailsBody) {
     detailsBody.textContent = "Integrity check failed. Event details disabled.";
   }
-  if (previousFailFast !== report.failFast) {
+  const nextAvailabilityKey = JSON.stringify(report.availability || {});
+  if (
+    previousFailFastGlobal !== report.failFastGlobal ||
+    previousAvailabilityKey !== nextAvailabilityKey
+  ) {
     refreshView();
     renderIncidentRail();
     renderScreenshotsPanel();
@@ -2438,7 +2654,7 @@ function renderSummaryFromManifest(manifest) {
     return;
   }
   summaryPanel.classList.remove("hidden");
-  if (report.failFast) {
+  if (report.failFastGlobal) {
     if (summaryNetwork) {
       summaryNetwork.textContent = "Disabled";
     }
@@ -2461,19 +2677,29 @@ function renderSummaryFromManifest(manifest) {
     return;
   }
   const parsed = report.parsedCounts || {};
-  const networkText = manifest?.artifacts?.network?.present
-    ? typeof parsed.networkRequests === "number"
-      ? String(parsed.networkRequests)
-      : "Not loaded"
-    : "Not available";
-  const consoleText = manifest?.artifacts?.console?.present
-    ? typeof parsed.consoleMessages === "number"
-      ? String(parsed.consoleMessages)
-      : "Not loaded"
-    : "Not available";
+  const availability = report.availability || {};
+  const networkText =
+    availability.network === false
+      ? "Disabled"
+      : manifest?.artifacts?.network?.present
+        ? typeof parsed.networkRequests === "number"
+          ? String(parsed.networkRequests)
+          : "Not loaded"
+        : "Not available";
+  const consoleText =
+    availability.console === false
+      ? "Disabled"
+      : manifest?.artifacts?.console?.present
+        ? typeof parsed.consoleMessages === "number"
+          ? String(parsed.consoleMessages)
+          : "Not loaded"
+        : "Not available";
+  const includeNetwork = availability.network !== false;
+  const includeConsole = availability.console !== false;
   const errorsCount =
-    typeof parsed.networkFailures === "number" || typeof parsed.consoleErrors === "number"
-      ? (parsed.networkFailures || 0) + (parsed.consoleErrors || 0)
+    includeNetwork || includeConsole
+      ? (includeNetwork ? parsed.networkFailures || 0 : 0) +
+        (includeConsole ? parsed.consoleErrors || 0 : 0)
       : null;
   if (summaryNetwork) {
     summaryNetwork.textContent = networkText;
@@ -2485,29 +2711,49 @@ function renderSummaryFromManifest(manifest) {
     const hasAnyLogs =
       Boolean(manifest?.artifacts?.network?.present) ||
       Boolean(manifest?.artifacts?.console?.present);
-    summaryErrors.textContent = hasAnyLogs
-      ? typeof errorsCount === "number"
-        ? String(errorsCount)
-        : "Not loaded"
-      : "Not available";
+    summaryErrors.textContent =
+      availability.network === false && availability.console === false
+        ? "Disabled"
+        : hasAnyLogs
+          ? typeof errorsCount === "number"
+            ? String(errorsCount)
+            : "Not loaded"
+          : "Not available";
   }
   if (summaryScreenshots) {
-    summaryScreenshots.textContent = manifest?.artifacts?.screenshots?.present
-      ? String(parsed.screenshots || 0)
-      : "Not available";
+    summaryScreenshots.textContent =
+      availability.screenshots === false
+        ? "Disabled"
+        : manifest?.artifacts?.screenshots?.present
+          ? String(parsed.screenshots || 0)
+          : "Not available";
   }
   if (summaryRecording) {
-    summaryRecording.textContent = manifest?.artifacts?.recording?.present ? "Yes" : "No";
+    summaryRecording.textContent =
+      availability.recording === false
+        ? "Disabled"
+        : manifest?.artifacts?.recording?.present
+          ? "Yes"
+          : "No";
   }
   if (summarySignals) {
     const signals = [];
-    if (typeof parsed.networkFailures === "number" && parsed.networkFailures > 0) {
+    if (availability.network === false) {
+      signals.push("Network disabled");
+    }
+    if (availability.console === false) {
+      signals.push("Console disabled");
+    }
+    if (availability.screenshots === false) {
+      signals.push("Screenshots disabled");
+    }
+    if (availability.network !== false && typeof parsed.networkFailures === "number" && parsed.networkFailures > 0) {
       signals.push(`${parsed.networkFailures} network failures`);
     }
-    if (typeof parsed.consoleErrors === "number" && parsed.consoleErrors > 0) {
+    if (availability.console !== false && typeof parsed.consoleErrors === "number" && parsed.consoleErrors > 0) {
       signals.push(`${parsed.consoleErrors} console errors`);
     }
-    if (parsed.screenshots) {
+    if (availability.screenshots !== false && parsed.screenshots) {
       signals.push(`${parsed.screenshots} screenshots`);
     }
     summarySignals.textContent = signals.length ? signals.join(" • ") : "";
@@ -2523,25 +2769,36 @@ function updateTimelineSummary(manifest) {
     timelineSummary.textContent = "";
     return;
   }
-  if (report.failFast) {
+  if (report.failFastGlobal) {
     timelineSummary.textContent =
       "Integrity errors detected — timeline summary disabled.";
     return;
   }
+  const availability = report.availability || {};
   const parts = [];
-  if (typeof report.parsedCounts.networkRequests === "number") {
+  if (availability.network === false) {
+    parts.push("network disabled");
+  } else if (typeof report.parsedCounts.networkRequests === "number") {
     parts.push(`${report.parsedCounts.networkRequests} requests`);
   }
-  if (typeof report.parsedCounts.consoleErrors === "number") {
-    parts.push(`${report.parsedCounts.consoleErrors} console errors`);
+  if (availability.console === false) {
+    parts.push("console disabled");
+  } else {
+    if (typeof report.parsedCounts.consoleErrors === "number") {
+      parts.push(`${report.parsedCounts.consoleErrors} console errors`);
+    }
   }
-  if (typeof report.parsedCounts.networkFailures === "number") {
+  if (availability.network !== false && typeof report.parsedCounts.networkFailures === "number") {
     parts.push(`${report.parsedCounts.networkFailures} network failures`);
   }
-  if (typeof report.parsedCounts.screenshots === "number") {
+  if (availability.screenshots === false) {
+    parts.push("screenshots disabled");
+  } else if (typeof report.parsedCounts.screenshots === "number") {
     parts.push(`${report.parsedCounts.screenshots} screenshots`);
   }
-  if (typeof manifest?.artifacts?.recording?.present === "boolean") {
+  if (availability.recording === false) {
+    parts.push("recording disabled");
+  } else if (typeof manifest?.artifacts?.recording?.present === "boolean") {
     parts.push(manifest.artifacts.recording.present ? "recording" : "no recording");
   }
   timelineSummary.textContent = parts.join(" • ");
@@ -2590,6 +2847,95 @@ function buildIncidentsFromManifest(manifest) {
   return incidents;
 }
 
+function getIntegrityAvailability() {
+  return state.integrityReport?.availability || null;
+}
+
+function isIncidentAvailable(incident, availability = getIntegrityAvailability()) {
+  if (!availability) {
+    return true;
+  }
+  if (!availability.incidents || availability.global === false) {
+    return false;
+  }
+  if (!incident) {
+    return false;
+  }
+  if (incident.type && incident.type.startsWith("network")) {
+    return availability.network !== false;
+  }
+  if (incident.type && incident.type.startsWith("console")) {
+    return availability.console !== false;
+  }
+  return availability.timeline !== false;
+}
+
+function filterAvailableIncidents(incidents, availability = getIntegrityAvailability()) {
+  if (!availability) {
+    return incidents;
+  }
+  return incidents.filter((inc) => isIncidentAvailable(inc, availability));
+}
+
+function isEventAvailable(event, availability = getIntegrityAvailability()) {
+  if (!availability) {
+    return true;
+  }
+  if (availability.global === false) {
+    return false;
+  }
+  if (!event) {
+    return false;
+  }
+  if (event.type === "network") {
+    return availability.network !== false;
+  }
+  if (event.type === "console") {
+    return availability.console !== false;
+  }
+  if (event.type === "screenshot") {
+    return availability.screenshots !== false;
+  }
+  return availability.timeline !== false;
+}
+
+function getIncidentForMarker(marker) {
+  if (!marker || !marker.sourceRef) {
+    return null;
+  }
+  const incidentMap = state.session?.eventIndexes?.incidentById;
+  if (incidentMap && incidentMap.has(marker.sourceRef)) {
+    return incidentMap.get(marker.sourceRef);
+  }
+  return state.session?.incidents?.find((inc) => inc.id === marker.sourceRef) || null;
+}
+
+function isMarkerAvailable(marker, availability = getIntegrityAvailability()) {
+  if (!availability) {
+    return true;
+  }
+  if (availability.global === false) {
+    return false;
+  }
+  if (!marker) {
+    return false;
+  }
+  if (marker.type === "network-failure") {
+    return availability.network !== false;
+  }
+  if (marker.type === "console-error") {
+    return availability.console !== false;
+  }
+  if (marker.type === "screenshot") {
+    return availability.screenshots !== false;
+  }
+  if (marker.type === "incident") {
+    const incident = getIncidentForMarker(marker);
+    return isIncidentAvailable(incident, availability);
+  }
+  return availability.timeline !== false;
+}
+
 function applySummaryInteractions() {
   if (!summaryPanel) {
     return;
@@ -2599,7 +2945,7 @@ function applySummaryInteractions() {
   }
   summaryPanel.dataset.bound = "true";
   summaryPanel.addEventListener("click", (event) => {
-    if (isFailFastActive()) {
+    if (isFailFastActive("timeline")) {
       return;
     }
     const target = event.target;
@@ -2611,6 +2957,19 @@ function applySummaryInteractions() {
       return;
     }
     const key = label.querySelector(".summary-label")?.textContent || "";
+    const availability = getIntegrityAvailability();
+    if (key === "Network" && availability && availability.network === false) {
+      return;
+    }
+    if (key === "Console" && availability && availability.console === false) {
+      return;
+    }
+    if (key === "Screenshots" && availability && availability.screenshots === false) {
+      return;
+    }
+    if (key === "Recording" && availability && availability.recording === false) {
+      return;
+    }
     if (key === "Errors") {
       state.filters.errorOnly = true;
       if (errorOnlyToggle) {
@@ -2733,20 +3092,24 @@ function setIncidents(nextIncidents) {
 
 function getFilteredIncidents() {
   const allowedLevels = getEffectiveConsoleLevels();
+  const availabilityKey = JSON.stringify(getIntegrityAvailability() || {});
   const key = [
     state.incidentsVersion,
     state.filters.errorOnly ? "errorOnly" : "all",
     state.filters.networkStatusBucket || "all",
     allowedLevels.join(","),
+    availabilityKey,
   ].join("|");
   if (state.filteredIncidentsCache.key === key) {
     return state.filteredIncidentsCache.list;
   }
-  let incidents = state.sortedIncidentsByTime.slice();
+  let incidents = filterAvailableIncidents(state.sortedIncidentsByTime.slice());
   if (state.filters.errorOnly) {
     incidents = incidents.filter((inc) => inc.severity === "error");
   }
-  if (state.filters.networkStatusBucket !== "all") {
+  const availability = getIntegrityAvailability();
+  const networkFilterEnabled = !availability || availability.network !== false;
+  if (networkFilterEnabled && state.filters.networkStatusBucket !== "all") {
     if (state.filters.networkStatusBucket === "errors") {
       incidents = incidents.filter((inc) =>
         ["network-4xx", "network-5xx", "network-failure"].includes(inc.type)
@@ -2774,12 +3137,15 @@ function renderIncidentRail() {
   if (!incidentPanel || !incidentList || !incidentEmpty) {
     return;
   }
-  if (isFailFastActive("network")) {
+  const availability = getIntegrityAvailability();
+  if (availability && availability.incidents === false) {
+    const report = state.integrityReport;
+    const scope = report?.failFastScopes?.has("incidents") ? "incidents" : "timeline";
     incidentPanel.classList.remove("hidden");
     incidentEmpty.classList.add("hidden");
     renderIntegrityDisabled(
       incidentList,
-      "Integrity check failed. Incident list disabled."
+      buildIntegrityDisabledMessage(scope, "Incident list")
     );
     updateIncidentNavControls();
     return;
@@ -2871,15 +3237,15 @@ function renderScreenshotsPanel() {
   if (!screenshotsList || !screenshotsEmpty) {
     return;
   }
-  if (isFailFastActive("console")) {
+  if (isFailFastActive("screenshots")) {
     screenshotsEmpty.classList.add("hidden");
     renderIntegrityDisabled(
       screenshotsList,
-      "Integrity check failed. Screenshots list disabled."
+      buildIntegrityDisabledMessage("screenshots", "Screenshots panel")
     );
     if (screenshotPreview) {
       screenshotPreview.textContent =
-        "Integrity check failed. Screenshot preview disabled.";
+        buildIntegrityDisabledMessage("screenshots", "Screenshot preview");
     }
     return;
   }
@@ -2950,9 +3316,11 @@ function renderScreenshotPreview() {
   if (!screenshotPreview) {
     return;
   }
-  if (isFailFastActive()) {
-    screenshotPreview.textContent =
-      "Integrity check failed. Screenshot preview disabled.";
+  if (isFailFastActive("screenshots")) {
+    screenshotPreview.textContent = buildIntegrityDisabledMessage(
+      "screenshots",
+      "Screenshot preview"
+    );
     return;
   }
   const selectedShot = state.playhead.selectedScreenshotId
@@ -3139,7 +3507,7 @@ function renderNetworkPanel() {
   if (!networkList || !networkEmpty) {
     return;
   }
-  if (isFailFastActive()) {
+  if (isFailFastActive("network")) {
     networkEmpty.classList.add("hidden");
     networkFilteredEmpty?.classList.add("hidden");
     if (networkResultCount) {
@@ -3150,7 +3518,7 @@ function renderNetworkPanel() {
     }
     renderIntegrityDisabled(
       networkList,
-      "Integrity check failed. Network list disabled."
+      buildIntegrityDisabledMessage("network", "Network panel")
     );
     return;
   }
@@ -3254,7 +3622,7 @@ function renderConsolePanel() {
   if (!consoleList || !consoleEmpty) {
     return;
   }
-  if (isFailFastActive()) {
+  if (isFailFastActive("console")) {
     consoleEmpty.classList.add("hidden");
     consoleFilteredEmpty?.classList.add("hidden");
     if (consoleResultCount) {
@@ -3265,7 +3633,7 @@ function renderConsolePanel() {
     }
     renderIntegrityDisabled(
       consoleList,
-      "Integrity check failed. Console list disabled."
+      buildIntegrityDisabledMessage("console", "Console panel")
     );
     return;
   }
@@ -3971,7 +4339,8 @@ function renderTimelineLanes(markers) {
   if (!timelineLanes) {
     return;
   }
-  if (isFailFastActive()) {
+  const availability = getIntegrityAvailability();
+  if (availability && availability.timeline === false) {
     const tracks = Array.from(timelineLanes.querySelectorAll(".lane-track"));
     tracks.forEach((track) => {
       track.innerHTML = "";
@@ -3986,7 +4355,9 @@ function renderTimelineLanes(markers) {
   if (!duration) {
     return;
   }
-  const list = Array.isArray(markers) ? markers : [];
+  const list = Array.isArray(markers)
+    ? markers.filter((marker) => isMarkerAvailable(marker, availability))
+    : [];
   const screenshots = list.filter((marker) => marker.type === "screenshot");
   const networkErrors = list.filter((marker) => marker.type === "network-failure");
   const consoleErrors = list.filter((marker) => marker.type === "console-error");
@@ -4064,6 +4435,9 @@ function buildFilters() {
 function filterEvents(events) {
   const filters = buildFilters();
   return events.filter((ev) => {
+    if (!isEventAvailable(ev)) {
+      return false;
+    }
     if (ev.t_ms > state.playhead.currentTimeMs) {
       return false;
     }
@@ -4134,13 +4508,16 @@ function afterSelectionOrSeek(source) {
 
 function renderEventList() {
   eventList.innerHTML = "";
-  if (isFailFastActive()) {
+  if (isFailFastActive("timeline")) {
     renderIntegrityDisabled(
       eventList,
-      "Integrity check failed. Timeline events disabled."
+      buildIntegrityDisabledMessage("timeline", "Timeline events")
     );
     if (detailsBody) {
-      detailsBody.textContent = "Integrity check failed. Event details disabled.";
+      detailsBody.textContent = buildIntegrityDisabledMessage(
+        "timeline",
+        "Event details"
+      );
     }
     return;
   }
@@ -4569,8 +4946,10 @@ function renderInspector() {
             : "global";
   if (isFailFastActive(scope)) {
     inspectorTitle.textContent = "Inspector disabled";
-    inspectorBody.textContent =
-      "Integrity check failed. Inspector is disabled to avoid stale evidence.";
+    inspectorBody.textContent = buildIntegrityDisabledMessage(
+      scope === "timeline" ? "incidents" : scope,
+      "Inspector"
+    );
     inspectorBody.classList.add("muted");
     return;
   }
@@ -5131,10 +5510,20 @@ function jumpToMarker(marker) {
   if (!marker) {
     return;
   }
-  if (isFailFastActive()) {
+  const panel = mapMarkerToPanel(marker);
+  const scope =
+    panel === "screenshots"
+      ? "screenshots"
+      : panel === "network"
+        ? "network"
+        : panel === "console"
+          ? "console"
+          : panel === "incident"
+            ? "incidents"
+            : "timeline";
+  if (isFailFastActive(scope)) {
     return;
   }
-  const panel = mapMarkerToPanel(marker);
   const resolved = resolveMarkerSelection(marker);
   seekTo(marker.timeMs || 0, "marker-click", {
     activePanel: panel,
@@ -5167,14 +5556,15 @@ function renderTimelineMarkers() {
   if (!timelineMarkers || !state.session) {
     return;
   }
-  if (isFailFastActive()) {
+  const availability = getIntegrityAvailability();
+  if (availability && availability.timeline === false) {
     timelineMarkers.innerHTML = "";
     if (markerHover) {
       markerHover.classList.add("hidden");
     }
     return;
   }
-  const markers = state.session.markers || [];
+  const markers = getImportantMarkers();
   const duration = state.playhead.durationMs || 0;
   if (!duration || !markers.length) {
     timelineMarkers.innerHTML = "";
@@ -5186,9 +5576,11 @@ function renderTimelineMarkers() {
   const markerById = new Map(markers.map((marker) => [marker.id, marker]));
   const version = String(state.session.markersVersion || 0);
   const durationKey = String(duration);
+  const availabilityKey = JSON.stringify(availability || {});
   const needsRebuild =
     timelineMarkers.dataset.version !== version ||
-    timelineMarkers.dataset.duration !== durationKey;
+    timelineMarkers.dataset.duration !== durationKey ||
+    timelineMarkers.dataset.availability !== availabilityKey;
   if (needsRebuild) {
     timelineMarkers.innerHTML = "";
     markers.forEach((marker) => {
@@ -5224,6 +5616,7 @@ function renderTimelineMarkers() {
     });
     timelineMarkers.dataset.version = version;
     timelineMarkers.dataset.duration = durationKey;
+    timelineMarkers.dataset.availability = availabilityKey;
   }
   const nearestId = state.playhead.nearestMarkerId;
   const now = Date.now();
@@ -5332,6 +5725,8 @@ function updateDiagnosticsPanel() {
     return;
   }
   diagnosticsPanel.classList.remove("hidden");
+  const availability = report.availability || {};
+  const globalDisabled = availability.global === false;
   const meta = session.pkg?.meta || {};
   if (diagSource) {
     diagSource.textContent = meta.source || "-";
@@ -5367,7 +5762,7 @@ function updateDiagnosticsPanel() {
     diagParseWarnings.textContent = `${warnings.total} (net ${warnings.network}, con ${warnings.console})`;
   }
   if (diagNetworkCounts) {
-    diagNetworkCounts.textContent = report.failFast
+    diagNetworkCounts.textContent = globalDisabled || availability.network === false
       ? "Disabled"
       : formatCountPair(
           report.manifestCounts.networkRequests,
@@ -5375,7 +5770,7 @@ function updateDiagnosticsPanel() {
         );
   }
   if (diagNetworkFailureCounts) {
-    diagNetworkFailureCounts.textContent = report.failFast
+    diagNetworkFailureCounts.textContent = globalDisabled || availability.network === false
       ? "Disabled"
       : formatCountPair(
           report.manifestCounts.networkFailures,
@@ -5383,7 +5778,7 @@ function updateDiagnosticsPanel() {
         );
   }
   if (diagConsoleCounts) {
-    diagConsoleCounts.textContent = report.failFast
+    diagConsoleCounts.textContent = globalDisabled || availability.console === false
       ? "Disabled"
       : formatCountPair(
           report.manifestCounts.consoleMessages,
@@ -5391,7 +5786,7 @@ function updateDiagnosticsPanel() {
         );
   }
   if (diagConsoleErrorCounts) {
-    diagConsoleErrorCounts.textContent = report.failFast
+    diagConsoleErrorCounts.textContent = globalDisabled || availability.console === false
       ? "Disabled"
       : formatCountPair(
           report.manifestCounts.consoleErrors,
@@ -5399,24 +5794,24 @@ function updateDiagnosticsPanel() {
         );
   }
   if (diagErrorCounts) {
+    const includeNetwork = availability.network !== false;
+    const includeConsole = availability.console !== false;
     const manifestErrors =
-      typeof report.manifestCounts.networkFailures === "number" ||
-      typeof report.manifestCounts.consoleErrors === "number"
-        ? (report.manifestCounts.networkFailures || 0) +
-          (report.manifestCounts.consoleErrors || 0)
+      includeNetwork || includeConsole
+        ? (includeNetwork ? report.manifestCounts.networkFailures || 0 : 0) +
+          (includeConsole ? report.manifestCounts.consoleErrors || 0 : 0)
         : null;
     const parsedErrors =
-      typeof report.parsedCounts.networkFailures === "number" ||
-      typeof report.parsedCounts.consoleErrors === "number"
-        ? (report.parsedCounts.networkFailures || 0) +
-          (report.parsedCounts.consoleErrors || 0)
+      includeNetwork || includeConsole
+        ? (includeNetwork ? report.parsedCounts.networkFailures || 0 : 0) +
+          (includeConsole ? report.parsedCounts.consoleErrors || 0 : 0)
         : null;
-    diagErrorCounts.textContent = report.failFast
+    diagErrorCounts.textContent = globalDisabled || (!includeNetwork && !includeConsole)
       ? "Disabled"
       : formatCountPair(manifestErrors, parsedErrors);
   }
   if (diagScreenshotCounts) {
-    diagScreenshotCounts.textContent = report.failFast
+    diagScreenshotCounts.textContent = globalDisabled || availability.screenshots === false
       ? "Disabled"
       : formatCountPair(report.manifestCounts.screenshots, report.parsedCounts.screenshots);
   }
@@ -5798,7 +6193,7 @@ function resetState() {
   if (integrityBanner) {
     integrityBanner.classList.add("hidden");
   }
-  setIntegrityControlsDisabled(false);
+  setIntegrityControlsDisabled(null);
   updateDiagnosticsPanel();
   if (timelineSummary) {
     timelineSummary.textContent = "";

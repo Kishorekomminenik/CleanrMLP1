@@ -917,6 +917,11 @@ body {
   font-weight: 600;
 }
 
+.tab-button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .panel-group.hidden {
   display: none;
 }
