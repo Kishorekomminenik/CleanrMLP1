@@ -5813,6 +5813,29 @@ if (screenshotPreview) {
     }
   });
 }
+console.log("[DebugDuck Viewer] bind controls start");
+const missingRequiredElements = [
+  ["#timeline", timeline],
+  ["#filterMarkers", filterMarkers],
+  ["#filterNetwork", filterNetwork],
+  ["#filterConsole", filterConsole],
+  ["#filterScreenshots", filterScreenshots],
+  ["#filterErrors", filterErrors],
+  ["#searchInput", searchInput],
+].filter(([, el]) => !el);
+if (missingRequiredElements.length) {
+  const missingSelectors = missingRequiredElements.map(([selector]) => selector);
+  console.error(
+    "[DebugDuck Viewer] Missing required elements:",
+    missingSelectors.join(", ")
+  );
+  throw new Error(
+    `DebugDuck viewer boot failed: missing required elements: ${missingSelectors.join(
+      ", "
+    )}`
+  );
+}
+
 window.addEventListener("mousemove", (event) => {
   if (!modalState.dragging) {
     return;
@@ -6235,3 +6258,4 @@ window.addEventListener("keydown", (event) => {
     navigateIncident(1);
   }
 });
+console.log("[DebugDuck Viewer] bind controls complete");
