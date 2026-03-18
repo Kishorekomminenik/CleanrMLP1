@@ -3848,11 +3848,19 @@ function renderScreenshotPreview() {
   if (!screenshotPreview) {
     return;
   }
+  const workspace =
+    screenshotPreview.closest(".panel-group")?.querySelector(".event-workspace") || null;
+  const setCollapsed = (value) => {
+    if (workspace) {
+      workspace.classList.toggle("details-collapsed", value);
+    }
+  };
   if (isFailFastActive("screenshots")) {
     screenshotPreview.textContent = buildIntegrityDisabledMessage(
       "screenshots",
       "Screenshot preview"
     );
+    setCollapsed(true);
     return;
   }
   const selectedShot = state.playhead.selectedScreenshotId
@@ -3865,8 +3873,10 @@ function renderScreenshotPreview() {
   const shot = selectedShot || nearestShot;
   if (!shot) {
     screenshotPreview.textContent = "Select an item";
+    setCollapsed(true);
     return;
   }
+  setCollapsed(!selectedShot);
   screenshotPreview.innerHTML = "";
   const img = document.createElement("img");
   const baseName = shot.path ? shot.path.split("/").pop() : null;
@@ -5665,30 +5675,42 @@ function renderInspector() {
   const activePanel = state.playhead.activePanel;
   const inspectorVisible =
     activePanel === "network" || activePanel === "console" || activePanel === "errors";
+  const workspace =
+    inspectorPanel.closest(".panel-group")?.querySelector(".event-workspace") || null;
+  const setCollapsed = (value) => {
+    if (workspace) {
+      workspace.classList.toggle("details-collapsed", value);
+    }
+  };
   if (!inspectorVisible) {
     inspectorPanel.classList.add("hidden");
+    setCollapsed(false);
     return;
   }
   inspectorPanel.classList.remove("hidden");
   if (activePanel === "network" && type && type !== "network") {
     inspectorTitle.textContent = "Details";
     inspectorBody.textContent = "Select an item";
+    setCollapsed(true);
     return;
   }
   if (activePanel === "console" && type && type !== "console") {
     inspectorTitle.textContent = "Details";
     inspectorBody.textContent = "Select an item";
+    setCollapsed(true);
     return;
   }
   if (activePanel === "errors" && type && type !== "incident") {
     inspectorTitle.textContent = "Details";
     inspectorBody.textContent = "Select an item";
+    setCollapsed(true);
     return;
   }
   if (!type || !id) {
     inspectorTitle.textContent = "Details";
     inspectorBody.textContent = "Select an item";
     inspectorBody.classList.add("muted");
+    setCollapsed(true);
     return;
   }
   const scope =
@@ -5705,8 +5727,10 @@ function renderInspector() {
     inspectorTitle.textContent = "Details unavailable";
     inspectorBody.textContent = buildIntegrityDisabledMessage(scope, "Details");
     inspectorBody.classList.add("muted");
+    setCollapsed(true);
     return;
   }
+  setCollapsed(false);
   inspectorBody.classList.remove("muted");
   if (type === "network") {
     const entry = state.networkIndex?.get(id) || state.networkEntries.find((item) => item.id === id);
