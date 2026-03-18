@@ -63,6 +63,11 @@ body {
   font-weight: 500;
 }
 
+.app.session-loaded #loadedInfo,
+.app.session-loaded #packageNotice {
+  display: none;
+}
+
 .advanced-actions {
   position: relative;
 }
@@ -966,6 +971,9 @@ body {
 
 .inspector-panel {
   margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  max-height: 520px;
 }
 
 .inspector-header {
@@ -1059,6 +1067,8 @@ body {
 .inspector-tab-body {
   display: grid;
   gap: 10px;
+  max-height: 260px;
+  overflow: auto;
 }
 
 .inspector-body {
@@ -1066,6 +1076,9 @@ body {
   color: #334155;
   display: grid;
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .inspector-section {
@@ -1227,6 +1240,7 @@ body {
   display: grid;
   grid-template-columns: minmax(360px, 42%) minmax(420px, 58%);
   gap: 12px;
+  min-height: 440px;
 }
 
 .event-list-column {

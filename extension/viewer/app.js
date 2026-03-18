@@ -5381,9 +5381,11 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
   section.appendChild(code);
   const actions = document.createElement("div");
   actions.className = "inspector-actions";
-  actions.appendChild(
-    createCopyButton(copyLabel, () => normalizeInspectorValue(value))
-  );
+  if (options.showCopy !== false) {
+    actions.appendChild(
+      createCopyButton(copyLabel, () => normalizeInspectorValue(value))
+    );
+  }
   if (preview.expandable) {
     const expandBtn = document.createElement("button");
     expandBtn.type = "button";
@@ -5626,7 +5628,7 @@ function renderInspector() {
             duration: durationValue,
           },
           "Copy request summary",
-          { sectionId: "network-overview-request" }
+          { sectionId: "network-overview-request", showCopy: false }
         )
       );
       tabBody.appendChild(
@@ -5639,7 +5641,7 @@ function renderInspector() {
             fromServiceWorker,
           },
           "Copy response summary",
-          { sectionId: "network-overview-response" }
+          { sectionId: "network-overview-response", showCopy: false }
         )
       );
       if (entry.error_text || entry.finalize_reason) {
@@ -5651,7 +5653,7 @@ function renderInspector() {
               finalize_reason: entry.finalize_reason || null,
             },
             "Copy error info",
-            { sectionId: "network-overview-error" }
+            { sectionId: "network-overview-error", showCopy: false }
           )
         );
       }
@@ -5796,12 +5798,14 @@ function renderInspector() {
         renderExpandableSection("Message", message || "", "Copy message", {
           sectionId: "console-message",
           emptyLabel: "Not available",
+          showCopy: false,
         })
       );
       tabBody.appendChild(
         renderExpandableSection("Source", source || "", "Copy source", {
           sectionId: "console-source",
           emptyLabel: "Not available",
+          showCopy: false,
         })
       );
       const stackPreview = entry.stack
@@ -5811,6 +5815,7 @@ function renderInspector() {
         renderExpandableSection("Stack Preview", stackPreview, "Copy stack", {
           sectionId: "console-stack-preview",
           emptyLabel: "Not available",
+          showCopy: false,
         })
       );
     } else if (activeTab === "Stack") {
