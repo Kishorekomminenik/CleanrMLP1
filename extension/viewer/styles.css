@@ -1329,6 +1329,13 @@ section.right {
   font-size: 12px;
 }
 
+.inspector-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .inspector-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1349,11 +1356,33 @@ section.right {
 .copy-button.icon-button {
   background: transparent;
   border-color: transparent;
+  padding: 2px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .copy-button.icon-button:hover {
   border-color: var(--border);
   background: var(--surface-muted);
+}
+
+.copy-button.icon-button .copy-icon {
+  font-size: 14px;
+  opacity: 0.6;
+}
+
+.copy-button.icon-button:hover .copy-icon {
+  opacity: 1;
+}
+
+.copy-button[data-status="Copied"] .copy-icon {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .copy-button:disabled {

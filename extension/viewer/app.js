@@ -5563,17 +5563,19 @@ function normalizeInspectorValue(value) {
 function createCopyButton(label, text, options = {}) {
   const button = document.createElement("button");
   const iconOnly = options.iconOnly !== false;
+  const tooltip = options.tooltip || label;
+  const ariaLabel = options.ariaLabel || tooltip;
   button.type = "button";
   button.className = iconOnly ? "icon-button copy-button" : "copy-button";
-  button.setAttribute("title", label);
-  button.setAttribute("aria-label", label);
+  button.setAttribute("title", tooltip);
+  button.setAttribute("aria-label", ariaLabel);
   if (iconOnly) {
     const icon = document.createElement("span");
     icon.className = "copy-icon";
     icon.textContent = "⧉";
     const srText = document.createElement("span");
     srText.className = "sr-only";
-    srText.textContent = label;
+    srText.textContent = ariaLabel;
     button.appendChild(icon);
     button.appendChild(srText);
   } else {
@@ -5601,8 +5603,8 @@ function createCopyButton(label, text, options = {}) {
     if (!resolved) {
       setStatus("Nothing to copy");
       setTimeout(() => {
-        setStatus(label);
-      }, 1200);
+        setStatus(tooltip);
+      }, 1500);
       return;
     }
     try {
@@ -5620,13 +5622,13 @@ function createCopyButton(label, text, options = {}) {
       }
       setStatus("Copied");
       setTimeout(() => {
-        setStatus(label);
-      }, 1200);
+        setStatus(tooltip);
+      }, 1500);
     } catch (error) {
       setStatus("Copy failed");
       setTimeout(() => {
-        setStatus(label);
-      }, 1200);
+        setStatus(tooltip);
+      }, 1500);
     }
   });
   return button;
@@ -5635,9 +5637,12 @@ function createCopyButton(label, text, options = {}) {
 function renderExpandableSection(title, value, copyLabel, options = {}) {
   const section = document.createElement("div");
   section.className = "inspector-section";
+  const headerRow = document.createElement("div");
+  headerRow.className = "inspector-section-header";
   const header = document.createElement("h3");
   header.textContent = title;
-  section.appendChild(header);
+  headerRow.appendChild(header);
+  section.appendChild(headerRow);
   if (!hasInspectorValue(value)) {
     const empty = document.createElement("div");
     empty.className = "muted";
@@ -5656,14 +5661,18 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
     : preview.text;
   code.classList.toggle("expanded", isExpanded);
   section.appendChild(code);
-  const actions = document.createElement("div");
-  actions.className = "inspector-actions";
   if (options.showCopy !== false) {
-    actions.appendChild(
-      createCopyButton(copyLabel, () => normalizeInspectorValue(value))
+    const copyActionLabel = copyLabel || `Copy ${title}`;
+    headerRow.appendChild(
+      createCopyButton("Copy", () => normalizeInspectorValue(value), {
+        tooltip: "Copy",
+        ariaLabel: copyActionLabel,
+      })
     );
   }
   if (preview.expandable && options.showExpand !== false) {
+    const actions = document.createElement("div");
+    actions.className = "inspector-actions";
     const expandBtn = document.createElement("button");
     expandBtn.type = "button";
     expandBtn.className = "expand-toggle";
@@ -5678,8 +5687,8 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
       code.classList.toggle("expanded", expanded);
     });
     actions.appendChild(expandBtn);
+    section.appendChild(actions);
   }
-  section.appendChild(actions);
   return section;
 }
 
@@ -5869,13 +5878,7 @@ function renderInspector() {
     headerLeft.appendChild(statusBadge);
     headerLeft.appendChild(title);
     headerLeft.appendChild(meta);
-    const headerActions = document.createElement("div");
-    headerActions.className = "inspector-actions";
-    headerActions.appendChild(
-      createCopyButton("Copy details", () => normalizeInspectorValue(entry))
-    );
     header.appendChild(headerLeft);
-    header.appendChild(headerActions);
     inspectorBody.appendChild(header);
     const summaryGrid = document.createElement("div");
     summaryGrid.className = "inspector-summary-grid";
@@ -5924,7 +5927,7 @@ function renderInspector() {
             duration: durationValue,
           },
           "Copy request summary",
-          { sectionId: "network-overview-request", showCopy: false, showExpand: false }
+          { sectionId: "network-overview-request", showExpand: false }
         )
       );
       tabBody.appendChild(
@@ -5937,7 +5940,7 @@ function renderInspector() {
             fromServiceWorker,
           },
           "Copy response summary",
-          { sectionId: "network-overview-response", showCopy: false, showExpand: false }
+          { sectionId: "network-overview-response", showExpand: false }
         )
       );
       if (entry.error_text || entry.finalize_reason) {
@@ -5949,14 +5952,13 @@ function renderInspector() {
               finalize_reason: entry.finalize_reason || null,
             },
             "Copy error info",
-            { sectionId: "network-overview-error", showCopy: false, showExpand: false }
+            { sectionId: "network-overview-error", showExpand: false }
           )
         );
       }
       tabBody.appendChild(
         renderExpandableSection("Timing", timing, "Copy timing", {
           sectionId: "network-timing",
-          showCopy: false,
         })
       );
     } else if (activeTab === "Headers") {
@@ -5964,14 +5966,12 @@ function renderInspector() {
         renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
           sectionId: "network-request-headers",
           previewValue: formatHeadersPreview,
-          showCopy: false,
         })
       );
       tabBody.appendChild(
         renderExpandableSection("Response Headers", responseHeaders, "Copy response headers", {
           sectionId: "network-response-headers",
           previewValue: formatHeadersPreview,
-          showCopy: false,
         })
       );
     } else if (activeTab === "Request") {
@@ -5990,7 +5990,6 @@ function renderInspector() {
       tabBody.appendChild(
         renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
           sectionId: "network-raw-entry",
-          showCopy: false,
         })
       );
     }
@@ -6060,13 +6059,7 @@ function renderInspector() {
     headerLeft.appendChild(levelBadge);
     headerLeft.appendChild(title);
     headerLeft.appendChild(meta);
-    const headerActions = document.createElement("div");
-    headerActions.className = "inspector-actions";
-    headerActions.appendChild(
-      createCopyButton("Copy details", () => normalizeInspectorValue(entry))
-    );
     header.appendChild(headerLeft);
-    header.appendChild(headerActions);
     inspectorBody.appendChild(header);
     const summaryGrid = document.createElement("div");
     summaryGrid.className = "inspector-summary-grid";
@@ -6100,7 +6093,6 @@ function renderInspector() {
         renderExpandableSection("Message", message || "", "Copy message", {
           sectionId: "console-message",
           emptyLabel: "Not available",
-          showCopy: false,
           showExpand: false,
         })
       );
@@ -6108,7 +6100,6 @@ function renderInspector() {
         renderExpandableSection("Source", source || "", "Copy source", {
           sectionId: "console-source",
           emptyLabel: "Not available",
-          showCopy: false,
           showExpand: false,
         })
       );
@@ -6119,7 +6110,6 @@ function renderInspector() {
         renderExpandableSection("Stack Preview", stackPreview, "Copy stack", {
           sectionId: "console-stack-preview",
           emptyLabel: "Not available",
-          showCopy: false,
           showExpand: false,
         })
       );
@@ -6127,21 +6117,18 @@ function renderInspector() {
       tabBody.appendChild(
         renderExpandableSection("Stack Trace", entry.stack, "Copy stack", {
           sectionId: "console-stack",
-          showCopy: false,
         })
       );
     } else if (activeTab === "Payload") {
       tabBody.appendChild(
         renderExpandableSection("Payload", payload, "Copy payload", {
           sectionId: "console-payload",
-          showCopy: false,
         })
       );
     } else if (activeTab === "Raw") {
       tabBody.appendChild(
         renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
           sectionId: "console-raw-entry",
-          showCopy: false,
         })
       );
     }
@@ -6237,15 +6224,6 @@ function renderInspector() {
       );
     }
     inspectorBody.appendChild(summary);
-    const actions = document.createElement("div");
-    actions.className = "inspector-actions";
-    actions.appendChild(
-      createCopyButton("Copy title", buildIncidentTitle(incident))
-    );
-    actions.appendChild(
-      createCopyButton("Copy raw incident", () => normalizeInspectorValue(incident))
-    );
-    inspectorBody.appendChild(actions);
     inspectorBody.appendChild(
       renderExpandableSection("Raw Incident", incident, "Copy raw incident", {
         sectionId: "incident-raw-entry",
