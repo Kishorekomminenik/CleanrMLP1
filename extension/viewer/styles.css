@@ -1480,10 +1480,18 @@ section.right {
 
 .event-workspace {
   display: grid;
-  grid-template-columns: minmax(360px, 42%) minmax(420px, 58%);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 12px;
   min-height: 0;
+  min-width: 0;
   height: 100%;
+}
+
+@media (max-width: 1200px) {
+  .event-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 
 .event-list-column {
@@ -1555,6 +1563,8 @@ section.right {
 
 .screenshot-preview img {
   max-width: 100%;
+  height: auto;
+  display: block;
   border-radius: 10px;
   border: 1px solid var(--border);
 }
