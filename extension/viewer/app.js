@@ -3690,20 +3690,34 @@ function renderIncidentRail() {
     ) {
       row.classList.add("nearby");
     }
-    const dot = document.createElement("div");
-    dot.className = `incident-severity ${inc.severity}`;
-    const body = document.createElement("div");
-    const title = document.createElement("div");
-    title.className = "incident-title";
-    title.textContent = buildIncidentTitle(inc);
-    const subtitle = document.createElement("div");
-    subtitle.className = "incident-subtitle";
-    subtitle.classList.add("mono");
-    subtitle.textContent = inc.subtitle;
-    body.appendChild(title);
-    body.appendChild(subtitle);
-    row.appendChild(dot);
-    row.appendChild(body);
+    row.classList.add("errors-row");
+    if (inc.severity) {
+      row.classList.add(`severity-${inc.severity}`);
+    }
+    const time = document.createElement("div");
+    time.className = "mono muted cell-time";
+    time.textContent = formatTimeWithMs(inc.timestampMs || 0);
+    const type = document.createElement("div");
+    type.className = "mono cell-type";
+    const typeLabel = inc.type.startsWith("network")
+      ? "NET"
+      : inc.type.startsWith("console")
+        ? "CON"
+        : "ERR";
+    type.textContent = typeLabel;
+    const message = document.createElement("div");
+    message.className = "cell-main";
+    message.textContent = inc.title || buildIncidentTitle(inc);
+    const status = document.createElement("div");
+    status.className = "mono cell-status";
+    status.textContent =
+      typeof inc.statusCode === "number" && inc.statusCode > 0
+        ? String(inc.statusCode)
+        : "-";
+    row.appendChild(time);
+    row.appendChild(type);
+    row.appendChild(message);
+    row.appendChild(status);
     const clickSource =
       state.playhead.activePanel === "errors" ? "errors-panel" : "incident-click";
     row.addEventListener("click", () => handleIncidentSelection(inc, clickSource));
@@ -4112,7 +4126,7 @@ function renderNetworkPanel(options = {}) {
   let truncated = false;
   const renderEntryRow = (entry, options = {}) => {
     const row = document.createElement("div");
-    row.className = `data-row${options.isChild ? " network-subrow" : ""}`;
+    row.className = `data-row network-row${options.isChild ? " network-subrow" : ""}`;
     if (entry.id) {
       row.dataset.entryId = entry.id;
     }
@@ -4133,7 +4147,7 @@ function renderNetworkPanel(options = {}) {
       row.classList.add("nearby");
     }
     const time = document.createElement("div");
-    time.className = "muted mono";
+    time.className = "muted mono cell-time";
     const entryTime =
       typeof entry.endTimestampMs === "number"
         ? entry.endTimestampMs
@@ -4145,19 +4159,32 @@ function renderNetworkPanel(options = {}) {
       Number.isFinite(entry.timestampMs) ||
       Number.isFinite(entry.timestamp_ms);
     time.textContent = formatTimeWithMs(entryTime);
+    const method = document.createElement("div");
+    method.className = "mono cell-method";
+    method.textContent = (entry.method || "-").toUpperCase();
     const status = document.createElement("div");
-    status.className = "mono";
+    status.className = "mono cell-status";
     const statusValue = entry.response_status || entry.status;
     const statusLabel =
       statusValue ||
       (classifyNetworkStatus(entry) === "aborted" ? "aborted" : "-");
     status.textContent = statusLabel;
     const url = document.createElement("div");
-    url.className = "mono";
-    url.textContent = `${entry.method || ""} ${entry.url || ""}`.trim();
+    url.className = "mono cell-main";
+    let urlText = entry.url || "";
+    if (urlText) {
+      try {
+        const parsed = new URL(urlText);
+        urlText = `${parsed.pathname}${parsed.search || ""}` || urlText;
+      } catch (_) {
+        // keep raw
+      }
+    }
+    url.textContent = urlText || "-";
     row.appendChild(time);
-    row.appendChild(status);
+    row.appendChild(method);
     row.appendChild(url);
+    row.appendChild(status);
     row.addEventListener("click", () => {
       state.selectedNetworkId = entry.id;
       const linkedEvent = findEventForNetworkEntry(entry);
@@ -4333,7 +4360,7 @@ function renderConsolePanel(options = {}) {
   const rows = filtered.slice(0, maxRows);
   rows.forEach((entry) => {
     const row = document.createElement("div");
-    row.className = "data-row";
+    row.className = "data-row console-row";
     if (entry.id) {
       row.dataset.entryId = entry.id;
     }
@@ -4346,7 +4373,7 @@ function renderConsolePanel(options = {}) {
       row.classList.add("nearby");
     }
     const time = document.createElement("div");
-    time.className = "muted mono";
+    time.className = "muted mono cell-time";
     const entryTime =
       typeof entry.timestamp_ms === "number"
         ? entry.timestamp_ms
@@ -4355,9 +4382,21 @@ function renderConsolePanel(options = {}) {
       Number.isFinite(entry.timestamp_ms) || Number.isFinite(entry.timestampMs);
     time.textContent = formatTimeWithMs(entryTime);
     const level = document.createElement("div");
-    level.className = "mono";
-    level.textContent = (entry.level || "log").toUpperCase();
+    level.className = "mono cell-level";
+    const rawLevel = normalizeConsoleLevel(entry.level);
+    const levelLabel =
+      rawLevel === "error"
+        ? "ERR"
+        : rawLevel === "warning"
+          ? "WARN"
+          : rawLevel === "info"
+            ? "INFO"
+            : rawLevel === "debug"
+              ? "DBG"
+              : "LOG";
+    level.textContent = levelLabel;
     const msg = document.createElement("div");
+    msg.className = "cell-main";
     msg.textContent = entry.message || "";
     row.appendChild(time);
     row.appendChild(level);
