@@ -215,37 +215,37 @@
         </section>
 
         <section class="right">
-          <div id="summaryPanel" class="panel summary-panel summary-strip hidden">
-            <h2>Summary</h2>
-            <div class="summary-grid">
-              <div class="summary-item">
-                <div id="summaryNetworkRequests" class="summary-value">0</div>
-                <div id="summaryNetworkRequestsLabel" class="summary-label">Requests</div>
-              </div>
-              <div class="summary-item">
-                <div id="summaryNetworkFailures" class="summary-value">0</div>
-                <div id="summaryNetworkFailuresLabel" class="summary-label">Failures</div>
-              </div>
-              <div class="summary-item">
-                <div id="summaryConsoleMessages" class="summary-value">0</div>
-                <div id="summaryConsoleMessagesLabel" class="summary-label">Console</div>
-              </div>
-              <div class="summary-item">
-                <div id="summaryConsoleErrors" class="summary-value">0</div>
-                <div id="summaryConsoleErrorsLabel" class="summary-label">Errors</div>
-              </div>
-              <div class="summary-item">
-                <div id="summaryScreenshots" class="summary-value">0</div>
-                <div id="summaryScreenshotsLabel" class="summary-label">Screenshots</div>
-              </div>
-              <div class="summary-item">
-                <div id="summaryRecording" class="summary-value">No</div>
-                <div id="summaryRecordingLabel" class="summary-label">Recording</div>
-              </div>
-            </div>
-            <div id="summarySignals" class="summary-signals muted"></div>
-          </div>
           <div class="panel workspace-panel investigation-panel">
+            <div id="summaryPanel" class="summary-panel summary-strip hidden">
+              <h2>Summary</h2>
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <div id="summaryNetworkRequests" class="summary-value">0</div>
+                  <div id="summaryNetworkRequestsLabel" class="summary-label">Requests</div>
+                </div>
+                <div class="summary-item">
+                  <div id="summaryNetworkFailures" class="summary-value">0</div>
+                  <div id="summaryNetworkFailuresLabel" class="summary-label">Failures</div>
+                </div>
+                <div class="summary-item">
+                  <div id="summaryConsoleMessages" class="summary-value">0</div>
+                  <div id="summaryConsoleMessagesLabel" class="summary-label">Console</div>
+                </div>
+                <div class="summary-item">
+                  <div id="summaryConsoleErrors" class="summary-value">0</div>
+                  <div id="summaryConsoleErrorsLabel" class="summary-label">Errors</div>
+                </div>
+                <div class="summary-item">
+                  <div id="summaryScreenshots" class="summary-value">0</div>
+                  <div id="summaryScreenshotsLabel" class="summary-label">Screenshots</div>
+                </div>
+                <div class="summary-item">
+                  <div id="summaryRecording" class="summary-value">No</div>
+                  <div id="summaryRecordingLabel" class="summary-label">Recording</div>
+                </div>
+              </div>
+              <div id="summarySignals" class="summary-signals muted"></div>
+            </div>
             <div class="panel panel-tabs">
               <button class="tab-button" type="button" data-panel="screenshots">
                 Screenshots
@@ -443,106 +443,105 @@
               Select an item to see details.
             </div>
           </div>
-        </div>
-
-          <details id="incidentPanel" class="panel incident-panel hidden">
-            <summary>Issues</summary>
-            <div class="incident-body">
-              <label class="incident-toggle">
-                <input type="checkbox" id="errorOnlyToggle" />
-                Errors only
-              </label>
-              <div id="incidentList" class="incident-list"></div>
-              <div id="incidentEmpty" class="empty-state muted hidden">
-                No issues match current filters.
-              </div>
-            </div>
-          </details>
-
-          <details id="diagnosticsPanel" class="panel diagnostics-panel hidden">
-            <summary>Session diagnostics</summary>
-            <div class="diagnostics-body">
-              <div class="diagnostics-grid">
-                <div class="diagnostics-row">
-                  <span class="muted">Source</span>
-                  <span id="diagSource">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Root normalized</span>
-                  <span id="diagRoot">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Recording</span>
-                  <span id="diagRecording">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Network</span>
-                  <span id="diagNetwork">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Console</span>
-                  <span id="diagConsole">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Screenshots</span>
-                  <span id="diagScreenshots">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Incidents</span>
-                  <span id="diagIncidents">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Duration</span>
-                  <span id="diagDuration">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Duration source</span>
-                  <span id="diagDurationSource">-</span>
-                </div>
-                <div class="diagnostics-row">
-                  <span class="muted">Parse warnings</span>
-                  <span id="diagParseWarnings">-</span>
+          <div class="support-sections">
+            <details id="incidentPanel" class="panel incident-panel support-panel hidden">
+              <summary>Issues</summary>
+              <div class="incident-body">
+                <label class="incident-toggle">
+                  <input type="checkbox" id="errorOnlyToggle" />
+                  Errors only
+                </label>
+                <div id="incidentList" class="incident-list"></div>
+                <div id="incidentEmpty" class="empty-state muted hidden">
+                  No issues match current filters.
                 </div>
               </div>
-              <details class="diagnostics-details">
-                <summary>Counts &amp; lineage</summary>
-                <div class="diagnostics-subtitle">Counts (manifest / parsed)</div>
+            </details>
+
+            <details id="diagnosticsPanel" class="panel diagnostics-panel support-panel hidden">
+              <summary>Session diagnostics</summary>
+              <div class="diagnostics-body">
                 <div class="diagnostics-grid">
                   <div class="diagnostics-row">
-                    <span class="muted">Requests</span>
-                    <span id="diagNetworkCounts">-</span>
+                    <span class="muted">Source</span>
+                    <span id="diagSource">-</span>
                   </div>
                   <div class="diagnostics-row">
-                    <span class="muted">Failures</span>
-                    <span id="diagNetworkFailureCounts">-</span>
+                    <span class="muted">Root normalized</span>
+                    <span id="diagRoot">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Recording</span>
+                    <span id="diagRecording">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Network</span>
+                    <span id="diagNetwork">-</span>
                   </div>
                   <div class="diagnostics-row">
                     <span class="muted">Console</span>
-                    <span id="diagConsoleCounts">-</span>
-                  </div>
-                  <div class="diagnostics-row">
-                    <span class="muted">Errors</span>
-                    <span id="diagConsoleErrorCounts">-</span>
-                  </div>
-                  <div class="diagnostics-row">
-                    <span class="muted">Combined Errors</span>
-                    <span id="diagErrorCounts">-</span>
+                    <span id="diagConsole">-</span>
                   </div>
                   <div class="diagnostics-row">
                     <span class="muted">Screenshots</span>
-                    <span id="diagScreenshotCounts">-</span>
+                    <span id="diagScreenshots">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Incidents</span>
+                    <span id="diagIncidents">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Duration</span>
+                    <span id="diagDuration">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Duration source</span>
+                    <span id="diagDurationSource">-</span>
+                  </div>
+                  <div class="diagnostics-row">
+                    <span class="muted">Parse warnings</span>
+                    <span id="diagParseWarnings">-</span>
                   </div>
                 </div>
-                <div class="diagnostics-subtitle">Lineage</div>
-                <div class="diagnostics-grid">
-                  <div class="diagnostics-row">
-                    <span class="muted">Network</span>
-                    <span id="diagNetworkLineage">-</span>
+                <details class="diagnostics-details">
+                  <summary>Counts &amp; lineage</summary>
+                  <div class="diagnostics-subtitle">Counts (manifest / parsed)</div>
+                  <div class="diagnostics-grid">
+                    <div class="diagnostics-row">
+                      <span class="muted">Requests</span>
+                      <span id="diagNetworkCounts">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Failures</span>
+                      <span id="diagNetworkFailureCounts">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Console</span>
+                      <span id="diagConsoleCounts">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Errors</span>
+                      <span id="diagConsoleErrorCounts">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Combined Errors</span>
+                      <span id="diagErrorCounts">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Screenshots</span>
+                      <span id="diagScreenshotCounts">-</span>
+                    </div>
                   </div>
-                  <div class="diagnostics-row">
-                    <span class="muted">Console</span>
-                    <span id="diagConsoleLineage">-</span>
-                  </div>
+                  <div class="diagnostics-subtitle">Lineage</div>
+                  <div class="diagnostics-grid">
+                    <div class="diagnostics-row">
+                      <span class="muted">Network</span>
+                      <span id="diagNetworkLineage">-</span>
+                    </div>
+                    <div class="diagnostics-row">
+                      <span class="muted">Console</span>
+                      <span id="diagConsoleLineage">-</span>
+                    </div>
                   <div class="diagnostics-row">
                     <span class="muted">Screenshots</span>
                     <span id="diagScreenshotLineage">-</span>
@@ -555,10 +554,12 @@
                     <span class="muted">Markers</span>
                     <span id="diagMarkerLineage">-</span>
                   </div>
-                </div>
-              </details>
-            </div>
-          </details>
+                  </div>
+                </details>
+              </div>
+            </details>
+          </div>
+        </div>
         </section>
       </main>
     </div>
