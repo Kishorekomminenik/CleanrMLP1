@@ -1309,6 +1309,8 @@ section.right {
 .inspector-value {
   text-align: right;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .inspector-preview {
