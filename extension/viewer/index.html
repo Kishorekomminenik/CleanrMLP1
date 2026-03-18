@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DebugDuck Session Viewer</title>
+    <title>DebugDuck • Local Session</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app">
       <header class="header">
         <div class="header-title">
-          <h1>DebugDuck Session Viewer</h1>
+          <h1>DebugDuck • Local Session</h1>
           <p class="header-subtitle">Offline evidence package</p>
           <p id="packageNotice" class="loaded-info muted hidden"></p>
           <p id="loadedInfo" class="loaded-info muted hidden"></p>
@@ -217,44 +217,47 @@
         <section class="right">
           <div class="panel workspace-panel investigation-panel">
             <div id="summaryPanel" class="summary-panel summary-strip hidden">
-              <h2>Summary</h2>
+              <h2>Overview</h2>
               <div class="summary-grid">
-                <div class="summary-item">
+                <div class="summary-item" data-summary="networkRequests">
                   <div id="summaryNetworkRequests" class="summary-value">0</div>
-                  <div id="summaryNetworkRequestsLabel" class="summary-label">Requests</div>
+                  <div id="summaryNetworkRequestsLabel" class="summary-label">Req</div>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" data-summary="networkFailures">
                   <div id="summaryNetworkFailures" class="summary-value">0</div>
-                  <div id="summaryNetworkFailuresLabel" class="summary-label">Failures</div>
+                  <div id="summaryNetworkFailuresLabel" class="summary-label">Fail</div>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" data-summary="consoleMessages">
                   <div id="summaryConsoleMessages" class="summary-value">0</div>
-                  <div id="summaryConsoleMessagesLabel" class="summary-label">Console</div>
+                  <div id="summaryConsoleMessagesLabel" class="summary-label">Logs</div>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" data-summary="consoleErrors">
                   <div id="summaryConsoleErrors" class="summary-value">0</div>
-                  <div id="summaryConsoleErrorsLabel" class="summary-label">Errors</div>
+                  <div id="summaryConsoleErrorsLabel" class="summary-label">Err</div>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" data-summary="screenshots">
                   <div id="summaryScreenshots" class="summary-value">0</div>
-                  <div id="summaryScreenshotsLabel" class="summary-label">Screenshots</div>
+                  <div id="summaryScreenshotsLabel" class="summary-label">Shots</div>
                 </div>
-                <div class="summary-item">
+                <div class="summary-item" data-summary="recording">
                   <div id="summaryRecording" class="summary-value">No</div>
-                  <div id="summaryRecordingLabel" class="summary-label">Recording</div>
+                  <div id="summaryRecordingLabel" class="summary-label">Rec</div>
                 </div>
               </div>
               <div id="summarySignals" class="summary-signals muted"></div>
             </div>
             <div class="panel panel-tabs">
               <button class="tab-button" type="button" data-panel="screenshots">
-                Screenshots
+                Shots
               </button>
               <button class="tab-button active" type="button" data-panel="network">
                 Network
               </button>
               <button class="tab-button" type="button" data-panel="console">
                 Console
+              </button>
+              <button class="tab-button" type="button" data-panel="errors">
+                Errors
               </button>
             </div>
 
@@ -288,7 +291,7 @@
                   <div class="panel details-panel">
                     <h2>Details</h2>
                     <div id="detailsBody" class="details-body muted">
-                      Select an event to see details.
+                      Select an item
                     </div>
                   </div>
                 </div>
@@ -299,18 +302,17 @@
               <div class="event-workspace">
                 <div class="event-list-column">
                   <div class="panel screenshots-panel">
-                    <h2>Screenshots</h2>
+                    <h2>Shots</h2>
                     <div id="screenshotsList" class="screenshots-list"></div>
                     <div id="screenshotsEmpty" class="empty-state muted hidden">
-                      No screenshots available for this session.
+                      No shots available for this session.
                     </div>
                   </div>
                 </div>
                 <div class="inspector-column">
                   <div class="panel screenshot-preview-panel">
-                    <h2>Preview</h2>
                     <div id="screenshotPreview" class="screenshot-preview muted">
-                      Select a screenshot to preview.
+                      Select an item
                     </div>
                   </div>
                 </div>
@@ -323,10 +325,11 @@
                   <div class="panel network-panel">
                   <h2>Network</h2>
                   <div class="filter-row search-row">
+                    <label class="filter-label" for="networkSearchInput">Filter</label>
                     <input
                       id="networkSearchInput"
                       type="search"
-                      placeholder="Search method, URL, status"
+                      placeholder="Filter (method, url, status)"
                     />
                     <button id="networkSearchClear" class="chip" type="button">
                       Clear
@@ -335,7 +338,7 @@
                   </div>
                   <div class="filter-row chips">
                     <button class="chip active" type="button" data-net-mode="near">
-                      Near Current Time
+                      Near Time ±5s
                     </button>
                     <button class="chip" type="button" data-net-mode="all">All</button>
                   </div>
@@ -344,7 +347,7 @@
                       All
                     </button>
                     <button class="chip" type="button" data-net-filter="errors">
-                      Errors
+                      Err
                     </button>
                     <button class="chip" type="button" data-net-filter="4xx">
                       4xx
@@ -369,16 +372,17 @@
             </div>
           </div>
 
-          <div class="panel-group hidden" data-panel="console">
+            <div class="panel-group hidden" data-panel="console">
             <div class="event-workspace">
               <div class="event-list-column">
                 <div class="panel console-panel">
                   <h2>Console</h2>
                   <div class="filter-row search-row">
+                    <label class="filter-label" for="consoleSearchInput">Filter</label>
                     <input
                       id="consoleSearchInput"
                       type="search"
-                      placeholder="Search level, message, source"
+                      placeholder="Filter (level, message, source)"
                     />
                     <button id="consoleSearchClear" class="chip" type="button">
                       Clear
@@ -390,15 +394,15 @@
                       All
                     </button>
                     <button class="chip" type="button" data-console-quick="errors">
-                      Errors
+                      Err
                     </button>
                     <button class="chip" type="button" data-console-quick="warnings">
-                      Warnings
+                      Warn
                     </button>
                   </div>
                   <div class="filter-row chips">
                     <button class="chip active" type="button" data-console-mode="near">
-                      Near Current Time
+                      Near Time ±5s
                     </button>
                     <button class="chip" type="button" data-console-mode="all">All</button>
                   </div>
@@ -435,31 +439,36 @@
             </div>
           </div>
 
+          <div class="panel-group hidden" data-panel="errors">
+            <div class="event-workspace">
+              <div class="event-list-column">
+                <div id="incidentPanel" class="panel errors-panel hidden">
+                  <h2>Errors</h2>
+                  <label class="incident-toggle">
+                    <input type="checkbox" id="errorOnlyToggle" />
+                    Errors only
+                  </label>
+                  <div id="incidentList" class="incident-list"></div>
+                  <div id="incidentEmpty" class="empty-state muted hidden">
+                    No errors match current filters.
+                  </div>
+                </div>
+              </div>
+              <div class="inspector-column" data-inspector-dock="errors"></div>
+            </div>
+          </div>
+
           <div id="inspectorPanel" class="panel inspector-panel hidden">
             <div class="inspector-header">
-              <h2 id="inspectorTitle">Inspector</h2>
+              <h2 id="inspectorTitle">Details</h2>
             </div>
             <div id="inspectorBody" class="inspector-body muted">
-              Select an item to see details.
+              Select an item
             </div>
           </div>
           <div class="support-sections">
-            <details id="incidentPanel" class="panel incident-panel support-panel hidden">
-              <summary>Issues</summary>
-              <div class="incident-body">
-                <label class="incident-toggle">
-                  <input type="checkbox" id="errorOnlyToggle" />
-                  Errors only
-                </label>
-                <div id="incidentList" class="incident-list"></div>
-                <div id="incidentEmpty" class="empty-state muted hidden">
-                  No issues match current filters.
-                </div>
-              </div>
-            </details>
-
             <details id="diagnosticsPanel" class="panel diagnostics-panel support-panel hidden">
-              <summary>Session diagnostics</summary>
+              <summary>Diagnostics</summary>
               <div class="diagnostics-body">
                 <div class="diagnostics-grid">
                   <div class="diagnostics-row">

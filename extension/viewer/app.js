@@ -122,6 +122,7 @@ const inspectorBody = document.getElementById("inspectorBody");
 const diagnosticsPanel = document.getElementById("diagnosticsPanel");
 const inspectorDockNetwork = document.querySelector("[data-inspector-dock='network']");
 const inspectorDockConsole = document.querySelector("[data-inspector-dock='console']");
+const inspectorDockErrors = document.querySelector("[data-inspector-dock='errors']");
 const diagSource = document.getElementById("diagSource");
 const diagRoot = document.getElementById("diagRoot");
 const diagRecording = document.getElementById("diagRecording");
@@ -370,28 +371,20 @@ function formatWindowLabel(windowMs) {
 
 function updateNearTimeLabels(options = {}) {
   const { networkCount, consoleCount, forceNetwork = false, forceConsole = false } = options;
-  const baseLabel = `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`;
+  const baseLabel = `Near Time ${formatWindowLabel(state.playhead.timeWindowMs)}`;
   const shouldUpdateNetwork = forceNetwork || networkCount !== undefined;
   const shouldUpdateConsole = forceConsole || consoleCount !== undefined;
   if (shouldUpdateNetwork) {
-    const networkLabel =
-      typeof networkCount === "number"
-        ? `${baseLabel} → ${networkCount} results`
-        : baseLabel;
     networkModeChips.forEach((chip) => {
       if (chip.dataset.netMode === "near") {
-        chip.textContent = networkLabel;
+        chip.textContent = baseLabel;
       }
     });
   }
   if (shouldUpdateConsole) {
-    const consoleLabel =
-      typeof consoleCount === "number"
-        ? `${baseLabel} → ${consoleCount} results`
-        : baseLabel;
     consoleModeChips.forEach((chip) => {
       if (chip.dataset.consoleMode === "near") {
-        chip.textContent = consoleLabel;
+        chip.textContent = baseLabel;
       }
     });
   }
@@ -698,13 +691,13 @@ function buildConsoleMarkerLabel(entry) {
 function getScreenshotDisplayLabel(shot, index = null) {
   const base =
     typeof index === "number"
-      ? `Screenshot #${index + 1}`
-      : "Screenshot";
+      ? `#${index + 1}`
+      : "Shot";
   const timestamp =
     typeof shot?.timestampMs === "number"
       ? formatTime(shot.timestampMs)
       : null;
-  return timestamp ? `${base} @ ${timestamp}` : base;
+  return timestamp ? `${base} • ${timestamp}` : base;
 }
 
 function getScreenshotIndexById(shot) {
@@ -3056,42 +3049,22 @@ function renderSummaryFromManifest(manifest) {
     summaryConsoleErrors.textContent = consoleErrorsText;
   }
   if (summaryNetworkRequestsLabel) {
-    summaryNetworkRequestsLabel.textContent = pluralizeLabel(
-      requestsCount,
-      "Request",
-      "Requests"
-    );
+    summaryNetworkRequestsLabel.textContent = "Req";
   }
   if (summaryNetworkFailuresLabel) {
-    summaryNetworkFailuresLabel.textContent = pluralizeLabel(
-      failuresCount,
-      "Failure",
-      "Failures"
-    );
+    summaryNetworkFailuresLabel.textContent = "Fail";
   }
   if (summaryConsoleMessagesLabel) {
-    summaryConsoleMessagesLabel.textContent = pluralizeLabel(
-      consoleCount,
-      "Console",
-      "Console"
-    );
+    summaryConsoleMessagesLabel.textContent = "Logs";
   }
   if (summaryConsoleErrorsLabel) {
-    summaryConsoleErrorsLabel.textContent = pluralizeLabel(
-      consoleErrorCount,
-      "Error",
-      "Errors"
-    );
+    summaryConsoleErrorsLabel.textContent = "Err";
   }
   if (summaryScreenshotsLabel) {
-    summaryScreenshotsLabel.textContent = pluralizeLabel(
-      screenshotCount,
-      "Screenshot",
-      "Screenshots"
-    );
+    summaryScreenshotsLabel.textContent = "Shots";
   }
   if (summaryRecordingLabel) {
-    summaryRecordingLabel.textContent = "Recording";
+    summaryRecordingLabel.textContent = "Rec";
   }
   if (summaryScreenshots) {
     summaryScreenshots.textContent = formatSummaryCount({
@@ -3325,58 +3298,58 @@ function applySummaryInteractions() {
     if (!label) {
       return;
     }
-    const key = label.querySelector(".summary-label")?.textContent || "";
+    const key = label.dataset.summary || "";
     const availability = getIntegrityAvailability();
-    if (key === "Network Requests" && availability && availability.network === false) {
+    if (key === "networkRequests" && availability && availability.network === false) {
       return;
     }
-    if (key === "Network Failures" && availability && availability.network === false) {
+    if (key === "networkFailures" && availability && availability.network === false) {
       return;
     }
-    if (key === "Console Messages" && availability && availability.console === false) {
+    if (key === "consoleMessages" && availability && availability.console === false) {
       return;
     }
-    if (key === "Console Errors" && availability && availability.console === false) {
+    if (key === "consoleErrors" && availability && availability.console === false) {
       return;
     }
-    if (key === "Screenshots" && availability && availability.screenshots === false) {
+    if (key === "screenshots" && availability && availability.screenshots === false) {
       return;
     }
-    if (key === "Recording" && availability && availability.recording === false) {
+    if (key === "recording" && availability && availability.recording === false) {
       return;
     }
-    if (key === "Network Failures") {
+    if (key === "networkFailures") {
       state.filters.networkStatusBucket = "errors";
       networkFilterChips.forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.netFilter === "errors");
       });
       setActivePanel("network");
       ensureNetworkLogsLoaded().then(renderNetworkPanel);
-    } else if (key === "Network Requests") {
+    } else if (key === "networkRequests") {
       setActivePanel("network");
       state.filters.networkStatusBucket = "all";
       networkFilterChips.forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.netFilter === "all");
       });
       ensureNetworkLogsLoaded().then(renderNetworkPanel);
-    } else if (key === "Console Errors") {
+    } else if (key === "consoleErrors") {
       setActivePanel("console");
       state.filters.consoleLevels = ["error"];
       consoleLevelChips.forEach((chip) => {
         chip.classList.toggle("active", chip.dataset.consoleLevel === "error");
       });
       ensureConsoleLogsLoaded().then(renderConsolePanel);
-    } else if (key === "Console Messages") {
+    } else if (key === "consoleMessages") {
       setActivePanel("console");
       state.filters.consoleLevels = ["error", "warning", "info", "log", "debug"];
       consoleLevelChips.forEach((chip) => {
         chip.classList.toggle("active", true);
       });
       ensureConsoleLogsLoaded().then(renderConsolePanel);
-    } else if (key === "Screenshots") {
+    } else if (key === "screenshots") {
       setActivePanel("screenshots");
       renderScreenshotsPanel();
-    } else if (key === "Recording") {
+    } else if (key === "recording") {
       setActivePanel("timeline");
     }
     renderIncidentRail();
@@ -3534,7 +3507,7 @@ function renderIncidentRail() {
     incidentEmpty.classList.add("hidden");
     renderIntegrityDisabled(
       incidentList,
-      buildIntegrityDisabledMessage(scope, "Incident list")
+      buildIntegrityDisabledMessage(scope, "Errors list")
     );
     updateIncidentNavControls();
     return;
@@ -3570,12 +3543,15 @@ function renderIncidentRail() {
     title.textContent = buildIncidentTitle(inc);
     const subtitle = document.createElement("div");
     subtitle.className = "incident-subtitle";
+    subtitle.classList.add("mono");
     subtitle.textContent = inc.subtitle;
     body.appendChild(title);
     body.appendChild(subtitle);
     row.appendChild(dot);
     row.appendChild(body);
-    row.addEventListener("click", () => handleIncidentSelection(inc, "incident-click"));
+    const clickSource =
+      state.playhead.activePanel === "errors" ? "errors-panel" : "incident-click";
+    row.addEventListener("click", () => handleIncidentSelection(inc, clickSource));
     incidentList.appendChild(row);
   });
   updateIncidentNavControls();
@@ -3664,21 +3640,21 @@ function renderScreenshotsPanel() {
     }
     const meta = document.createElement("div");
     const title = document.createElement("div");
-    let labelText = "Screenshot";
+    let labelText = "Shot";
     try {
-      labelText = getScreenshotDisplayLabel(shot, index) || "Screenshot";
+      labelText = getScreenshotDisplayLabel(shot, index) || "Shot";
     } catch (error) {
       console.warn("[DebugDuck] Screenshot label fallback", {
         error: error?.message || String(error),
         shotId: shot?.id || null,
       });
-      labelText = "Screenshot";
+      labelText = "Shot";
     }
     title.textContent = labelText;
     const subtitle = document.createElement("div");
     subtitle.className = "muted";
-    subtitle.textContent =
-      shot.kind ? `Kind: ${shot.kind}` : "Captured image";
+    const kindLabel = shot.kind === "fullpage" ? "full page" : shot.kind;
+    subtitle.textContent = kindLabel || "viewport";
     meta.appendChild(title);
     meta.appendChild(subtitle);
     row.appendChild(thumb);
@@ -3732,7 +3708,7 @@ function renderScreenshotPreview() {
       : null;
   const shot = selectedShot || nearestShot;
   if (!shot) {
-    screenshotPreview.textContent = "Select a screenshot to preview.";
+    screenshotPreview.textContent = "Select an item";
     return;
   }
   screenshotPreview.innerHTML = "";
@@ -3745,11 +3721,10 @@ function renderScreenshotPreview() {
   meta.className = "muted";
   const previewIndex = getScreenshotIndexById(shot);
   const label = getScreenshotDisplayLabel(shot, previewIndex ?? undefined);
-  const pieces = [
-    label,
-    shot.kind ? `Kind: ${shot.kind}` : null,
-    selectedShot ? "Selected" : "Nearest",
-  ].filter(Boolean);
+  const kindLabel = shot.kind === "fullpage" ? "full page" : shot.kind;
+  const pieces = [label, kindLabel || "viewport", selectedShot ? "Selected" : "Nearest"].filter(
+    Boolean
+  );
   meta.textContent = pieces.join(" • ");
   screenshotPreview.appendChild(img);
   screenshotPreview.appendChild(meta);
@@ -3951,15 +3926,8 @@ function renderNetworkPanel() {
     networkFilteredEmpty.textContent = "No network entries match current filter.";
   }
   if (networkResultCount) {
-    const visibleCount = Math.min(filtered.length, 500);
-    const totalCount = entries.length;
-    const modeLabel =
-      state.panelModes.network === "near"
-        ? `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`
-        : "All Time";
-    const totalLabel =
-      filtered.length !== totalCount ? ` (total ${totalCount})` : "";
-    networkResultCount.textContent = `${modeLabel} • ${filtered.length} results • showing ${visibleCount}${totalLabel}`;
+    const resultLabel = filtered.length === 1 ? "result" : "results";
+    networkResultCount.textContent = `${filtered.length} ${resultLabel}`;
   }
   const selectedNetworkId = state.selectedNetworkId || null;
   const grouped = groupNetworkEntries(filtered);
@@ -3992,7 +3960,7 @@ function renderNetworkPanel() {
       row.classList.add("nearby");
     }
     const time = document.createElement("div");
-    time.className = "muted";
+    time.className = "muted mono";
     const entryTime =
       typeof entry.endTimestampMs === "number"
         ? entry.endTimestampMs
@@ -4005,12 +3973,14 @@ function renderNetworkPanel() {
       Number.isFinite(entry.timestamp_ms);
     time.textContent = formatTimeWithMs(entryTime);
     const status = document.createElement("div");
+    status.className = "mono";
     const statusValue = entry.response_status || entry.status;
     const statusLabel =
       statusValue ||
       (classifyNetworkStatus(entry) === "aborted" ? "aborted" : "-");
     status.textContent = statusLabel;
     const url = document.createElement("div");
+    url.className = "mono";
     url.textContent = `${entry.method || ""} ${entry.url || ""}`.trim();
     row.appendChild(time);
     row.appendChild(status);
@@ -4162,15 +4132,8 @@ function renderConsolePanel() {
     consoleFilteredEmpty.textContent = "No console entries match current filter.";
   }
   if (consoleResultCount) {
-    const visibleCount = Math.min(filtered.length, 500);
-    const totalCount = entries.length;
-    const modeLabel =
-      state.panelModes.console === "near"
-        ? `Near Current Time (${formatWindowLabel(state.playhead.timeWindowMs)})`
-        : "All Time";
-    const totalLabel =
-      filtered.length !== totalCount ? ` (total ${totalCount})` : "";
-    consoleResultCount.textContent = `${modeLabel} • ${filtered.length} results • showing ${visibleCount}${totalLabel}`;
+    const resultLabel = filtered.length === 1 ? "result" : "results";
+    consoleResultCount.textContent = `${filtered.length} ${resultLabel}`;
   }
   const selectedHidden =
     state.selectedConsoleId &&
@@ -4192,7 +4155,7 @@ function renderConsolePanel() {
       row.classList.add("nearby");
     }
     const time = document.createElement("div");
-    time.className = "muted";
+    time.className = "muted mono";
     const entryTime =
       typeof entry.timestamp_ms === "number"
         ? entry.timestamp_ms
@@ -4201,6 +4164,7 @@ function renderConsolePanel() {
       Number.isFinite(entry.timestamp_ms) || Number.isFinite(entry.timestampMs);
     time.textContent = formatTimeWithMs(entryTime);
     const level = document.createElement("div");
+    level.className = "mono";
     level.textContent = (entry.level || "log").toUpperCase();
     const msg = document.createElement("div");
     msg.textContent = entry.message || "";
@@ -5312,6 +5276,9 @@ function createInspectorRow(label, value, options = {}) {
   if (options.align) {
     val.style.textAlign = options.align;
   }
+  if (options.mono) {
+    val.classList.add("mono");
+  }
   const emptyLabel = options.emptyLabel || "Not available";
   val.textContent = value || value === 0 ? String(value) : emptyLabel;
   row.appendChild(key);
@@ -5342,11 +5309,34 @@ function normalizeInspectorValue(value) {
   }
 }
 
-function createCopyButton(label, text) {
+function createCopyButton(label, text, options = {}) {
   const button = document.createElement("button");
+  const iconOnly = options.iconOnly !== false;
   button.type = "button";
-  button.className = "copy-button";
-  button.textContent = label;
+  button.className = iconOnly ? "icon-button copy-button" : "copy-button";
+  button.setAttribute("title", label);
+  button.setAttribute("aria-label", label);
+  if (iconOnly) {
+    const icon = document.createElement("span");
+    icon.className = "copy-icon";
+    icon.textContent = "⧉";
+    const srText = document.createElement("span");
+    srText.className = "sr-only";
+    srText.textContent = label;
+    button.appendChild(icon);
+    button.appendChild(srText);
+  } else {
+    button.textContent = label;
+  }
+  const setStatus = (status) => {
+    if (iconOnly) {
+      button.dataset.status = status;
+      button.setAttribute("title", status);
+      button.setAttribute("aria-label", status);
+    } else {
+      button.textContent = status;
+    }
+  };
   const enabled =
     typeof text === "function" ? true : text !== null && text !== undefined && text !== "";
   if (!enabled) {
@@ -5358,9 +5348,9 @@ function createCopyButton(label, text) {
         ? text()
         : text;
     if (!resolved) {
-      button.textContent = "Nothing to copy";
+      setStatus("Nothing to copy");
       setTimeout(() => {
-        button.textContent = label;
+        setStatus(label);
       }, 1200);
       return;
     }
@@ -5377,14 +5367,14 @@ function createCopyButton(label, text) {
         document.execCommand("copy");
         document.body.removeChild(helper);
       }
-      button.textContent = "Copied";
+      setStatus("Copied");
       setTimeout(() => {
-        button.textContent = label;
+        setStatus(label);
       }, 1200);
     } catch (error) {
-      button.textContent = "Copy failed";
+      setStatus("Copy failed");
       setTimeout(() => {
-        button.textContent = label;
+        setStatus(label);
       }, 1200);
     }
   });
@@ -5487,26 +5477,31 @@ function renderInspector() {
   inspectorBody.innerHTML = "";
   const { type, id } = state.inspector;
   const activePanel = state.playhead.activePanel;
-  const inspectorVisible = activePanel === "network" || activePanel === "console";
+  const inspectorVisible =
+    activePanel === "network" || activePanel === "console" || activePanel === "errors";
   if (!inspectorVisible) {
     inspectorPanel.classList.add("hidden");
     return;
   }
   inspectorPanel.classList.remove("hidden");
   if (activePanel === "network" && type && type !== "network") {
-    inspectorTitle.textContent = "Network details";
-    inspectorBody.textContent = "Select a network request to inspect details.";
+    inspectorTitle.textContent = "Details";
+    inspectorBody.textContent = "Select an item";
     return;
   }
   if (activePanel === "console" && type && type !== "console") {
-    inspectorTitle.textContent = "Console details";
-    inspectorBody.textContent = "Select a console entry to inspect details.";
+    inspectorTitle.textContent = "Details";
+    inspectorBody.textContent = "Select an item";
+    return;
+  }
+  if (activePanel === "errors" && type && type !== "incident") {
+    inspectorTitle.textContent = "Details";
+    inspectorBody.textContent = "Select an item";
     return;
   }
   if (!type || !id) {
-    inspectorTitle.textContent = "Inspector";
-    inspectorBody.textContent =
-      "Select an event to inspect details.";
+    inspectorTitle.textContent = "Details";
+    inspectorBody.textContent = "Select an item";
     inspectorBody.classList.add("muted");
     return;
   }
@@ -5518,21 +5513,18 @@ function renderInspector() {
         : type === "screenshot"
           ? "screenshots"
           : type === "incident"
-            ? "timeline"
+            ? "incidents"
             : "global";
   if (isFailFastActive(scope)) {
-    inspectorTitle.textContent = "Inspector disabled";
-    inspectorBody.textContent = buildIntegrityDisabledMessage(
-      scope === "timeline" ? "incidents" : scope,
-      "Inspector"
-    );
+    inspectorTitle.textContent = "Details unavailable";
+    inspectorBody.textContent = buildIntegrityDisabledMessage(scope, "Details");
     inspectorBody.classList.add("muted");
     return;
   }
   inspectorBody.classList.remove("muted");
   if (type === "network") {
     const entry = state.networkIndex?.get(id) || state.networkEntries.find((item) => item.id === id);
-    inspectorTitle.textContent = "Network request";
+    inspectorTitle.textContent = "Details";
     if (!entry) {
       const hasNetwork = Boolean(state.manifest?.artifacts?.network?.present);
       if (hasNetwork && !state.loadedArtifacts.network) {
@@ -5600,13 +5592,13 @@ function renderInspector() {
     typeBadge.className = "inspector-badge";
     typeBadge.textContent = "Network";
     const statusBadge = document.createElement("span");
-    statusBadge.className = "inspector-badge status";
+    statusBadge.className = "inspector-badge status mono";
     statusBadge.textContent = statusText;
     const title = document.createElement("div");
     title.className = "inspector-title";
     title.textContent = headlineText || "Network request";
     const meta = document.createElement("div");
-    meta.className = "inspector-meta";
+    meta.className = "inspector-meta mono";
     meta.textContent = `${timeValue} • ${durationValue}`;
     headerLeft.appendChild(typeBadge);
     headerLeft.appendChild(statusBadge);
@@ -5622,14 +5614,14 @@ function renderInspector() {
     inspectorBody.appendChild(header);
     const summaryGrid = document.createElement("div");
     summaryGrid.className = "inspector-summary-grid";
-    summaryGrid.appendChild(createInspectorRow("Method", methodText, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("URL", urlText, { muted: true, align: "left" }));
-    summaryGrid.appendChild(createInspectorRow("Status", statusText, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("Resource Type", resourceType, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("Time", timeValue, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("Duration", durationValue, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("From Cache", fromCache, { muted: true }));
-    summaryGrid.appendChild(createInspectorRow("From Service Worker", fromServiceWorker, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Method", methodText, { muted: true, mono: true }));
+    summaryGrid.appendChild(createInspectorRow("Status", statusText, { muted: true, mono: true }));
+    summaryGrid.appendChild(createInspectorRow("Time", timeValue, { muted: true, mono: true }));
+    summaryGrid.appendChild(createInspectorRow("Cache", fromCache, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Type", resourceType, { muted: true }));
+    summaryGrid.appendChild(
+      createInspectorRow("URL", urlText, { muted: true, align: "left", mono: true })
+    );
     inspectorBody.appendChild(summaryGrid);
     const requestHeaders =
       entry.request_headers || entry.requestHeaders || entry.request_header;
@@ -5649,16 +5641,10 @@ function renderInspector() {
       entry.request_timing ||
       entry.response_timing ||
       (entry.total_time_ms ? { total_time_ms: entry.total_time_ms } : null);
-    const tabs = [
-      "Overview",
-      "Headers",
-      "Request",
-      "Response",
-      "Timing",
-      "Raw",
-    ];
+    const tabs = ["Overview", "Headers", "Request", "Response", "Raw"];
     inspectorBody.appendChild(renderInspectorTabs("network", tabs));
-    const activeTab = getActiveInspectorTab("network", "Overview");
+    const preferredTab = getActiveInspectorTab("network", "Overview");
+    const activeTab = tabs.includes(preferredTab) ? preferredTab : "Overview";
     const tabBody = document.createElement("div");
     tabBody.className = "inspector-tab-body";
     if (activeTab === "Overview") {
@@ -5702,6 +5688,12 @@ function renderInspector() {
           )
         );
       }
+      tabBody.appendChild(
+        renderExpandableSection("Timing", timing, "Copy timing", {
+          sectionId: "network-timing",
+          showCopy: false,
+        })
+      );
     } else if (activeTab === "Headers") {
       tabBody.appendChild(
         renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
@@ -5729,13 +5721,6 @@ function renderInspector() {
           sectionId: "network-response-body",
         })
       );
-    } else if (activeTab === "Timing") {
-      tabBody.appendChild(
-        renderExpandableSection("Timing", timing, "Copy timing", {
-          sectionId: "network-timing",
-          showCopy: false,
-        })
-      );
     } else if (activeTab === "Raw") {
       tabBody.appendChild(
         renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
@@ -5749,7 +5734,7 @@ function renderInspector() {
   }
   if (type === "console") {
     const entry = state.consoleIndex?.get(id) || state.consoleEntries.find((item) => item.id === id);
-    inspectorTitle.textContent = "Console log";
+    inspectorTitle.textContent = "Details";
     if (!entry) {
       const hasConsole = Boolean(state.manifest?.artifacts?.console?.present);
       if (hasConsole && !state.loadedArtifacts.console) {
@@ -5796,13 +5781,13 @@ function renderInspector() {
     typeBadge.className = "inspector-badge";
     typeBadge.textContent = "Console";
     const levelBadge = document.createElement("span");
-    levelBadge.className = "inspector-badge level";
+    levelBadge.className = "inspector-badge level mono";
     levelBadge.textContent = levelLabel;
     const title = document.createElement("div");
     title.className = "inspector-title";
     title.textContent = messageLine;
     const meta = document.createElement("div");
-    meta.className = "inspector-meta";
+    meta.className = "inspector-meta mono";
     meta.textContent = `${formatTimeWithMs(entry.timestampMs || 0)} • ${
       source || "Not available"
     }`;
@@ -5820,14 +5805,18 @@ function renderInspector() {
     inspectorBody.appendChild(header);
     const summaryGrid = document.createElement("div");
     summaryGrid.className = "inspector-summary-grid";
-    summaryGrid.appendChild(createInspectorRow("Level", levelLabel, { muted: true }));
+    summaryGrid.appendChild(createInspectorRow("Level", levelLabel, { muted: true, mono: true }));
     summaryGrid.appendChild(
-      createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), { muted: true })
+      createInspectorRow("Time", formatTimeWithMs(entry.timestampMs || 0), {
+        muted: true,
+        mono: true,
+      })
     );
     summaryGrid.appendChild(
       createInspectorRow("Source", source || "Not available", {
         muted: true,
         align: "left",
+        mono: true,
       })
     );
     summaryGrid.appendChild(
@@ -5896,7 +5885,7 @@ function renderInspector() {
   }
   if (type === "screenshot") {
     const shot = state.screenshotById.get(id);
-    inspectorTitle.textContent = "Screenshot";
+    inspectorTitle.textContent = "Details";
     if (!shot) {
       inspectorBody.textContent = "Screenshot not found.";
       return;
@@ -5930,7 +5919,10 @@ function renderInspector() {
       createInspectorHeadline(shot.label || "Screenshot capture")
     );
     meta.appendChild(
-      createInspectorRow("Time", formatTimeWithMs(shot.timestampMs || 0), { muted: true })
+      createInspectorRow("Time", formatTimeWithMs(shot.timestampMs || 0), {
+        muted: true,
+        mono: true,
+      })
     );
     meta.appendChild(createInspectorRow("Kind", shot.kind || "-", { muted: true }));
     meta.appendChild(
@@ -5938,7 +5930,7 @@ function renderInspector() {
     );
     if (shot.path) {
       meta.appendChild(
-        createInspectorRow("Path", shot.path, { muted: true, align: "left" })
+        createInspectorRow("Path", shot.path, { muted: true, align: "left", mono: true })
       );
     }
     inspectorBody.appendChild(meta);
@@ -5952,7 +5944,7 @@ function renderInspector() {
   }
   if (type === "incident") {
     const incident = state.incidents.find((item) => item.id === id);
-    inspectorTitle.textContent = "Incident";
+    inspectorTitle.textContent = "Details";
     if (!incident) {
       inspectorBody.textContent = "Incident not found.";
       return;
@@ -5968,6 +5960,7 @@ function renderInspector() {
     summary.appendChild(
       createInspectorRow("Time", formatTimeWithMs(incident.timestampMs || 0), {
         muted: true,
+        mono: true,
       })
     );
     summary.appendChild(
@@ -5975,7 +5968,7 @@ function renderInspector() {
     );
     if (incident.url) {
       summary.appendChild(
-        createInspectorRow("URL", incident.url, { muted: true, align: "left" })
+        createInspectorRow("URL", incident.url, { muted: true, align: "left", mono: true })
       );
     }
     inspectorBody.appendChild(summary);
@@ -6010,6 +6003,9 @@ function setActivePanel(panel) {
     panelEl.classList.toggle("hidden", !active);
   });
   attachInspectorDock(panel);
+  if (panel === "errors") {
+    renderIncidentRail();
+  }
   renderInspector();
 }
 
@@ -6024,6 +6020,11 @@ function attachInspectorDock(panel) {
   }
   if (panel === "console" && inspectorDockConsole) {
     inspectorDockConsole.appendChild(inspectorPanel);
+    inspectorPanel.classList.remove("hidden");
+    return;
+  }
+  if (panel === "errors" && inspectorDockErrors) {
+    inspectorDockErrors.appendChild(inspectorPanel);
     inspectorPanel.classList.remove("hidden");
     return;
   }
@@ -6113,6 +6114,7 @@ function handleIncidentSelection(incident, source = "incident-click") {
   if (!incident) {
     return;
   }
+  const stayInErrors = source === "errors-panel";
   const scope =
     incident.panelTarget === "network"
       ? "network"
@@ -6127,21 +6129,26 @@ function handleIncidentSelection(incident, source = "incident-click") {
       ev.id === incident.sourceRef ||
       (ev.refs?.ref && ev.refs.ref === incident.sourceRef)
   );
+  const nextPanel = stayInErrors ? "errors" : incident.panelTarget;
   seekTo(incident.timestampMs || 0, source, {
-    activePanel: incident.panelTarget,
+    activePanel: nextPanel,
     selectedIncidentId: incident.id,
     selectedEventId: eventMatch ? eventMatch.id : state.playhead.selectedEventId,
   });
   setInspector("incident", incident.id);
   if (incident.panelTarget === "network") {
-    setActivePanel("network");
     state.selectedNetworkId = incident.sourceRef;
-    ensureNetworkLogsLoaded().then(renderNetworkPanel);
+    if (!stayInErrors) {
+      setActivePanel("network");
+      ensureNetworkLogsLoaded().then(renderNetworkPanel);
+    }
   } else if (incident.panelTarget === "console") {
-    setActivePanel("console");
     state.selectedConsoleId = incident.sourceRef;
-    ensureConsoleLogsLoaded().then(renderConsolePanel);
-  } else {
+    if (!stayInErrors) {
+      setActivePanel("console");
+      ensureConsoleLogsLoaded().then(renderConsolePanel);
+    }
+  } else if (!stayInErrors) {
     setActivePanel("timeline");
   }
   if (eventMatch) {
@@ -6280,7 +6287,7 @@ function mapMarkerToPanel(marker) {
     return "console";
   }
   if (marker.type === "incident") {
-    return "incident";
+    return "errors";
   }
   return "timeline";
 }
@@ -6297,7 +6304,7 @@ function jumpToMarker(marker) {
         ? "network"
         : panel === "console"
           ? "console"
-          : panel === "incident"
+          : panel === "errors"
             ? "incidents"
             : "timeline";
   if (isFailFastActive(scope)) {
@@ -6326,7 +6333,7 @@ function jumpToMarker(marker) {
     renderNetworkPanel();
   } else if (panel === "console") {
     renderConsolePanel();
-  } else if (panel === "incident") {
+  } else if (panel === "errors") {
     renderIncidentRail();
   }
 }
@@ -6920,7 +6927,7 @@ function resetState() {
   closeScreenshotModal();
 
   eventList.innerHTML = "";
-  detailsBody.textContent = "Select an event to see details.";
+  detailsBody.textContent = "Select an item";
   if (searchInput) {
     searchInput.value = "";
   }
@@ -7101,7 +7108,7 @@ function resetState() {
     screenshotsEmpty.classList.add("hidden");
   }
   if (screenshotPreview) {
-    screenshotPreview.textContent = "Select a screenshot to preview.";
+    screenshotPreview.textContent = "Select an item";
   }
   setActivePanel("timeline");
   clearError();
