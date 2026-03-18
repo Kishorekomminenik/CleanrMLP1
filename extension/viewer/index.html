@@ -324,37 +324,39 @@
                 <div class="event-list-column">
                   <div class="panel network-panel">
                   <h2>Network</h2>
-                  <div class="filter-row search-row">
-                    <label class="filter-label" for="networkSearchInput">Filter</label>
-                    <input
-                      id="networkSearchInput"
-                      type="search"
-                      placeholder="Filter (method, url, status)"
-                    />
-                    <button id="networkSearchClear" class="chip" type="button">
-                      Clear
-                    </button>
-                    <span id="networkResultCount" class="muted"></span>
-                  </div>
-                  <div class="filter-row chips">
-                    <button class="chip active" type="button" data-net-mode="near">
-                      Near Time ±5s
-                    </button>
-                    <button class="chip" type="button" data-net-mode="all">All</button>
-                  </div>
-                  <div class="filter-row chips">
-                    <button class="chip active" type="button" data-net-filter="all">
-                      All
-                    </button>
-                    <button class="chip" type="button" data-net-filter="errors">
-                      Err
-                    </button>
-                    <button class="chip" type="button" data-net-filter="4xx">
-                      4xx
-                    </button>
-                    <button class="chip" type="button" data-net-filter="5xx">
-                      5xx
-                    </button>
+                  <div class="filter-bar">
+                    <div class="filter-row search-row">
+                      <label class="filter-label" for="networkSearchInput">Filter</label>
+                      <input
+                        id="networkSearchInput"
+                        type="search"
+                        placeholder="Filter (method, url, status)"
+                      />
+                      <button id="networkSearchClear" class="chip" type="button">
+                        Clear
+                      </button>
+                      <span id="networkResultCount" class="muted"></span>
+                    </div>
+                    <div class="filter-row chips">
+                      <button class="chip active" type="button" data-net-mode="near">
+                        Near Time ±5s
+                      </button>
+                      <button class="chip" type="button" data-net-mode="all">All</button>
+                    </div>
+                    <div class="filter-row chips">
+                      <button class="chip active" type="button" data-net-filter="all">
+                        All
+                      </button>
+                      <button class="chip" type="button" data-net-filter="errors">
+                        Err
+                      </button>
+                      <button class="chip" type="button" data-net-filter="4xx">
+                        4xx
+                      </button>
+                      <button class="chip" type="button" data-net-filter="5xx">
+                        5xx
+                      </button>
+                    </div>
                   </div>
                   <div id="networkList" class="data-list"></div>
                   <div id="networkSelectionNote" class="empty-state muted hidden">
@@ -377,51 +379,53 @@
               <div class="event-list-column">
                 <div class="panel console-panel">
                   <h2>Console</h2>
-                  <div class="filter-row search-row">
-                    <label class="filter-label" for="consoleSearchInput">Filter</label>
-                    <input
-                      id="consoleSearchInput"
-                      type="search"
-                      placeholder="Filter (level, message, source)"
-                    />
-                    <button id="consoleSearchClear" class="chip" type="button">
-                      Clear
-                    </button>
-                    <span id="consoleResultCount" class="muted"></span>
-                  </div>
-                  <div class="filter-row chips">
-                    <button class="chip active" type="button" data-console-quick="all">
-                      All
-                    </button>
-                    <button class="chip" type="button" data-console-quick="errors">
-                      Err
-                    </button>
-                    <button class="chip" type="button" data-console-quick="warnings">
-                      Warn
-                    </button>
-                  </div>
-                  <div class="filter-row chips">
-                    <button class="chip active" type="button" data-console-mode="near">
-                      Near Time ±5s
-                    </button>
-                    <button class="chip" type="button" data-console-mode="all">All</button>
-                  </div>
-                  <div class="filter-row chips">
-                    <button class="chip active" type="button" data-console-level="error">
-                      Error
-                    </button>
-                    <button class="chip active" type="button" data-console-level="warning">
-                      Warning
-                    </button>
-                    <button class="chip active" type="button" data-console-level="info">
-                      Info
-                    </button>
-                    <button class="chip active" type="button" data-console-level="log">
-                      Log
-                    </button>
-                    <button class="chip active" type="button" data-console-level="debug">
-                      Debug
-                    </button>
+                  <div class="filter-bar">
+                    <div class="filter-row search-row">
+                      <label class="filter-label" for="consoleSearchInput">Filter</label>
+                      <input
+                        id="consoleSearchInput"
+                        type="search"
+                        placeholder="Filter (level, message, source)"
+                      />
+                      <button id="consoleSearchClear" class="chip" type="button">
+                        Clear
+                      </button>
+                      <span id="consoleResultCount" class="muted"></span>
+                    </div>
+                    <div class="filter-row chips">
+                      <button class="chip active" type="button" data-console-quick="all">
+                        All
+                      </button>
+                      <button class="chip" type="button" data-console-quick="errors">
+                        Err
+                      </button>
+                      <button class="chip" type="button" data-console-quick="warnings">
+                        Warn
+                      </button>
+                    </div>
+                    <div class="filter-row chips">
+                      <button class="chip active" type="button" data-console-mode="near">
+                        Near Time ±5s
+                      </button>
+                      <button class="chip" type="button" data-console-mode="all">All</button>
+                    </div>
+                    <div class="filter-row chips">
+                      <button class="chip active" type="button" data-console-level="error">
+                        Error
+                      </button>
+                      <button class="chip active" type="button" data-console-level="warning">
+                        Warning
+                      </button>
+                      <button class="chip active" type="button" data-console-level="info">
+                        Info
+                      </button>
+                      <button class="chip active" type="button" data-console-level="log">
+                        Log
+                      </button>
+                      <button class="chip active" type="button" data-console-level="debug">
+                        Debug
+                      </button>
+                    </div>
                   </div>
                   <div id="consoleList" class="data-list"></div>
                   <div id="consoleSelectionNote" class="empty-state muted hidden">
