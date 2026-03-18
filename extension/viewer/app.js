@@ -6906,9 +6906,37 @@ function resetState() {
   state.videoUrl = null;
   state.screenshotUrls.forEach((url) => URL.revokeObjectURL(url));
   state.screenshotUrls.clear();
+  closeScreenshotModal();
 
   eventList.innerHTML = "";
   detailsBody.textContent = "Select an event to see details.";
+  if (searchInput) {
+    searchInput.value = "";
+  }
+  if (filterMarkers) {
+    filterMarkers.checked = true;
+  }
+  if (filterNetwork) {
+    filterNetwork.checked = true;
+  }
+  if (filterConsole) {
+    filterConsole.checked = true;
+  }
+  if (filterScreenshots) {
+    filterScreenshots.checked = true;
+  }
+  if (contextIncident) {
+    contextIncident.textContent = "None";
+  }
+  if (contextScreenshot) {
+    contextScreenshot.textContent = "None";
+  }
+  if (contextNetworkCount) {
+    contextNetworkCount.textContent = "-";
+  }
+  if (contextConsoleCount) {
+    contextConsoleCount.textContent = "-";
+  }
   if (timelineLanes) {
     const tracks = Array.from(timelineLanes.querySelectorAll(".lane-track"));
     tracks.forEach((track) => {
@@ -6951,6 +6979,7 @@ function resetState() {
     }
   }
   videoEl.removeAttribute("src");
+  videoEl.load();
   videoPlay.textContent = "Play";
   if (playToggleBtn) {
     playToggleBtn.disabled = true;
@@ -6979,6 +7008,12 @@ function resetState() {
   if (incidentPanel) {
     incidentPanel.classList.add("hidden");
   }
+  if (incidentList) {
+    incidentList.innerHTML = "";
+  }
+  if (incidentEmpty) {
+    incidentEmpty.classList.add("hidden");
+  }
   if (errorOnlyToggle) {
     errorOnlyToggle.checked = false;
   }
@@ -7006,6 +7041,21 @@ function resetState() {
   if (networkSearchClear) {
     networkSearchClear.disabled = true;
   }
+  if (networkList) {
+    networkList.innerHTML = "";
+  }
+  if (networkEmpty) {
+    networkEmpty.classList.add("hidden");
+  }
+  if (networkFilteredEmpty) {
+    networkFilteredEmpty.classList.add("hidden");
+  }
+  if (networkResultCount) {
+    networkResultCount.textContent = "";
+  }
+  if (networkSelectionNote) {
+    networkSelectionNote.classList.add("hidden");
+  }
   consoleLevelChips.forEach((chip) => {
     chip.classList.toggle("active", true);
   });
@@ -7017,6 +7067,30 @@ function resetState() {
   }
   if (consoleSearchClear) {
     consoleSearchClear.disabled = true;
+  }
+  if (consoleList) {
+    consoleList.innerHTML = "";
+  }
+  if (consoleEmpty) {
+    consoleEmpty.classList.add("hidden");
+  }
+  if (consoleFilteredEmpty) {
+    consoleFilteredEmpty.classList.add("hidden");
+  }
+  if (consoleResultCount) {
+    consoleResultCount.textContent = "";
+  }
+  if (consoleSelectionNote) {
+    consoleSelectionNote.classList.add("hidden");
+  }
+  if (screenshotsList) {
+    screenshotsList.innerHTML = "";
+  }
+  if (screenshotsEmpty) {
+    screenshotsEmpty.classList.add("hidden");
+  }
+  if (screenshotPreview) {
+    screenshotPreview.textContent = "Select a screenshot to preview.";
   }
   setActivePanel("timeline");
   clearError();
