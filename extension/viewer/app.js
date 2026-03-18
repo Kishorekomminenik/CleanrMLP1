@@ -3720,7 +3720,10 @@ function renderIncidentRail() {
     row.appendChild(status);
     const clickSource =
       state.playhead.activePanel === "errors" ? "errors-panel" : "incident-click";
-    row.addEventListener("click", () => handleIncidentSelection(inc, clickSource));
+    row.addEventListener("click", () => {
+      setFollowPlayhead(false, "incident-row");
+      handleIncidentSelection(inc, clickSource);
+    });
     incidentList.appendChild(row);
   });
   updateIncidentNavControls();
@@ -3730,14 +3733,23 @@ function updateIncidentNavControls() {
   if (!prevIncidentBtn || !nextIncidentBtn) {
     return;
   }
-  const incidents = getFilteredIncidents();
+  const incidents = getNavigableIncidents();
   const disabled = incidents.length === 0;
   prevIncidentBtn.disabled = disabled;
   nextIncidentBtn.disabled = disabled;
 }
 
+function getNavigableIncidents() {
+  const availability = getIntegrityAvailability();
+  const list = filterAvailableIncidents(state.sortedIncidentsByTime.slice());
+  if (availability && availability.incidents === false) {
+    return [];
+  }
+  return list;
+}
+
 function navigateIncident(direction) {
-  const incidents = getFilteredIncidents();
+  const incidents = getNavigableIncidents();
   if (!incidents.length) {
     return;
   }
@@ -3761,6 +3773,7 @@ function navigateIncident(direction) {
   } else {
     index = Math.min(Math.max(index + direction, 0), incidents.length - 1);
   }
+  setFollowPlayhead(false, "incident-nav");
   handleIncidentSelection(
     incidents[index],
     direction > 0 ? "next-incident" : "prev-incident"
@@ -3830,6 +3843,7 @@ function renderScreenshotsPanel() {
     row.appendChild(thumb);
     row.appendChild(meta);
     row.addEventListener("click", () => {
+      setFollowPlayhead(false, "screenshot-row");
       state.playhead.selectedScreenshotId = shot.id;
       setInspector("screenshot", shot.id);
       const baseName = shot.path ? shot.path.split("/").pop() : null;
@@ -4186,6 +4200,7 @@ function renderNetworkPanel(options = {}) {
     row.appendChild(url);
     row.appendChild(status);
     row.addEventListener("click", () => {
+      setFollowPlayhead(false, "incident-row");
       state.selectedNetworkId = entry.id;
       const linkedEvent = findEventForNetworkEntry(entry);
       state.playhead.selectedEventId = linkedEvent ? linkedEvent.id : null;
@@ -4402,6 +4417,7 @@ function renderConsolePanel(options = {}) {
     row.appendChild(level);
     row.appendChild(msg);
     row.addEventListener("click", () => {
+      setFollowPlayhead(false, "console-row");
       state.selectedConsoleId = entry.id;
       const linkedEvent = findEventForConsoleEntry(entry);
       state.playhead.selectedEventId = linkedEvent ? linkedEvent.id : null;
@@ -6312,6 +6328,7 @@ function handleEventSelection(ev, source = "timeline") {
   if (!ev) {
     return;
   }
+  setFollowPlayhead(false, "event-select");
   const panel = mapEventToPanel(ev);
   const scope =
     panel === "screenshots"
@@ -6364,6 +6381,9 @@ function handleIncidentSelection(incident, source = "incident-click") {
     return;
   }
   const stayInErrors = source === "errors-panel";
+  if (!stayInErrors) {
+    setFollowPlayhead(false, "incident-select");
+  }
   const scope =
     incident.panelTarget === "network"
       ? "network"
@@ -6470,6 +6490,16 @@ function setCurrentTms(tms, snap = true) {
     snapThresholdMs: MARKER_SNAP_THRESHOLD_MS,
     nearestEvent: true,
   });
+}
+
+function setFollowPlayhead(enabled, reason = "manual") {
+  state.playhead.followPlayhead = enabled;
+  if (followPlayheadToggle) {
+    followPlayheadToggle.checked = enabled;
+  }
+  if (!enabled && reason) {
+    state.playhead.lastSeekSource = reason;
+  }
 }
 
 function selectEvent(ev, syncTimeline = false) {
