@@ -144,7 +144,7 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 12px;
   align-items: start;
 }
@@ -161,6 +161,10 @@ section.right {
   gap: 12px;
   min-width: 0;
   min-height: 0;
+}
+
+section.right {
+  align-self: stretch;
 }
 
 .panel {
@@ -965,7 +969,7 @@ section.right {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   font-size: 12px;
 }
 
@@ -1366,8 +1370,9 @@ section.right {
   padding: 0;
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 520px;
-  max-height: 520px;
+  max-height: none;
 }
 
 .investigation-panel .panel-tabs {
@@ -1652,6 +1657,13 @@ section.right {
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
+  .investigation-panel .event-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1320px) {
   .investigation-panel .event-workspace {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
