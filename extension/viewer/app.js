@@ -5386,7 +5386,7 @@ function renderExpandableSection(title, value, copyLabel, options = {}) {
       createCopyButton(copyLabel, () => normalizeInspectorValue(value))
     );
   }
-  if (preview.expandable) {
+  if (preview.expandable && options.showExpand !== false) {
     const expandBtn = document.createElement("button");
     expandBtn.type = "button";
     expandBtn.className = "expand-toggle";
@@ -5568,9 +5568,8 @@ function renderInspector() {
     headerLeft.appendChild(meta);
     const headerActions = document.createElement("div");
     headerActions.className = "inspector-actions";
-    headerActions.appendChild(createCopyButton("Copy URL", entry.url || ""));
     headerActions.appendChild(
-      createCopyButton("Copy raw JSON", () => normalizeInspectorValue(entry))
+      createCopyButton("Copy details", () => normalizeInspectorValue(entry))
     );
     header.appendChild(headerLeft);
     header.appendChild(headerActions);
@@ -5628,7 +5627,7 @@ function renderInspector() {
             duration: durationValue,
           },
           "Copy request summary",
-          { sectionId: "network-overview-request", showCopy: false }
+          { sectionId: "network-overview-request", showCopy: false, showExpand: false }
         )
       );
       tabBody.appendChild(
@@ -5641,7 +5640,7 @@ function renderInspector() {
             fromServiceWorker,
           },
           "Copy response summary",
-          { sectionId: "network-overview-response", showCopy: false }
+          { sectionId: "network-overview-response", showCopy: false, showExpand: false }
         )
       );
       if (entry.error_text || entry.finalize_reason) {
@@ -5653,7 +5652,7 @@ function renderInspector() {
               finalize_reason: entry.finalize_reason || null,
             },
             "Copy error info",
-            { sectionId: "network-overview-error", showCopy: false }
+            { sectionId: "network-overview-error", showCopy: false, showExpand: false }
           )
         );
       }
@@ -5662,12 +5661,14 @@ function renderInspector() {
         renderExpandableSection("Request Headers", requestHeaders, "Copy request headers", {
           sectionId: "network-request-headers",
           previewValue: formatHeadersPreview,
+          showCopy: false,
         })
       );
       tabBody.appendChild(
         renderExpandableSection("Response Headers", responseHeaders, "Copy response headers", {
           sectionId: "network-response-headers",
           previewValue: formatHeadersPreview,
+          showCopy: false,
         })
       );
     } else if (activeTab === "Request") {
@@ -5686,12 +5687,14 @@ function renderInspector() {
       tabBody.appendChild(
         renderExpandableSection("Timing", timing, "Copy timing", {
           sectionId: "network-timing",
+          showCopy: false,
         })
       );
     } else if (activeTab === "Raw") {
       tabBody.appendChild(
         renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
           sectionId: "network-raw-entry",
+          showCopy: false,
         })
       );
     }
@@ -5763,9 +5766,8 @@ function renderInspector() {
     headerLeft.appendChild(meta);
     const headerActions = document.createElement("div");
     headerActions.className = "inspector-actions";
-    headerActions.appendChild(createCopyButton("Copy message", message || ""));
     headerActions.appendChild(
-      createCopyButton("Copy raw JSON", () => normalizeInspectorValue(entry))
+      createCopyButton("Copy details", () => normalizeInspectorValue(entry))
     );
     header.appendChild(headerLeft);
     header.appendChild(headerActions);
@@ -5799,6 +5801,7 @@ function renderInspector() {
           sectionId: "console-message",
           emptyLabel: "Not available",
           showCopy: false,
+          showExpand: false,
         })
       );
       tabBody.appendChild(
@@ -5806,6 +5809,7 @@ function renderInspector() {
           sectionId: "console-source",
           emptyLabel: "Not available",
           showCopy: false,
+          showExpand: false,
         })
       );
       const stackPreview = entry.stack
@@ -5816,24 +5820,28 @@ function renderInspector() {
           sectionId: "console-stack-preview",
           emptyLabel: "Not available",
           showCopy: false,
+          showExpand: false,
         })
       );
     } else if (activeTab === "Stack") {
       tabBody.appendChild(
         renderExpandableSection("Stack Trace", entry.stack, "Copy stack", {
           sectionId: "console-stack",
+          showCopy: false,
         })
       );
     } else if (activeTab === "Payload") {
       tabBody.appendChild(
         renderExpandableSection("Payload", payload, "Copy payload", {
           sectionId: "console-payload",
+          showCopy: false,
         })
       );
     } else if (activeTab === "Raw") {
       tabBody.appendChild(
         renderExpandableSection("Raw JSON", entry, "Copy full JSON", {
           sectionId: "console-raw-entry",
+          showCopy: false,
         })
       );
     }
