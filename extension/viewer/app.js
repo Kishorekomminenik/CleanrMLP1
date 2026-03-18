@@ -1097,6 +1097,8 @@ function getVisibleNetworkEventsAt(timeMs, windowMs) {
       ? filterEntriesNearTime(entries, timeMs, windowMs, getNetworkTimestampMs)
       : entries;
   const query = normalizeSearchQuery(state.filters.networkQuery);
+  const applyErrorOnly =
+    state.filters.errorOnly && state.playhead.activePanel === "errors";
   return base.filter((entry) => {
     if (query) {
       const haystack = buildNetworkSearchText(entry);
@@ -1104,7 +1106,7 @@ function getVisibleNetworkEventsAt(timeMs, windowMs) {
         return false;
       }
     }
-    if (state.filters.errorOnly && !isNetworkError(entry)) {
+    if (applyErrorOnly && !isNetworkError(entry)) {
       return false;
     }
     const bucket = classifyNetworkStatus(entry);
