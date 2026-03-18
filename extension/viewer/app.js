@@ -217,6 +217,19 @@ const state = {
     network: "near",
     console: "near",
   },
+  panelRenderKeys: {
+    network: "",
+    console: "",
+  },
+  autoHighlightIds: {
+    network: null,
+    console: null,
+    screenshot: null,
+    incident: null,
+  },
+  autoHighlightGroups: {
+    network: null,
+  },
   inspector: {
     type: null,
     id: null,
@@ -257,6 +270,7 @@ const state = {
   loadingNetwork: false,
   loadingConsole: false,
   networkGroupExpanded: new Set(),
+  networkGroupIndex: new Map(),
 };
 
 let modalState = {
@@ -1136,6 +1150,136 @@ function getVisibleConsoleEventsAt(timeMs, windowMs) {
   );
 }
 
+function buildListKey(entries) {
+  if (!entries || !entries.length) {
+    return "0";
+  }
+  const ids = entries.map((entry) => entry.id).filter(Boolean);
+  const sample = ids.length > 6 ? ids.slice(0, 3).concat(ids.slice(-3)) : ids;
+  return `${ids.length}:${sample.join("|")}`;
+}
+
+function escapeSelector(value) {
+  const raw = String(value || "");
+  if (typeof CSS !== "undefined" && CSS.escape) {
+    return CSS.escape(raw);
+  }
+  return raw.replace(/["\\]/g, "\\$&");
+}
+
+function updateAutoHighlightRow(listEl, nextId, key) {
+  if (!listEl) {
+    return;
+  }
+  const prevId = state.autoHighlightIds[key];
+  if (prevId && prevId !== nextId) {
+    const prevRow = listEl.querySelector(
+      `[data-entry-id="${escapeSelector(prevId)}"]`
+    );
+    if (prevRow) {
+      prevRow.classList.remove("nearby");
+    }
+  }
+  if (nextId) {
+    const nextRow = listEl.querySelector(
+      `[data-entry-id="${escapeSelector(nextId)}"]`
+    );
+    if (nextRow) {
+      nextRow.classList.add("nearby");
+    }
+  }
+  state.autoHighlightIds[key] = nextId || null;
+}
+
+function updateAutoHighlightRows() {
+  const moment = state.currentMoment;
+  if (!moment) {
+    return;
+  }
+  updateAutoHighlightRow(networkList, moment.autoHighlight.networkId, "network");
+  updateAutoHighlightRow(consoleList, moment.autoHighlight.consoleId, "console");
+  updateAutoHighlightRow(screenshotsList, moment.autoHighlight.screenshotId, "screenshot");
+  updateAutoHighlightRow(incidentList, moment.autoHighlight.incidentId, "incident");
+
+  if (moment.autoHighlight.networkId && !state.selectedNetworkId) {
+    const targetId = moment.autoHighlight.networkId;
+    const groupKey = state.networkGroupIndex.get(targetId);
+    if (groupKey && groupKey !== state.autoHighlightGroups.network) {
+      const prevGroup = state.autoHighlightGroups.network;
+      if (prevGroup) {
+        const prevEl = networkList?.querySelector(
+          `[data-group-key="${escapeSelector(prevGroup)}"]`
+        );
+        if (prevEl) {
+          prevEl.classList.remove("nearby");
+        }
+      }
+      const nextEl = networkList?.querySelector(
+        `[data-group-key="${escapeSelector(groupKey)}"]`
+      );
+      if (nextEl) {
+        nextEl.classList.add("nearby");
+      }
+      state.autoHighlightGroups.network = groupKey;
+    }
+  } else if (state.autoHighlightGroups.network) {
+    const prevEl = networkList?.querySelector(
+      `[data-group-key="${escapeSelector(state.autoHighlightGroups.network)}"]`
+    );
+    if (prevEl) {
+      prevEl.classList.remove("nearby");
+    }
+    state.autoHighlightGroups.network = null;
+  }
+
+  if (!state.playhead.followPlayhead || state.playhead.isSeeking) {
+    return;
+  }
+  if (
+    state.playhead.activePanel === "network" &&
+    state.panelModes.network === "near" &&
+    !state.selectedNetworkId
+  ) {
+    const row = networkList?.querySelector(
+      `[data-entry-id="${escapeSelector(moment.autoHighlight.networkId)}"]`
+    );
+    if (row) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (
+    state.playhead.activePanel === "console" &&
+    state.panelModes.console === "near" &&
+    !state.selectedConsoleId
+  ) {
+    const row = consoleList?.querySelector(
+      `[data-entry-id="${escapeSelector(moment.autoHighlight.consoleId)}"]`
+    );
+    if (row) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (
+    state.playhead.activePanel === "screenshots" &&
+    !state.playhead.selectedScreenshotId
+  ) {
+    const row = screenshotsList?.querySelector(
+      `[data-entry-id="${escapeSelector(moment.autoHighlight.screenshotId)}"]`
+    );
+    if (row) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (state.playhead.activePanel === "errors" && !state.playhead.selectedIncidentId) {
+    const row = incidentList?.querySelector(
+      `[data-entry-id="${escapeSelector(moment.autoHighlight.incidentId)}"]`
+    );
+    if (row) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
 function getCurrentMomentContextAt(timeMs, windowMs, availability = getIntegrityAvailability()) {
   const nearestIncident = getNearestIncident(timeMs);
   const nearestScreenshot =
@@ -1273,23 +1417,33 @@ function updateCurrentTimeContext() {
     contextWindow.textContent =
       availability && availability.timeline === false ? "±0s" : moment.windowLabel;
   }
+  updateAutoHighlightRows();
 }
 
 function updateTimeAwarePanels() {
   const availability = getIntegrityAvailability();
+  const isPlaying = state.playhead.isPlaying;
   if (
     state.loadedArtifacts.network &&
     state.panelModes.network === "near" &&
     (!availability || availability.network !== false)
   ) {
-    renderNetworkPanel();
+    const visible = getVisibleNetworkEvents();
+    const nextKey = buildListKey(visible);
+    if (!isPlaying || nextKey !== state.panelRenderKeys.network) {
+      renderNetworkPanel({ preserveScroll: isPlaying });
+    }
   }
   if (
     state.loadedArtifacts.console &&
     state.panelModes.console === "near" &&
     (!availability || availability.console !== false)
   ) {
-    renderConsolePanel();
+    const visible = getVisibleConsoleEvents();
+    const nextKey = buildListKey(visible);
+    if (!isPlaying || nextKey !== state.panelRenderKeys.console) {
+      renderConsolePanel({ preserveScroll: isPlaying });
+    }
   }
 }
 
@@ -3527,6 +3681,7 @@ function renderIncidentRail() {
   incidents.forEach((inc) => {
     const row = document.createElement("div");
     row.className = "incident-item";
+    row.dataset.entryId = inc.id || "";
     if (state.playhead.selectedIncidentId === inc.id) {
       row.classList.add("active");
     } else if (
@@ -3624,6 +3779,7 @@ function renderScreenshotsPanel() {
   items.forEach((shot, index) => {
     const row = document.createElement("div");
     row.className = "screenshot-item";
+    row.dataset.entryId = shot.id || shot.path || "";
     if (state.playhead.selectedScreenshotId && shot.id === state.playhead.selectedScreenshotId) {
       row.classList.add("active");
     } else if (
@@ -3878,10 +4034,12 @@ function renderIntegrityDisabled(container, message) {
   container.appendChild(note);
 }
 
-function renderNetworkPanel() {
+function renderNetworkPanel(options = {}) {
   if (!networkList || !networkEmpty) {
     return;
   }
+  const preserveScroll = Boolean(options.preserveScroll);
+  const previousScrollTop = preserveScroll ? networkList.scrollTop : 0;
   if (isFailFastActive("network")) {
     networkEmpty.classList.add("hidden");
     networkFilteredEmpty?.classList.add("hidden");
@@ -3899,10 +4057,12 @@ function renderNetworkPanel() {
   }
   const entries = state.networkEntries || [];
   const filtered = getVisibleNetworkEvents();
+  state.panelRenderKeys.network = buildListKey(filtered);
   updateNearTimeLabels({
     networkCount: state.panelModes.network === "near" ? filtered.length : null,
   });
   networkList.innerHTML = "";
+  const groupIndex = new Map();
   if (!entries.length) {
     networkEmpty.classList.remove("hidden");
     networkFilteredEmpty?.classList.add("hidden");
@@ -3943,6 +4103,9 @@ function renderNetworkPanel() {
   const renderEntryRow = (entry, options = {}) => {
     const row = document.createElement("div");
     row.className = `data-row${options.isChild ? " network-subrow" : ""}`;
+    if (entry.id) {
+      row.dataset.entryId = entry.id;
+    }
     if (isNetworkFailureEntry(entry)) {
       const classification = classifyNetworkFailure(entry);
       if (classification.severity === "error") {
@@ -4005,6 +4168,11 @@ function renderNetworkPanel() {
     networkList.appendChild(row);
   };
   grouped.forEach((group) => {
+    group.items.forEach((entry) => {
+      if (entry.id) {
+        groupIndex.set(entry.id, group.key);
+      }
+    });
     if (renderedEntries >= maxRows) {
       truncated = true;
       return;
@@ -4024,6 +4192,7 @@ function renderNetworkPanel() {
     const canExpand = group.items.length > 1;
     const header = document.createElement("div");
     header.className = "data-row network-group";
+    header.dataset.groupKey = group.key;
     if (group.items.some((entry) => classifyNetworkFailure(entry).severity === "error")) {
       header.classList.add("network-error");
     } else if (group.items.some((entry) => classifyNetworkFailure(entry).severity === "warning")) {
@@ -4072,6 +4241,7 @@ function renderNetworkPanel() {
       }
     }
   });
+  state.networkGroupIndex = groupIndex;
   if (filtered.length > maxRows || truncated) {
     const note = document.createElement("div");
     note.className = "muted";
@@ -4079,15 +4249,22 @@ function renderNetworkPanel() {
     networkList.appendChild(note);
   }
   const activeRow = networkList.querySelector(".data-row.active");
-  if (activeRow) {
+  if (activeRow && !preserveScroll) {
     activeRow.scrollIntoView({ block: "nearest" });
   }
+  if (preserveScroll) {
+    const maxScroll = networkList.scrollHeight - networkList.clientHeight;
+    networkList.scrollTop = Math.max(0, Math.min(previousScrollTop, maxScroll));
+  }
+  updateAutoHighlightRows();
 }
 
-function renderConsolePanel() {
+function renderConsolePanel(options = {}) {
   if (!consoleList || !consoleEmpty) {
     return;
   }
+  const preserveScroll = Boolean(options.preserveScroll);
+  const previousScrollTop = preserveScroll ? consoleList.scrollTop : 0;
   if (isFailFastActive("console")) {
     consoleEmpty.classList.add("hidden");
     consoleFilteredEmpty?.classList.add("hidden");
@@ -4105,6 +4282,7 @@ function renderConsolePanel() {
   }
   const entries = state.consoleEntries || [];
   const filtered = getVisibleConsoleEvents();
+  state.panelRenderKeys.console = buildListKey(filtered);
   updateNearTimeLabels({
     consoleCount: state.panelModes.console === "near" ? filtered.length : null,
   });
@@ -4146,6 +4324,9 @@ function renderConsolePanel() {
   rows.forEach((entry) => {
     const row = document.createElement("div");
     row.className = "data-row";
+    if (entry.id) {
+      row.dataset.entryId = entry.id;
+    }
     if (state.selectedConsoleId && entry.id === state.selectedConsoleId) {
       row.classList.add("active");
     } else if (
@@ -4197,9 +4378,14 @@ function renderConsolePanel() {
     consoleList.appendChild(note);
   }
   const activeRow = consoleList.querySelector(".data-row.active");
-  if (activeRow) {
+  if (activeRow && !preserveScroll) {
     activeRow.scrollIntoView({ block: "nearest" });
   }
+  if (preserveScroll) {
+    const maxScroll = consoleList.scrollHeight - consoleList.clientHeight;
+    consoleList.scrollTop = Math.max(0, Math.min(previousScrollTop, maxScroll));
+  }
+  updateAutoHighlightRows();
 }
 
 function pickNewestByZipDate(names, zipFiles) {
