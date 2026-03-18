@@ -1643,7 +1643,7 @@ section.right {
 
 .event-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  grid-template-columns: minmax(0, 2.5fr) minmax(320px, 1fr);
   gap: 12px;
   min-height: 0;
   min-width: 0;
@@ -1651,20 +1651,20 @@ section.right {
 }
 
 .investigation-panel .event-workspace {
-  grid-template-columns: minmax(0, 1.8fr) minmax(240px, 0.6fr);
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 1fr);
 }
 
 .panel-group[data-panel="network"] .event-workspace,
 .panel-group[data-panel="errors"] .event-workspace {
-  grid-template-columns: minmax(0, 3fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 1fr);
 }
 
 .panel-group[data-panel="console"] .event-workspace {
-  grid-template-columns: minmax(0, 2.5fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 2.5fr) minmax(320px, 1fr);
 }
 
 .panel-group[data-panel="screenshots"] .event-workspace {
-  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
 }
 
 .event-workspace.details-collapsed {
