@@ -5493,6 +5493,16 @@ function renderInspector() {
     return;
   }
   inspectorPanel.classList.remove("hidden");
+  if (activePanel === "network" && type && type !== "network") {
+    inspectorTitle.textContent = "Network details";
+    inspectorBody.textContent = "Select a network request to inspect details.";
+    return;
+  }
+  if (activePanel === "console" && type && type !== "console") {
+    inspectorTitle.textContent = "Console details";
+    inspectorBody.textContent = "Select a console entry to inspect details.";
+    return;
+  }
   if (!type || !id) {
     inspectorTitle.textContent = "Inspector";
     inspectorBody.textContent =
@@ -6000,6 +6010,7 @@ function setActivePanel(panel) {
     panelEl.classList.toggle("hidden", !active);
   });
   attachInspectorDock(panel);
+  renderInspector();
 }
 
 function attachInspectorDock(panel) {
