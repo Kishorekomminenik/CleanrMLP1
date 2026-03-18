@@ -52,6 +52,10 @@ const videoEl = document.getElementById("videoEl");
 const videoPlay = document.getElementById("videoPlay");
 const videoTime = document.getElementById("videoTime");
 const videoSyncNote = document.getElementById("videoSyncNote");
+const layoutEl = document.querySelector(".layout");
+const leftColumn = document.querySelector("section.left");
+const rightColumn = document.querySelector("section.right");
+const videoFrame = document.querySelector(".video-frame");
 const filterMarkers = document.getElementById("filterMarkers");
 const filterNetwork = document.getElementById("filterNetwork");
 const filterConsole = document.getElementById("filterConsole");
@@ -297,6 +301,36 @@ function debugError(...args) {
   if (DEBUG_ENABLED) {
     console.error(...args);
   }
+}
+
+function logLayoutMetrics(reason) {
+  if (!DEBUG_ENABLED) {
+    return;
+  }
+  const root = document.documentElement;
+  const layoutRect = layoutEl?.getBoundingClientRect();
+  const leftRect = leftColumn?.getBoundingClientRect();
+  const rightRect = rightColumn?.getBoundingClientRect();
+  const panelRect = videoPanel?.getBoundingClientRect();
+  const frameRect = videoFrame?.getBoundingClientRect();
+  const scrollHeight = root?.scrollHeight || 0;
+  const clientHeight = root?.clientHeight || 0;
+  debugLog("[DD Layout]", {
+    reason,
+    innerWidth: window.innerWidth,
+    docClientWidth: root?.clientWidth || 0,
+    scrollHeight,
+    clientHeight,
+    scrollbarActive: scrollHeight > clientHeight,
+    layoutWidth: layoutRect?.width || 0,
+    layoutHeight: layoutRect?.height || 0,
+    leftWidth: leftRect?.width || 0,
+    rightWidth: rightRect?.width || 0,
+    videoPanelWidth: panelRect?.width || 0,
+    videoPanelHeight: panelRect?.height || 0,
+    videoFrameWidth: frameRect?.width || 0,
+    videoFrameHeight: frameRect?.height || 0,
+  });
 }
 
 const EVENT_ICONS = {
@@ -1762,6 +1796,7 @@ function attachVideoDurationReconciliation() {
     updateCurrentTimeContext();
     refreshView();
     updateIntegrityReport();
+    logLayoutMetrics("video:loadedmetadata");
 
     const durationText = formatTime(mediaDurationMs);
     if (loadedInfo && loadedInfo.textContent) {
@@ -4774,6 +4809,7 @@ async function ensureVideoLoaded() {
     state.videoUrl = URL.createObjectURL(blob);
     videoEl.src = state.videoUrl;
     videoPanel.classList.remove("hidden");
+    logLayoutMetrics("video:src-set");
     state.loadedArtifacts.recording = true;
     state.videoMissing = false;
     if (state.session) {
@@ -6123,6 +6159,9 @@ function handleVideoTimeUpdate() {
   const now = Date.now();
   const shouldRefresh =
     state.playhead.followPlayhead && now - lastVideoSyncAt > 250;
+  if (shouldRefresh) {
+    logLayoutMetrics("playback:tick");
+  }
   seekTo(tms, "video", {
     syncVideo: false,
     suppressVideoUpdate: true,
@@ -6148,10 +6187,12 @@ async function togglePlayback(source = "video") {
   if (videoEl.paused) {
     await videoEl.play();
     setPlayState(true);
+    logLayoutMetrics("playback:start");
     seekTo(state.playhead.currentTimeMs, source, { refresh: false });
   } else {
     videoEl.pause();
     setPlayState(false);
+    logLayoutMetrics("playback:pause");
   }
 }
 
