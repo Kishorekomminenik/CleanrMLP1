@@ -199,7 +199,7 @@ const state = {
     selectedEventId: null,
     selectedIncidentId: null,
     selectedScreenshotId: null,
-    activePanel: "timeline",
+    activePanel: "network",
     lastSeekSource: null,
     lastCommittedTimeMs: 0,
     pendingSeekTimeMs: null,
@@ -2897,7 +2897,7 @@ function applyNormalizedSessionState(normalized) {
 
   applyManifestAvailability(normalized.manifest);
   renderScreenshotsPanel();
-  setActivePanel("timeline");
+  setActivePanel("network");
   renderIncidentRail();
   applySummaryInteractions();
   updatePlayheadDisplay();
@@ -6831,7 +6831,7 @@ function resetState() {
     selectedEventId: null,
     selectedIncidentId: null,
     selectedScreenshotId: null,
-    activePanel: "timeline",
+    activePanel: "network",
     lastSeekSource: null,
     lastCommittedTimeMs: 0,
     pendingSeekTimeMs: null,

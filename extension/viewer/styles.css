@@ -1225,6 +1225,39 @@ section.right {
   max-height: 520px;
 }
 
+.investigation-panel .panel-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.summary-strip {
+  padding: 8px 10px;
+}
+
+.summary-strip h2 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.summary-strip .summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.summary-strip .summary-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.summary-strip .summary-value {
+  font-size: 14px;
+}
+
+.summary-strip .summary-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .workspace-panel .panel-tabs {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
