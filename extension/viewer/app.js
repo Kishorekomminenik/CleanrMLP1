@@ -1146,6 +1146,56 @@ function getVisibleNetworkEventsAt(timeMs, windowMs) {
   });
 }
 
+function getNetworkFilterDebugCounts(timeMs, windowMs) {
+  const entries = state.networkEntries || [];
+  const normalizedCount = entries.length;
+  const mode = state.panelModes.network;
+  const query = normalizeSearchQuery(state.filters.networkQuery);
+  const bucket = state.filters.networkStatusBucket || "all";
+  const applyErrorOnly =
+    state.filters.errorOnly && state.playhead.activePanel === "errors";
+  const timeFiltered =
+    mode === "near"
+      ? filterEntriesNearTime(entries, timeMs, windowMs, getNetworkTimestampMs)
+      : entries;
+  const timeFilteredCount = timeFiltered.length;
+  const searchFiltered = query
+    ? timeFiltered.filter((entry) =>
+        buildNetworkSearchText(entry).includes(query)
+      )
+    : timeFiltered;
+  const searchFilteredCount = searchFiltered.length;
+  const statusFiltered = searchFiltered.filter((entry) => {
+    if (applyErrorOnly && !isNetworkError(entry)) {
+      return false;
+    }
+    const statusBucket = classifyNetworkStatus(entry);
+    if (bucket === "errors") {
+      return isNetworkError(entry);
+    }
+    if (bucket === "4xx") {
+      return statusBucket === "4xx";
+    }
+    if (bucket === "5xx") {
+      return statusBucket === "5xx";
+    }
+    return true;
+  });
+  const statusFilteredCount = statusFiltered.length;
+  return {
+    normalizedCount,
+    timeFilteredCount,
+    searchFilteredCount,
+    statusFilteredCount,
+    mode,
+    bucket,
+    query,
+    applyErrorOnly,
+    windowMs,
+    timeMs,
+  };
+}
+
 function getVisibleConsoleEvents() {
   return getVisibleConsoleEventsAt(
     state.playhead.currentTimeMs || 0,
@@ -4333,6 +4383,44 @@ function renderNetworkPanel(options = {}) {
     }
     networkResultCount.title =
       "In view counts use timestamp-valid requests after time/search/status filters. Session totals come from raw manifest/parsed counts when available.";
+  }
+  if (DEBUG_ENABLED) {
+    const debugCounts = getNetworkFilterDebugCounts(
+      state.playhead.currentTimeMs || 0,
+      state.playhead.timeWindowMs || 0
+    );
+    const rawTotal =
+      state.session?.parsedCounts?.networkRequests ??
+      state.manifest?.summary?.networkRequests ??
+      null;
+    console.log("[DebugDuck] Network filter counts", {
+      rawTotal,
+      normalizedCount: debugCounts.normalizedCount,
+      timeFilteredCount: debugCounts.timeFilteredCount,
+      searchFilteredCount: debugCounts.searchFilteredCount,
+      statusFilteredCount: debugCounts.statusFilteredCount,
+      groupedVisibleRows: visibleRows,
+      filteredCount: requestCount,
+      mode: debugCounts.mode,
+      statusFilter: debugCounts.bucket,
+      query: debugCounts.query,
+      applyErrorOnly: debugCounts.applyErrorOnly,
+      timeWindowMs: debugCounts.windowMs,
+      activePanel: state.playhead.activePanel,
+      groupingAppliedAfterFiltering: true,
+    });
+    if (
+      debugCounts.mode === "all" &&
+      debugCounts.bucket === "all" &&
+      !debugCounts.query &&
+      !debugCounts.applyErrorOnly &&
+      debugCounts.statusFilteredCount !== debugCounts.normalizedCount
+    ) {
+      console.warn("[DebugDuck] Network All Time + All mismatch", {
+        normalizedCount: debugCounts.normalizedCount,
+        statusFilteredCount: debugCounts.statusFilteredCount,
+      });
+    }
   }
   if (filtered.length > maxRows || truncated) {
     const note = document.createElement("div");
