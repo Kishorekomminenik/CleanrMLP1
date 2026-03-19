@@ -3237,7 +3237,7 @@ function renderSummaryFromManifest(manifest) {
     summaryConsoleMessagesLabel.textContent = "Logs";
   }
   if (summaryConsoleErrorsLabel) {
-    summaryConsoleErrorsLabel.textContent = "Err";
+    summaryConsoleErrorsLabel.textContent = "Console Err";
   }
   if (summaryScreenshotsLabel) {
     summaryScreenshotsLabel.textContent = "Shots";
@@ -4327,9 +4327,9 @@ function renderNetworkPanel(options = {}) {
     const requestLabel = requestCount === 1 ? "request" : "requests";
     if (grouped.length < requestCount) {
       const rowLabel = visibleRows === 1 ? "row" : "rows";
-      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} / ${totalRequests} ${requestLabel} in view (grouped)`;
+      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} in view / ${totalRequests} total ${requestLabel} (grouped)`;
     } else {
-      networkResultCount.textContent = `${requestCount} / ${totalRequests} ${requestLabel} in view`;
+      networkResultCount.textContent = `${requestCount} in view / ${totalRequests} total ${requestLabel}`;
     }
   }
   if (filtered.length > maxRows || truncated) {

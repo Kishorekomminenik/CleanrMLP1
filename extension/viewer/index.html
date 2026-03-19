@@ -217,7 +217,7 @@
         <section class="right">
           <div class="panel workspace-panel investigation-panel">
             <div id="summaryPanel" class="summary-panel summary-strip hidden">
-              <h2>Overview</h2>
+              <h2>Overview (Session totals)</h2>
               <div class="summary-grid">
                 <div class="summary-item" data-summary="networkRequests">
                   <div id="summaryNetworkRequests" class="summary-value">0</div>
@@ -233,7 +233,7 @@
                 </div>
                 <div class="summary-item" data-summary="consoleErrors">
                   <div id="summaryConsoleErrors" class="summary-value">0</div>
-                  <div id="summaryConsoleErrorsLabel" class="summary-label">Err</div>
+                  <div id="summaryConsoleErrorsLabel" class="summary-label">Console Err</div>
                 </div>
                 <div class="summary-item" data-summary="screenshots">
                   <div id="summaryScreenshots" class="summary-value">0</div>
@@ -257,7 +257,7 @@
                 Console
               </button>
               <button class="tab-button" type="button" data-panel="errors">
-                Errors
+                Incidents
               </button>
             </div>
 
@@ -447,14 +447,14 @@
             <div class="event-workspace">
               <div class="event-list-column">
                 <div id="incidentPanel" class="panel errors-panel hidden">
-                  <h2>Errors</h2>
+                  <h2>Incidents</h2>
                   <label class="incident-toggle">
                     <input type="checkbox" id="errorOnlyToggle" />
                     Errors only
                   </label>
                   <div id="incidentList" class="incident-list"></div>
                   <div id="incidentEmpty" class="empty-state muted hidden">
-                    No errors match current filters.
+                    No incidents match current filters.
                   </div>
                 </div>
               </div>
