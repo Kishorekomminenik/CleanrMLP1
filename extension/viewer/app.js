@@ -4151,6 +4151,10 @@ function renderNetworkPanel(options = {}) {
   const selectedNetworkId = state.selectedNetworkId || null;
   const grouped = groupNetworkEntries(filtered);
   const requestCount = filtered.length;
+  const totalRequests =
+    state.session?.parsedCounts?.networkRequests ??
+    state.manifest?.summary?.networkRequests ??
+    entries.length;
   let visibleRows = 0;
   const selectedHidden =
     selectedNetworkId &&
@@ -4320,15 +4324,12 @@ function renderNetworkPanel(options = {}) {
   });
   state.networkGroupIndex = groupIndex;
   if (networkResultCount) {
-    if (!requestCount) {
-      networkResultCount.textContent = "";
-    } else if (grouped.length < requestCount) {
+    const requestLabel = requestCount === 1 ? "request" : "requests";
+    if (grouped.length < requestCount) {
       const rowLabel = visibleRows === 1 ? "row" : "rows";
-      const requestLabel = requestCount === 1 ? "request" : "requests";
-      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} ${requestLabel} in view (grouped)`;
+      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} / ${totalRequests} ${requestLabel} in view (grouped)`;
     } else {
-      const resultLabel = requestCount === 1 ? "result" : "results";
-      networkResultCount.textContent = `${requestCount} ${resultLabel}`;
+      networkResultCount.textContent = `${requestCount} / ${totalRequests} ${requestLabel} in view`;
     }
   }
   if (filtered.length > maxRows || truncated) {
