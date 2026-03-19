@@ -4327,10 +4327,12 @@ function renderNetworkPanel(options = {}) {
     const requestLabel = requestCount === 1 ? "request" : "requests";
     if (grouped.length < requestCount) {
       const rowLabel = visibleRows === 1 ? "row" : "rows";
-      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} in view / ${totalRequests} total ${requestLabel} (grouped)`;
+      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} in view • ${totalRequests} session total ${requestLabel} (grouped)`;
     } else {
-      networkResultCount.textContent = `${requestCount} in view / ${totalRequests} total ${requestLabel}`;
+      networkResultCount.textContent = `${requestCount} in view • ${totalRequests} session total ${requestLabel}`;
     }
+    networkResultCount.title =
+      "In view counts use timestamp-valid requests after time/search/status filters. Session totals come from raw manifest/parsed counts when available.";
   }
   if (filtered.length > maxRows || truncated) {
     const note = document.createElement("div");
