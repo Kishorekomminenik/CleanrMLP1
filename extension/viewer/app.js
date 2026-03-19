@@ -4125,12 +4125,10 @@ function renderNetworkPanel(options = {}) {
   } else if (networkFilteredEmpty) {
     networkFilteredEmpty.textContent = "No network entries match current filter.";
   }
-  if (networkResultCount) {
-    const resultLabel = filtered.length === 1 ? "result" : "results";
-    networkResultCount.textContent = `${filtered.length} ${resultLabel}`;
-  }
   const selectedNetworkId = state.selectedNetworkId || null;
   const grouped = groupNetworkEntries(filtered);
+  const requestCount = filtered.length;
+  let visibleRows = 0;
   const selectedHidden =
     selectedNetworkId &&
     !filtered.some((entry) => entry.id === selectedNetworkId);
@@ -4220,6 +4218,7 @@ function renderNetworkPanel(options = {}) {
       renderNetworkPanel();
     });
     networkList.appendChild(row);
+    visibleRows += 1;
   };
   grouped.forEach((group) => {
     group.items.forEach((entry) => {
@@ -4279,6 +4278,7 @@ function renderNetworkPanel(options = {}) {
       });
     }
     networkList.appendChild(header);
+    visibleRows += 1;
     if (isExpanded) {
       group.items.forEach((entry) => {
         if (renderedEntries >= maxRows) {
@@ -4296,6 +4296,18 @@ function renderNetworkPanel(options = {}) {
     }
   });
   state.networkGroupIndex = groupIndex;
+  if (networkResultCount) {
+    if (!requestCount) {
+      networkResultCount.textContent = "";
+    } else if (grouped.length < requestCount) {
+      const rowLabel = visibleRows === 1 ? "row" : "rows";
+      const requestLabel = requestCount === 1 ? "request" : "requests";
+      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} ${requestLabel} in view (grouped)`;
+    } else {
+      const resultLabel = requestCount === 1 ? "result" : "results";
+      networkResultCount.textContent = `${requestCount} ${resultLabel}`;
+    }
+  }
   if (filtered.length > maxRows || truncated) {
     const note = document.createElement("div");
     note.className = "muted";
