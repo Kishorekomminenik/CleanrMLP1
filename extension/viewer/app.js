@@ -412,38 +412,61 @@ function normalizeConsoleLevel(level) {
   return raw;
 }
 
+function getNetworkStatusValue(entry) {
+  if (!entry) {
+    return null;
+  }
+  const raw = entry.response_status ?? entry.status;
+  if (typeof raw === "number") {
+    return raw;
+  }
+  if (typeof raw === "string") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function isFailureFinalizeReason(reason) {
+  if (!reason) {
+    return false;
+  }
+  const normalized = String(reason).toLowerCase().trim();
+  if (["complete", "completed", "success", "ok", "finished", "done"].includes(normalized)) {
+    return false;
+  }
+  return /abort|error|fail|timeout|cancel|blocked|refused|disconnect|dns|reset|unreachable/.test(
+    normalized
+  );
+}
+
 function isNetworkFailureEntry(entry) {
   if (!entry) {
     return false;
   }
-  const status =
-    typeof entry.response_status === "number"
-      ? entry.response_status
-      : typeof entry.status === "number"
-        ? entry.status
-        : null;
-  return (
-    (typeof status === "number" && status >= 400) ||
-    entry.incomplete ||
-    entry.finalize_reason ||
-    entry.error_text ||
-    entry.errorText
-  );
+  const status = getNetworkStatusValue(entry);
+  const hasStatus = typeof status === "number";
+  const hasErrorText = Boolean(entry.error_text || entry.errorText);
+  const hasIncomplete = Boolean(entry.incomplete);
+  const hasFailureReason = isFailureFinalizeReason(entry.finalize_reason);
+  if (hasStatus && status >= 400) {
+    return true;
+  }
+  if (hasErrorText || hasIncomplete) {
+    return true;
+  }
+  return !hasStatus && hasFailureReason;
 }
 
 function classifyNetworkFailure(entry) {
   if (!entry) {
     return { severity: "info", kind: "unknown" };
   }
-  const status =
-    typeof entry.response_status === "number"
-      ? entry.response_status
-      : typeof entry.status === "number"
-        ? entry.status
-        : null;
+  const status = getNetworkStatusValue(entry);
   const hasStatus = typeof status === "number";
   const hasErrorText = Boolean(entry.error_text || entry.errorText);
-  const hasAbort = Boolean(entry.incomplete) || Boolean(entry.finalize_reason);
+  const hasIncomplete = Boolean(entry.incomplete);
+  const hasFailureReason = isFailureFinalizeReason(entry.finalize_reason);
   if (hasStatus && status >= 500) {
     return { severity: "error", kind: "server" };
   }
@@ -453,14 +476,14 @@ function classifyNetworkFailure(entry) {
   if (hasErrorText) {
     return { severity: "error", kind: "error_text" };
   }
-  if (hasAbort) {
+  if (hasIncomplete || (!hasStatus && hasFailureReason)) {
     return { severity: "warning", kind: "aborted" };
   }
   return { severity: "info", kind: "unknown" };
 }
 
 function classifyNetworkStatus(entry) {
-  const status = entry.response_status ?? entry.status;
+  const status = getNetworkStatusValue(entry);
   if (typeof status === "number") {
     if (status >= 500) {
       return "5xx";
@@ -4178,7 +4201,7 @@ function renderNetworkPanel(options = {}) {
     method.textContent = (entry.method || "-").toUpperCase();
     const status = document.createElement("div");
     status.className = "mono cell-status";
-    const statusValue = entry.response_status || entry.status;
+    const statusValue = getNetworkStatusValue(entry);
     const statusLabel =
       statusValue ||
       (classifyNetworkStatus(entry) === "aborted" ? "aborted" : "-");
