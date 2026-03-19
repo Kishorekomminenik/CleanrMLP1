@@ -4151,6 +4151,7 @@ function renderNetworkPanel(options = {}) {
   if (!networkList || !networkEmpty) {
     return;
   }
+  const hasNetwork = Boolean(state.manifest?.artifacts?.network?.present);
   const preserveScroll = Boolean(options.preserveScroll);
   const previousScrollTop = preserveScroll ? networkList.scrollTop : 0;
   if (isFailFastActive("network")) {
@@ -4166,6 +4167,25 @@ function renderNetworkPanel(options = {}) {
       networkList,
       buildIntegrityDisabledMessage("network", "Network panel")
     );
+    return;
+  }
+  if (hasNetwork && !state.loadedArtifacts.network) {
+    networkEmpty.classList.add("hidden");
+    networkFilteredEmpty?.classList.add("hidden");
+    if (networkResultCount) {
+      networkResultCount.textContent = "";
+    }
+    if (networkSelectionNote) {
+      networkSelectionNote.classList.add("hidden");
+    }
+    networkList.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "muted";
+    loading.textContent = state.loadingNetwork
+      ? "Loading network logs…"
+      : "Loading network logs…";
+    networkList.appendChild(loading);
+    ensureNetworkLogsLoaded().then(renderNetworkPanel);
     return;
   }
   const entries = state.networkEntries || [];
