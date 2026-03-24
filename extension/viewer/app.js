@@ -4997,12 +4997,31 @@ function normalizeNetworkEntry(entry) {
         : typeof entry.timestamp_epoch_ms === "number"
           ? entry.timestamp_epoch_ms
           : 0;
-  const durationMs =
-    entry.duration_ms ||
-    entry.durationMs ||
-    entry.timing ||
-    entry.total_time_ms ||
+  const durationCandidate =
+    entry.duration_ms ??
+    entry.durationMs ??
+    entry.total_time_ms ??
+    entry.timing ??
     0;
+  let durationMs = 0;
+  if (typeof durationCandidate === "number" && Number.isFinite(durationCandidate)) {
+    durationMs = durationCandidate;
+  } else if (typeof durationCandidate === "string") {
+    const parsed = Number(durationCandidate);
+    if (Number.isFinite(parsed)) {
+      durationMs = parsed;
+    }
+  } else if (durationCandidate && typeof durationCandidate === "object") {
+    const timingValue =
+      durationCandidate.total_time_ms ??
+      durationCandidate.totalTimeMs ??
+      durationCandidate.duration_ms ??
+      durationCandidate.durationMs;
+    const parsed = Number(timingValue);
+    if (Number.isFinite(parsed)) {
+      durationMs = parsed;
+    }
+  }
   const endMs =
     typeof entry.end_timestamp_ms === "number"
       ? entry.end_timestamp_ms
