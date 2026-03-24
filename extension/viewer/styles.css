@@ -51,7 +51,7 @@ body {
 }
 
 .app {
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 20px;
   min-height: 100vh;
@@ -147,7 +147,7 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(520px, 1.3fr) minmax(420px, 1fr);
   gap: 12px;
   align-items: start;
   flex: 1;

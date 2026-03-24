@@ -4417,7 +4417,7 @@ function renderNetworkPanel(options = {}) {
       networkResultCount.textContent = `${requestCount} in view • ${totalRequests} session total ${requestLabel}`;
     }
     networkResultCount.title =
-      "In view counts use timestamp-valid requests after time/search/status filters. Session totals come from raw manifest/parsed counts when available.";
+      "In view counts use normalized requests after time/search/status filters. Session totals come from raw manifest/parsed counts when available.";
   }
   if (DEBUG_ENABLED) {
     const debugCounts = getNetworkFilterDebugCounts(
