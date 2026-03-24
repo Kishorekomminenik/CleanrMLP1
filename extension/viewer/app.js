@@ -416,13 +416,24 @@ function getNetworkStatusValue(entry) {
   if (!entry) {
     return null;
   }
-  const raw = entry.response_status ?? entry.status;
-  if (typeof raw === "number") {
-    return raw;
-  }
-  if (typeof raw === "string") {
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) ? parsed : null;
+  const candidates = [
+    entry.response_status,
+    entry.status,
+    entry.statusCode,
+    entry.status_code,
+    entry.responseStatus,
+    entry.response_status_code,
+  ];
+  for (const raw of candidates) {
+    if (typeof raw === "number") {
+      return raw;
+    }
+    if (typeof raw === "string") {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
   }
   return null;
 }
@@ -448,11 +459,13 @@ function isNetworkFailureEntry(entry) {
   const hasStatus = typeof status === "number";
   const hasErrorText = Boolean(entry.error_text || entry.errorText);
   const hasIncomplete = Boolean(entry.incomplete);
-  const hasFailureReason = isFailureFinalizeReason(entry.finalize_reason);
+  const finalizeReason = entry.finalize_reason || entry.finalizeReason;
+  const hasFailureReason = isFailureFinalizeReason(finalizeReason);
+  const hasCanceled = Boolean(entry.canceled);
   if (hasStatus && status >= 400) {
     return true;
   }
-  if (hasErrorText || hasIncomplete) {
+  if (hasErrorText || hasIncomplete || hasCanceled) {
     return true;
   }
   return !hasStatus && hasFailureReason;
@@ -466,7 +479,9 @@ function classifyNetworkFailure(entry) {
   const hasStatus = typeof status === "number";
   const hasErrorText = Boolean(entry.error_text || entry.errorText);
   const hasIncomplete = Boolean(entry.incomplete);
-  const hasFailureReason = isFailureFinalizeReason(entry.finalize_reason);
+  const finalizeReason = entry.finalize_reason || entry.finalizeReason;
+  const hasFailureReason = isFailureFinalizeReason(finalizeReason);
+  const hasCanceled = Boolean(entry.canceled);
   if (hasStatus && status >= 500) {
     return { severity: "error", kind: "server" };
   }
@@ -476,7 +491,7 @@ function classifyNetworkFailure(entry) {
   if (hasErrorText) {
     return { severity: "error", kind: "error_text" };
   }
-  if (hasIncomplete || (!hasStatus && hasFailureReason)) {
+  if (hasIncomplete || hasCanceled || (!hasStatus && hasFailureReason)) {
     return { severity: "warning", kind: "aborted" };
   }
   return { severity: "info", kind: "unknown" };
