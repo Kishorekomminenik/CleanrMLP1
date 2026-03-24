@@ -4989,14 +4989,51 @@ function indexEntriesById(entries) {
 }
 
 function normalizeNetworkEntry(entry) {
+  const sessionStartMs = (() => {
+    const startedAt =
+      state.manifest?.session?.startedAt ||
+      state.manifest?.session?.createdAt ||
+      state.sessionLog?.session?.startedAt ||
+      state.sessionLog?.session?.started_at;
+    if (!startedAt) {
+      return null;
+    }
+    const parsed = Date.parse(startedAt);
+    return Number.isFinite(parsed) ? parsed : null;
+  })();
+  const resolveEpochRelative = (epochValue) => {
+    const epochMs = Number(epochValue);
+    if (!Number.isFinite(epochMs) || epochMs <= 0) {
+      return null;
+    }
+    if (sessionStartMs) {
+      return Math.max(0, epochMs - sessionStartMs);
+    }
+    return 0;
+  };
+  const resolveIsoRelative = (isoValue) => {
+    if (!isoValue) {
+      return null;
+    }
+    const parsed = Date.parse(isoValue);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    if (sessionStartMs) {
+      return Math.max(0, parsed - sessionStartMs);
+    }
+    return 0;
+  };
+  const startFallback =
+    resolveEpochRelative(entry.timestamp_epoch_ms) ??
+    resolveIsoRelative(entry.timestamp) ??
+    0;
   const startMs =
     typeof entry.timestamp_ms === "number"
       ? entry.timestamp_ms
       : typeof entry.timestampMs === "number"
         ? entry.timestampMs
-        : typeof entry.timestamp_epoch_ms === "number"
-          ? entry.timestamp_epoch_ms
-          : 0;
+        : startFallback;
   const durationCandidate =
     entry.duration_ms ??
     entry.durationMs ??
@@ -5034,6 +5071,7 @@ function normalizeNetworkEntry(entry) {
     startTimestampMs: startMs,
     endTimestampMs: endMs,
     durationMs: durationMs,
+    time_missing: entry.time_missing ?? startFallback === 0,
   };
 }
 
