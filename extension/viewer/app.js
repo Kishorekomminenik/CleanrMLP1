@@ -1130,14 +1130,18 @@ function getVisibleNetworkEvents() {
 
 function getVisibleNetworkEventsAt(timeMs, windowMs) {
   const entries = state.networkEntries || [];
+  const nearMode = state.panelModes.network === "near";
   const base =
-    state.panelModes.network === "near"
+    nearMode
       ? filterEntriesNearTime(entries, timeMs, windowMs, getNetworkTimestampMs)
       : entries;
   const query = normalizeSearchQuery(state.filters.networkQuery);
   const applyErrorOnly =
     state.filters.errorOnly && state.playhead.activePanel === "errors";
   return base.filter((entry) => {
+    if (nearMode && entry?.time_missing) {
+      return false;
+    }
     if (query) {
       const haystack = buildNetworkSearchText(entry);
       if (!haystack.includes(query)) {
@@ -1172,6 +1176,7 @@ function getNetworkFilterDebugCounts(timeMs, windowMs) {
   const timeFiltered =
     mode === "near"
       ? filterEntriesNearTime(entries, timeMs, windowMs, getNetworkTimestampMs)
+          .filter((entry) => !entry?.time_missing)
       : entries;
   const timeFilteredCount = timeFiltered.length;
   const searchFiltered = query
@@ -4281,10 +4286,11 @@ function renderNetworkPanel(options = {}) {
           ? entry.timestampMs
           : entry.timestamp_ms || 0;
     const hasTimestamp =
-      Number.isFinite(entry.endTimestampMs) ||
-      Number.isFinite(entry.timestampMs) ||
-      Number.isFinite(entry.timestamp_ms);
-    time.textContent = formatTimeWithMs(entryTime);
+      !entry.time_missing &&
+      (Number.isFinite(entry.endTimestampMs) ||
+        Number.isFinite(entry.timestampMs) ||
+        Number.isFinite(entry.timestamp_ms));
+    time.textContent = hasTimestamp ? formatTimeWithMs(entryTime) : "—";
     const method = document.createElement("div");
     method.className = "mono cell-method";
     method.textContent = (entry.method || "-").toUpperCase();
@@ -6058,7 +6064,7 @@ function renderInspector() {
     const headlineText = `${entry.method || ""} ${entry.url || ""}`.trim();
     const methodText = entry.method || "Not available";
     const urlText = entry.url || "Not available";
-    const statusValue = entry.response_status ?? entry.status;
+    const statusValue = getNetworkStatusValue(entry);
     const statusText = statusValue || statusValue === 0 ? statusValue : "Not available";
     const durationText = formatDurationValue(
       entry.durationMs || entry.timing || entry.total_time_ms
