@@ -5117,7 +5117,26 @@ async function ensureNetworkLogsLoaded() {
     const totalNetworkFailures = countNetworkFailures(entries);
     const normalized = entries
       .map(normalizeNetworkEntry)
-      .filter((entry) => isValidTimestampMs(getNetworkTimestampMs(entry)));
+      .filter((entry) => {
+        if (isValidTimestampMs(getNetworkTimestampMs(entry))) {
+          return true;
+        }
+        const hasIdentity =
+          Boolean(entry.id) ||
+          Boolean(entry.request_id) ||
+          Boolean(entry.url) ||
+          Boolean(entry.method) ||
+          Boolean(entry.error_text || entry.errorText) ||
+          Boolean(entry.response_status || entry.status);
+        if (hasIdentity) {
+          entry.time_missing = true;
+          entry.endTimestampMs = 0;
+          entry.startTimestampMs = 0;
+          entry.timestampMs = 0;
+          return true;
+        }
+        return false;
+      });
     normalized.sort((a, b) => getNetworkTimestampMs(a) - getNetworkTimestampMs(b));
     state.networkEntries = normalized;
     state.networkIndex = indexEntriesById(normalized);
