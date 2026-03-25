@@ -49,7 +49,6 @@ const eventList = document.getElementById("eventList");
 const detailsBody = document.getElementById("detailsBody");
 const videoPanel = document.getElementById("videoPanel");
 const videoEl = document.getElementById("videoEl");
-const videoPlay = document.getElementById("videoPlay");
 const videoTime = document.getElementById("videoTime");
 const videoSyncNote = document.getElementById("videoSyncNote");
 const layoutEl = document.querySelector(".layout");
@@ -843,9 +842,7 @@ function setPlayState(isPlaying) {
   if (playToggleBtn) {
     playToggleBtn.textContent = state.playhead.isPlaying ? "Pause" : "Play";
   }
-  if (videoPlay) {
-    videoPlay.textContent = state.playhead.isPlaying ? "Pause" : "Play";
-  }
+  // Video header play control removed; timeline play is source of truth.
 }
 
 function updatePlayheadDisplay() {
@@ -2866,9 +2863,6 @@ function setIntegrityControlsDisabled(report) {
     playToggleBtn.disabled =
       globalDisabled || !availability.timeline || !availability.recording || !hasRecording;
   }
-  if (videoPlay) {
-    videoPlay.disabled = globalDisabled || !availability.recording || !hasRecording;
-  }
   if (videoSyncNote && availability.recording === false) {
     videoSyncNote.textContent = buildIntegrityDisabledMessage(
       "recording",
@@ -3173,10 +3167,6 @@ function applyManifestAvailability(manifest) {
   if (playToggleBtn) {
     playToggleBtn.disabled = !hasRecording;
   }
-  if (videoPlay) {
-    videoPlay.disabled = !hasRecording;
-  }
-
   if (!hasNetwork) {
     networkEmpty?.classList.remove("hidden");
   }
@@ -7529,12 +7519,8 @@ function resetState() {
   }
   videoEl.removeAttribute("src");
   videoEl.load();
-  videoPlay.textContent = "Play";
   if (playToggleBtn) {
     playToggleBtn.disabled = true;
-  }
-  if (videoPlay) {
-    videoPlay.disabled = true;
   }
   setPlayState(false);
   if (videoSyncNote) {
@@ -8179,9 +8165,6 @@ consoleModeChips.forEach((chip) => {
   });
 });
 
-if (videoPlay) {
-  videoPlay.addEventListener("click", () => togglePlayback("video"));
-}
 
 if (videoEl) {
   videoEl.addEventListener("timeupdate", handleVideoTimeUpdate);
