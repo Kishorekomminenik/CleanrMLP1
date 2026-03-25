@@ -25,6 +25,7 @@ const bannerClose = document.getElementById("bannerClose");
 const headerActions = document.querySelector(".header-actions");
 const appRoot = document.querySelector(".app");
 const timeline = document.getElementById("timeline");
+const timelinePanel = document.querySelector(".timeline-panel");
 const timelineCursor = document.getElementById("timelineCursor");
 const timelineLanes = document.getElementById("timelineLanes");
 const currentTimeLabel = document.getElementById("currentTime");
@@ -3233,7 +3234,7 @@ function renderSummaryFromManifest(manifest) {
       signals.push(`${label} mismatch: manifest=${manifestCount}, parsed=${parsedCount}`);
     }
   };
-  if (summaryPanel.parentElement !== timelinePanel) {
+  if (timelinePanel && summaryPanel.parentElement !== timelinePanel) {
     timelinePanel.appendChild(summaryPanel);
   }
   summaryPanel.classList.remove("hidden");
@@ -4224,6 +4225,11 @@ function renderNetworkPanel(options = {}) {
   networkList.innerHTML = "";
   const groupIndex = new Map();
   if (!entries.length) {
+    if (state.panelModes.network === "near") {
+      networkEmpty.textContent = "No network activity in this time window";
+    } else {
+      networkEmpty.textContent = "No network logs available for this session.";
+    }
     networkEmpty.classList.remove("hidden");
     networkFilteredEmpty?.classList.add("hidden");
     if (networkResultCount) {
@@ -4237,6 +4243,11 @@ function renderNetworkPanel(options = {}) {
   if (state.selectedNetworkId && !entries.some((entry) => entry.id === state.selectedNetworkId)) {
     state.selectedNetworkId = null;
     state.playhead.selectedEventId = null;
+  }
+  if (state.panelModes.network === "near") {
+    networkEmpty.textContent = "No network activity in this time window";
+  } else {
+    networkEmpty.textContent = "No network logs available for this session.";
   }
   networkEmpty.classList.add("hidden");
   networkFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
