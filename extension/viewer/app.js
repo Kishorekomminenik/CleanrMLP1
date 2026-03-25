@@ -1152,15 +1152,15 @@ function getVisibleNetworkEventsAt(timeMs, windowMs) {
     if (applyErrorOnly && !isNetworkError(entry)) {
       return false;
     }
-    const bucket = classifyNetworkStatus(entry);
+    const statusValue = getNetworkStatusValue(entry);
     if (state.filters.networkStatusBucket === "errors") {
       return isNetworkError(entry);
     }
     if (state.filters.networkStatusBucket === "4xx") {
-      return bucket === "4xx";
+      return typeof statusValue === "number" && statusValue >= 400 && statusValue < 500;
     }
     if (state.filters.networkStatusBucket === "5xx") {
-      return bucket === "5xx";
+      return typeof statusValue === "number" && statusValue >= 500 && statusValue < 600;
     }
     return true;
   });
@@ -1190,15 +1190,15 @@ function getNetworkFilterDebugCounts(timeMs, windowMs) {
     if (applyErrorOnly && !isNetworkError(entry)) {
       return false;
     }
-    const statusBucket = classifyNetworkStatus(entry);
+    const statusValue = getNetworkStatusValue(entry);
     if (bucket === "errors") {
       return isNetworkError(entry);
     }
     if (bucket === "4xx") {
-      return statusBucket === "4xx";
+      return typeof statusValue === "number" && statusValue >= 400 && statusValue < 500;
     }
     if (bucket === "5xx") {
-      return statusBucket === "5xx";
+      return typeof statusValue === "number" && statusValue >= 500 && statusValue < 600;
     }
     return true;
   });
