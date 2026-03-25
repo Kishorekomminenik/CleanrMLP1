@@ -211,11 +211,6 @@
             <div class="timeline-meta muted">
               <span id="durationLabel">Duration: 00:00</span>
             </div>
-          </div>
-        </section>
-
-        <section class="right">
-          <div class="panel workspace-panel investigation-panel">
             <div id="summaryPanel" class="summary-panel summary-strip hidden">
               <h2>Overview (Session totals)</h2>
               <div class="summary-grid">
@@ -246,6 +241,11 @@
               </div>
               <div id="summarySignals" class="summary-signals muted"></div>
             </div>
+          </div>
+        </section>
+
+        <section class="right">
+          <div class="panel workspace-panel investigation-panel">
             <div class="panel panel-tabs">
               <button class="tab-button" type="button" data-panel="screenshots">
                 Shots
@@ -338,10 +338,12 @@
                       <span id="networkResultCount" class="muted"></span>
                     </div>
                     <div class="filter-row chips">
-                      <button class="chip active" type="button" data-net-mode="near">
+                      <button class="chip" type="button" data-net-mode="near">
                         Near Time ±5s
                       </button>
-                      <button class="chip" type="button" data-net-mode="all">All Time</button>
+                      <button class="chip active" type="button" data-net-mode="all">
+                        All Time
+                      </button>
                     </div>
                     <div class="filter-row chips">
                       <button class="chip active" type="button" data-net-filter="all">
@@ -404,10 +406,12 @@
                       </button>
                     </div>
                     <div class="filter-row chips">
-                      <button class="chip active" type="button" data-console-mode="near">
+                      <button class="chip" type="button" data-console-mode="near">
                         Near Time ±5s
                       </button>
-                      <button class="chip" type="button" data-console-mode="all">All</button>
+                      <button class="chip active" type="button" data-console-mode="all">
+                        All
+                      </button>
                     </div>
                     <div class="filter-row chips">
                       <button class="chip active" type="button" data-console-level="error">

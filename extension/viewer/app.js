@@ -154,6 +154,7 @@ const integrityCounts = document.getElementById("integrityCounts");
 const networkSearchInput = document.getElementById("networkSearchInput");
 const networkSearchClear = document.getElementById("networkSearchClear");
 const networkResultCount = document.getElementById("networkResultCount");
+const networkFilterLabel = document.querySelector("[data-panel=\"network\"] .filter-label");
 const networkSelectionNote = document.getElementById("networkSelectionNote");
 const consoleSearchInput = document.getElementById("consoleSearchInput");
 const consoleSearchClear = document.getElementById("consoleSearchClear");
@@ -214,8 +215,8 @@ const state = {
     hoverMarkerId: null,
   },
   panelModes: {
-    network: "near",
-    console: "near",
+    network: "all",
+    console: "all",
   },
   panelRenderKeys: {
     network: "",
@@ -1641,7 +1642,7 @@ function applyPlayhead(tms, options = {}) {
   }
   if (options.refresh !== false) {
     refreshView();
-    if (options.source) {
+    if (options.source && state.playhead.activePanel === "timeline") {
       afterSelectionOrSeek(options.source);
     }
   }
@@ -3242,6 +3243,9 @@ function renderSummaryFromManifest(manifest) {
       signals.push(`${label} mismatch: manifest=${manifestCount}, parsed=${parsedCount}`);
     }
   };
+  if (summaryPanel.parentElement !== timelinePanel) {
+    timelinePanel.appendChild(summaryPanel);
+  }
   summaryPanel.classList.remove("hidden");
   const parsed = report.parsedCounts || {};
   const manifestCounts = report.manifestCounts || {};
@@ -4210,6 +4214,19 @@ function renderNetworkPanel(options = {}) {
   }
   const entries = state.networkEntries || [];
   const filtered = getVisibleNetworkEvents();
+  const modeLabel = state.panelModes.network === "near" ? "Near Time" : "All Time";
+  const statusLabel = (() => {
+    if (state.filters.networkStatusBucket === "errors") {
+      return "Err";
+    }
+    if (state.filters.networkStatusBucket === "4xx") {
+      return "4xx";
+    }
+    if (state.filters.networkStatusBucket === "5xx") {
+      return "5xx";
+    }
+    return "All";
+  })();
   state.panelRenderKeys.network = buildListKey(filtered);
   updateNearTimeLabels({
     networkCount: state.panelModes.network === "near" ? filtered.length : null,
@@ -4285,12 +4302,12 @@ function renderNetworkPanel(options = {}) {
         : typeof entry.timestampMs === "number"
           ? entry.timestampMs
           : entry.timestamp_ms || 0;
-    const hasTimestamp =
-      !entry.time_missing &&
-      (Number.isFinite(entry.endTimestampMs) ||
-        Number.isFinite(entry.timestampMs) ||
-        Number.isFinite(entry.timestamp_ms));
-    time.textContent = hasTimestamp ? formatTimeWithMs(entryTime) : "—";
+  const hasTimestamp =
+    !entry.time_missing &&
+    (Number.isFinite(entry.endTimestampMs) ||
+      Number.isFinite(entry.timestampMs) ||
+      Number.isFinite(entry.timestamp_ms));
+  time.textContent = hasTimestamp ? formatTimeWithMs(entryTime) : "—";
     const method = document.createElement("div");
     method.className = "mono cell-method";
     method.textContent = (entry.method || "-").toUpperCase();
@@ -4415,15 +4432,17 @@ function renderNetworkPanel(options = {}) {
   });
   state.networkGroupIndex = groupIndex;
   if (networkResultCount) {
-    const requestLabel = requestCount === 1 ? "request" : "requests";
-    if (grouped.length < requestCount) {
-      const rowLabel = visibleRows === 1 ? "row" : "rows";
-      networkResultCount.textContent = `${visibleRows} ${rowLabel} • ${requestCount} in view • ${totalRequests} session total ${requestLabel} (grouped)`;
-    } else {
-      networkResultCount.textContent = `${requestCount} in view • ${totalRequests} session total ${requestLabel}`;
-    }
-    networkResultCount.title =
-      "In view counts use normalized requests after time/search/status filters. Session totals come from raw manifest/parsed counts when available.";
+    const displayed = grouped.length;
+    const modeLabel = state.panelModes.network === "near" ? "Near Time" : "All Time";
+    const statusLabel =
+      state.filters.networkStatusBucket === "errors"
+        ? "Err"
+        : state.filters.networkStatusBucket === "4xx"
+          ? "4xx"
+          : state.filters.networkStatusBucket === "5xx"
+            ? "5xx"
+            : "All";
+    networkResultCount.textContent = `Filter: ${modeLabel} · ${statusLabel}\n${totalRequests} total · ${requestCount} filtered · ${displayed} displayed`;
   }
   if (DEBUG_ENABLED) {
     const debugCounts = getNetworkFilterDebugCounts(
@@ -5534,6 +5553,16 @@ function renderEventList() {
 }
 
 function renderDetails(ev) {
+  if (!detailsBody) {
+    return;
+  }
+  if (
+    state.playhead.activePanel === "network" ||
+    state.playhead.activePanel === "console" ||
+    state.playhead.activePanel === "errors"
+  ) {
+    return;
+  }
   detailsBody.innerHTML = "";
   const header = document.createElement("div");
   header.className = "details-kv";
@@ -7379,8 +7408,8 @@ function resetState() {
     showIncidentRail: true,
   };
   state.panelModes = {
-    network: "near",
-    console: "near",
+    network: "all",
+    console: "all",
   };
   state.inspector = {
     type: null,
@@ -7547,10 +7576,10 @@ function resetState() {
     contextWindow.textContent = "±5s";
   }
   networkModeChips.forEach((chip) => {
-    chip.classList.toggle("active", chip.dataset.netMode === "near");
+    chip.classList.toggle("active", chip.dataset.netMode === "all");
   });
   consoleModeChips.forEach((chip) => {
-    chip.classList.toggle("active", chip.dataset.consoleMode === "near");
+    chip.classList.toggle("active", chip.dataset.consoleMode === "all");
   });
   networkFilterChips.forEach((chip) => {
     chip.classList.toggle("active", chip.dataset.netFilter === "all");
@@ -7578,6 +7607,9 @@ function resetState() {
   }
   consoleLevelChips.forEach((chip) => {
     chip.classList.toggle("active", true);
+  });
+  consoleModeChips.forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.consoleMode === "all");
   });
   consoleQuickChips.forEach((chip) => {
     chip.classList.toggle("active", chip.dataset.consoleQuick === "all");

@@ -778,6 +778,15 @@ section.right {
   margin-bottom: 6px;
 }
 
+.timeline-meta {
+  font-size: 12px;
+  margin-top: 0;
+}
+
+#networkResultCount {
+  white-space: pre-line;
+}
+
 .timeline-lanes {
   display: grid;
   gap: 6px;
