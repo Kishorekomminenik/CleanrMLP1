@@ -3129,11 +3129,11 @@ async function handleNetworkStart(options = {}) {
   });
   if (!response.ok) {
     await handleFailedResponse(response);
-    if (response.code === "debugger_blocked") {
+    if (response.code === "debugger_blocked" || response.code === "debugger_attach_failed") {
       disableNetworkUI();
       setStatus(
         statusElements.message,
-        "Capture Logs is blocked by enterprise policy on this browser.",
+        "Network/Console capture unavailable. Unable to attach debugger.",
         "error"
       );
     }

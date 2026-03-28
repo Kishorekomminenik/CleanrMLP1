@@ -63,6 +63,7 @@ const FULL_CAPTURE_CONFIG = {
 const DEBUG_FULLPAGE = true;
 const DEBUG_LOGS_PAUSE = false;
 const DEBUG_CDP_LOGS = false;
+const DEBUG_CDP_LOGS_TIMEOUT_MS = 5000;
 let debuggerEventStats = null;
 let debuggerEventCheckTimer = null;
 const TRUNCATION_SUFFIX = "...[truncated]";
@@ -8847,7 +8848,12 @@ async function startNetworkCapture(filters, options = {}) {
   captureState.pendingFinalizePart = null;
   captureState.pendingFinalizeStartNewPart = false;
   let attached = false;
-  try {
+  let attachAttempts = 0;
+  const attemptAttach = async (label) => {
+    attachAttempts += 1;
+    if (DEBUG_CDP_LOGS) {
+      console.log("[LOGS][CDP][ATTACH_START]", { tabId: tab.id, label });
+    }
     await attachDebugger(tab.id);
     attached = true;
     if (DEBUG_CDP_LOGS) {
@@ -8870,25 +8876,42 @@ async function startNetworkCapture(filters, options = {}) {
             elapsedMs: Date.now() - debuggerEventStats.startMs,
           });
         }
-      }, 5000);
+      }, DEBUG_CDP_LOGS_TIMEOUT_MS);
     }
+  };
+  try {
+    await attemptAttach("initial");
   } catch (error) {
     const message = error.message || String(error);
     if (DEBUG_CDP_LOGS) {
       console.warn("[LOGS][CDP][ATTACH_FAILED]", { tabId: tab.id, error: message });
     }
-    addDiagnostic("error", "Debugger attach failed.", {
-      error: message,
-    });
-    setStatusMessage(
-      "Capture Logs blocked by enterprise policy.",
-      "error"
-    );
-    const attachError = new Error(
-      "Capture Logs blocked by enterprise policy."
-    );
-    attachError.code = "debugger_blocked";
-    throw attachError;
+    await delay(200);
+    try {
+      await attemptAttach("retry");
+    } catch (retryError) {
+      const retryMessage = retryError.message || String(retryError);
+      if (DEBUG_CDP_LOGS) {
+        console.warn("[LOGS][CDP][ATTACH_FAILED_FINAL]", {
+          tabId: tab.id,
+          error: retryMessage,
+          attempts: attachAttempts,
+        });
+      }
+      addDiagnostic("error", "Debugger attach failed.", {
+        error: retryMessage,
+        attempts: attachAttempts,
+      });
+      setStatusMessage(
+        "Capture Logs unavailable. Failed to attach debugger.",
+        "error"
+      );
+      const attachError = new Error(
+        "Capture Logs unavailable. Failed to attach debugger."
+      );
+      attachError.code = "debugger_attach_failed";
+      throw attachError;
+    }
   }
   try {
     await sendDebuggerCommand(tab.id, "Network.enable");
@@ -9170,6 +9193,14 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     return;
   }
   if (DEBUG_CDP_LOGS) {
+    if (!debuggerEventStats) {
+      debuggerEventStats = {
+        tabId: source.tabId || null,
+        startMs: Date.now(),
+        network: 0,
+        console: 0,
+      };
+    }
     debuggerEventStats.network += 1;
     if (!debuggerEventStats.tabId) {
       debuggerEventStats.tabId = source.tabId || null;
