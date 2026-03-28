@@ -62,6 +62,9 @@ const FULL_CAPTURE_CONFIG = {
 };
 const DEBUG_FULLPAGE = true;
 const DEBUG_LOGS_PAUSE = false;
+const DEBUG_CDP_LOGS = false;
+let debuggerEventStats = null;
+let debuggerEventCheckTimer = null;
 const TRUNCATION_SUFFIX = "...[truncated]";
 const BINARY_CONTENT_TYPE_REGEX =
   /^(image\/|font\/|video\/|audio\/|application\/octet-stream)/i;
@@ -8790,11 +8793,12 @@ async function stopRecording() {
 }
 
 async function startNetworkCapture(filters, options = {}) {
+  let tab = null;
   if (state.network.active) {
     throw new Error("Network capture is already active.");
   }
 
-  const tab = await getActiveTab();
+  tab = await getActiveTab();
   ensureTabIsCapturable(tab);
 
   const allowExistingSession = options.allowExistingSession === true;
@@ -8846,8 +8850,33 @@ async function startNetworkCapture(filters, options = {}) {
   try {
     await attachDebugger(tab.id);
     attached = true;
+    if (DEBUG_CDP_LOGS) {
+      console.log("[LOGS][CDP][ATTACH_OK]", { tabId: tab.id, url: tab.url || "" });
+      debuggerEventStats = {
+        tabId: tab.id,
+        startMs: Date.now(),
+        network: 0,
+        console: 0,
+      };
+      if (debuggerEventCheckTimer) {
+        clearTimeout(debuggerEventCheckTimer);
+      }
+      debuggerEventCheckTimer = setTimeout(() => {
+        if (DEBUG_CDP_LOGS && debuggerEventStats) {
+          console.warn("[LOGS][CDP][EVENT_TIMEOUT]", {
+            tabId: debuggerEventStats.tabId,
+            network: debuggerEventStats.network,
+            console: debuggerEventStats.console,
+            elapsedMs: Date.now() - debuggerEventStats.startMs,
+          });
+        }
+      }, 5000);
+    }
   } catch (error) {
     const message = error.message || String(error);
+    if (DEBUG_CDP_LOGS) {
+      console.warn("[LOGS][CDP][ATTACH_FAILED]", { tabId: tab.id, error: message });
+    }
     addDiagnostic("error", "Debugger attach failed.", {
       error: message,
     });
@@ -8863,8 +8892,14 @@ async function startNetworkCapture(filters, options = {}) {
   }
   try {
     await sendDebuggerCommand(tab.id, "Network.enable");
+    if (DEBUG_CDP_LOGS) {
+      console.log("[LOGS][CDP][NETWORK_ENABLE_OK]", { tabId: tab.id });
+    }
   } catch (error) {
     const message = error.message || String(error);
+    if (DEBUG_CDP_LOGS) {
+      console.warn("[LOGS][CDP][NETWORK_ENABLE_FAILED]", { tabId: tab.id, error: message });
+    }
     addDiagnostic("warning", "Network enable failed.", {
       error: message,
     });
@@ -8889,8 +8924,14 @@ async function startNetworkCapture(filters, options = {}) {
   try {
     await sendDebuggerCommand(tab.id, "Runtime.enable");
     runtimeEnabled = true;
+    if (DEBUG_CDP_LOGS) {
+      console.log("[LOGS][CDP][RUNTIME_ENABLE_OK]", { tabId: tab.id });
+    }
   } catch (error) {
     const message = error.message || String(error);
+    if (DEBUG_CDP_LOGS) {
+      console.warn("[LOGS][CDP][RUNTIME_ENABLE_FAILED]", { tabId: tab.id, error: message });
+    }
     addDiagnostic("warning", "Runtime enable failed.", {
       error: message,
     });
@@ -9128,6 +9169,25 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.network.active || source.tabId !== state.network.tabId) {
     return;
   }
+  if (DEBUG_CDP_LOGS) {
+    debuggerEventStats.network += 1;
+    if (!debuggerEventStats.tabId) {
+      debuggerEventStats.tabId = source.tabId || null;
+      debuggerEventStats.startMs = Date.now();
+    }
+    if (debuggerEventStats.network === 1) {
+      console.log("[LOGS][CDP][EVENT_FIRST]", {
+        method,
+        tabId: source.tabId || null,
+      });
+    } else if (debuggerEventStats.network % 50 === 0) {
+      console.log("[LOGS][CDP][EVENT_COUNT]", {
+        count: debuggerEventStats.network,
+        tabId: source.tabId || null,
+        elapsedMs: Date.now() - debuggerEventStats.startMs,
+      });
+    }
+  }
   if (!isLogsCapturing()) {
     if (DEBUG_LOGS_PAUSE) {
       const now = Date.now();
@@ -9140,6 +9200,11 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       }
     }
     return;
+  }
+  if (DEBUG_CDP_LOGS) {
+    if (method === "Runtime.consoleAPICalled" || method === "Runtime.exceptionThrown") {
+      debuggerEventStats.console += 1;
+    }
   }
 
   if (method === "Runtime.consoleAPICalled" && state.console.active) {
