@@ -1105,11 +1105,11 @@ function isCaptureQuotaError(error) {
   return message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND");
 }
 
-async function waitForCaptureQuotaWindow() {
+async function waitForCaptureQuotaWindow(minIntervalMs = FULL_CAPTURE_CONFIG.minCaptureIntervalMs) {
   const now = Date.now();
   const elapsed = now - lastVisibleTabCaptureAt;
-  if (elapsed < FULL_CAPTURE_CONFIG.minCaptureIntervalMs) {
-    await delay(FULL_CAPTURE_CONFIG.minCaptureIntervalMs - elapsed);
+  if (elapsed < minIntervalMs) {
+    await delay(minIntervalMs - elapsed);
   }
 }
 
@@ -1178,21 +1178,27 @@ async function restoreScrollbarsAfterCapture(tabId) {
   }
 }
 
-async function captureVisibleTabThrottled(windowId) {
+async function captureVisibleTabThrottled(windowId, options = {}) {
   let attempt = 0;
+  const minIntervalMs = Number.isFinite(options.minIntervalMs)
+    ? options.minIntervalMs
+    : FULL_CAPTURE_CONFIG.minCaptureIntervalMs;
+  const maxRetries = Number.isFinite(options.maxRetries)
+    ? options.maxRetries
+    : FULL_CAPTURE_CONFIG.maxRetriesPerShot;
+  const retryDelayMs = Number.isFinite(options.retryDelayMs)
+    ? options.retryDelayMs
+    : FULL_CAPTURE_CONFIG.retryDelayMs;
   while (true) {
-    await waitForCaptureQuotaWindow();
+    await waitForCaptureQuotaWindow(minIntervalMs);
     try {
       const dataUrl = await captureVisibleTabAsync(windowId);
       lastVisibleTabCaptureAt = Date.now();
       return dataUrl;
     } catch (error) {
-      if (
-        isCaptureQuotaError(error) &&
-        attempt < FULL_CAPTURE_CONFIG.maxRetriesPerShot
-      ) {
+      if (isCaptureQuotaError(error) && attempt < maxRetries) {
         attempt += 1;
-        await delay(FULL_CAPTURE_CONFIG.retryDelayMs);
+        await delay(retryDelayMs);
         continue;
       }
       throw error;
@@ -7015,7 +7021,11 @@ async function captureScreenshot() {
     if (tab && tab.id) {
       scrollbarsHidden = await hideScrollbarsForCapture(tab.id);
     }
-    let dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+    const windowId = tab && typeof tab.windowId === "number" ? tab.windowId : null;
+    let dataUrl = await captureVisibleTabThrottled(windowId, {
+      minIntervalMs: FULL_CAPTURE_CONFIG.minCaptureIntervalMs,
+      maxRetries: 1,
+    });
     const timestampIso = nowIso();
     await loadTimestampOverlaySetting();
     if (timestampOverlayEnabled) {
@@ -7853,7 +7863,10 @@ async function captureFullPageScreenshotOnce(requestedTabId, attemptIndex = 0) {
       let clipHeightPx = rawClipHeightPx;
       try {
         for (let attempt = 0; attempt <= FULLPAGE_TILE_CAPTURE_RETRIES; attempt += 1) {
-          dataUrl = await captureVisibleTabThrottled(windowId);
+          dataUrl = await captureVisibleTabThrottled(windowId, {
+            minIntervalMs: FULL_CAPTURE_CONFIG.minCaptureIntervalMs,
+            maxRetries: FULL_CAPTURE_CONFIG.maxRetriesPerShot,
+          });
           if (!dataUrl || !dataUrl.startsWith("data:image/png")) {
             continue;
           }
@@ -10425,8 +10438,9 @@ async function handleMessage(message, sender) {
     case "FP_CAPTURE_VIEWPORT": {
       try {
         const windowId = sender && sender.tab ? sender.tab.windowId : null;
-        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
-          format: "png",
+        const dataUrl = await captureVisibleTabThrottled(windowId, {
+          minIntervalMs: FULL_CAPTURE_CONFIG.minCaptureIntervalMs,
+          maxRetries: 1,
         });
         result = dataUrl;
       } catch (error) {
