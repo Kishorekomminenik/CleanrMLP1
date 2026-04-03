@@ -386,7 +386,7 @@ function formatWindowLabel(windowMs) {
 
 function updateNearTimeLabels(options = {}) {
   const { networkCount, consoleCount, forceNetwork = false, forceConsole = false } = options;
-  const baseLabel = `Near Time ${formatWindowLabel(state.playhead.timeWindowMs)}`;
+  const baseLabel = `Near Time (${formatWindowLabel(state.playhead.timeWindowMs)} from current playback)`;
   const shouldUpdateNetwork = forceNetwork || networkCount !== undefined;
   const shouldUpdateConsole = forceConsole || consoleCount !== undefined;
   if (shouldUpdateNetwork) {
@@ -4253,6 +4253,16 @@ function renderNetworkPanel(options = {}) {
   networkFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   if (networkFilteredEmpty && filtered.length === 0 && state.panelModes.network === "near") {
     networkFilteredEmpty.textContent = "No network entries near current time.";
+  } else if (networkFilteredEmpty && filtered.length === 0) {
+    if (state.filters.networkStatusBucket === "4xx") {
+      networkFilteredEmpty.textContent = "No 4xx responses found.";
+    } else if (state.filters.networkStatusBucket === "5xx") {
+      networkFilteredEmpty.textContent = "No 5xx responses found.";
+    } else if (state.filters.networkStatusBucket === "errors") {
+      networkFilteredEmpty.textContent = "No failed requests found.";
+    } else {
+      networkFilteredEmpty.textContent = "No network entries match current filter.";
+    }
   } else if (networkFilteredEmpty) {
     networkFilteredEmpty.textContent = "No network entries match current filter.";
   }
@@ -4443,7 +4453,11 @@ function renderNetworkPanel(options = {}) {
           : state.filters.networkStatusBucket === "5xx"
             ? "5xx"
             : "All";
-    networkResultCount.textContent = `Filter: ${modeLabel} · ${statusLabel}\n${totalRequests} total · ${requestCount} filtered · ${displayed} displayed`;
+    const groupSuffix = displayed === requestCount ? "" : ` (${displayed} groups)`;
+    networkResultCount.textContent =
+      `Filter: ${modeLabel} · ${statusLabel}\n` +
+      `${totalRequests} total requests · ${requestCount} matching current filters` +
+      `${groupSuffix}`;
   }
   if (DEBUG_ENABLED) {
     const debugCounts = getNetworkFilterDebugCounts(
@@ -4547,12 +4561,20 @@ function renderConsolePanel(options = {}) {
   consoleFilteredEmpty?.classList.toggle("hidden", filtered.length > 0);
   if (consoleFilteredEmpty && filtered.length === 0 && state.panelModes.console === "near") {
     consoleFilteredEmpty.textContent = "No console entries near current time.";
+  } else if (consoleFilteredEmpty && filtered.length === 0) {
+    if (state.filters.consoleQuick === "errors") {
+      consoleFilteredEmpty.textContent = "No error logs found.";
+    } else if (state.filters.consoleQuick === "warnings") {
+      consoleFilteredEmpty.textContent = "No warning logs found.";
+    } else {
+      consoleFilteredEmpty.textContent = "No console entries match current filter.";
+    }
   } else if (consoleFilteredEmpty) {
     consoleFilteredEmpty.textContent = "No console entries match current filter.";
   }
   if (consoleResultCount) {
-    const resultLabel = filtered.length === 1 ? "result" : "results";
-    consoleResultCount.textContent = `${filtered.length} ${resultLabel}`;
+    consoleResultCount.textContent =
+      `${entries.length} total entries · ${filtered.length} matching current filters`;
   }
   const selectedHidden =
     state.selectedConsoleId &&
