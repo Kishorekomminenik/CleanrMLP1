@@ -61,6 +61,8 @@ const buttons = {
 
 let currentMode = "screenshot";
 let popupHydrated = false;
+let refreshInFlight = false;
+let refreshPending = false;
 const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
 const screenshotHint = document.getElementById("screenshotHint");
@@ -2525,34 +2527,47 @@ function updateStatusUI(state) {
 }
 
 async function refreshStatus() {
-  const response = await send(MSG.GET_STATUS);
-  if (!response.ok) {
-    setStatus(statusElements.download, response.error, "error");
+  if (refreshInFlight) {
+    refreshPending = true;
     return;
   }
-  const nextRecordingState =
-    response.state && response.state.recordingStatus
-      ? response.state.recordingStatus
-      : null;
-  if (nextRecordingState) {
-    recordingLiveState = { state: nextRecordingState };
-  }
-  if (nextRecordingState === "recording" || nextRecordingState === "paused") {
-    const live = await send(MSG.RECORDING_GET_STATE);
-    if (live && live.ok) {
-      recordingLiveState = live;
-      console.log(
-        "[REC][popup] GET_STATE ->",
-        `state=${live.state}`,
-        `hasData=${live.hasData}`,
-        `recorderState=${live.recorderState}`
-      );
+  refreshInFlight = true;
+  try {
+    const response = await send(MSG.GET_STATUS);
+    if (!response.ok) {
+      setStatus(statusElements.download, response.error, "error");
+      return;
     }
-  }
-  updateStatusUI(response.state);
-  await refreshCompletedParts();
-  if (!jszipAvailable) {
-    assertJsZipAvailable();
+    const nextRecordingState =
+      response.state && response.state.recordingStatus
+        ? response.state.recordingStatus
+        : null;
+    if (nextRecordingState) {
+      recordingLiveState = { state: nextRecordingState };
+    }
+    if (nextRecordingState === "recording" || nextRecordingState === "paused") {
+      const live = await send(MSG.RECORDING_GET_STATE);
+      if (live && live.ok) {
+        recordingLiveState = live;
+        console.log(
+          "[REC][popup] GET_STATE ->",
+          `state=${live.state}`,
+          `hasData=${live.hasData}`,
+          `recorderState=${live.recorderState}`
+        );
+      }
+    }
+    updateStatusUI(response.state);
+    await refreshCompletedParts();
+    if (!jszipAvailable) {
+      assertJsZipAvailable();
+    }
+  } finally {
+    refreshInFlight = false;
+    if (refreshPending) {
+      refreshPending = false;
+      void refreshStatus();
+    }
   }
 }
 
