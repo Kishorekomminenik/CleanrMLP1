@@ -7481,7 +7481,10 @@ function resetState() {
   closeScreenshotModal();
 
   eventList.innerHTML = "";
-  detailsBody.textContent = "Select an item";
+  if (detailsBody) {
+    detailsBody.textContent = "Select an item";
+  }
+  }
   if (searchInput) {
     searchInput.value = "";
   }
@@ -7848,6 +7851,12 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && modalState.isOpen) {
     closeScreenshotModal();
   }
+});
+document.addEventListener("dragover", (event) => {
+  event.preventDefault();
+});
+document.addEventListener("drop", (event) => {
+  event.preventDefault();
 });
 if (zipInput) {
   zipInput.addEventListener("change", (event) => {
