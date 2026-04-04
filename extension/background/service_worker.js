@@ -63,6 +63,7 @@ const FULL_CAPTURE_CONFIG = {
 const DEBUG_FULLPAGE = true;
 const DEBUG_LOGS_PAUSE = false;
 const DEBUG_CDP_LOGS = false;
+const DEBUG_PERSIST_LOGS = true;
 const DEBUG_CDP_LOGS_TIMEOUT_MS = 5000;
 let debuggerEventStats = null;
 let debuggerEventCheckTimer = null;
@@ -82,6 +83,16 @@ const EXPORT_BATCH_DEFAULTS = {
   yieldEveryMs: 0,
 };
 const EXTENDED_EXPORT = false; // default minimal team export
+function debugPersistLog(label, payload) {
+  if (!DEBUG_PERSIST_LOGS) {
+    return;
+  }
+  try {
+    console.log(label, payload);
+  } catch (error) {
+    // Ignore logging failures.
+  }
+}
 const EXPORT_SIZE_GUARDS = {
   maxNetworkJsonBytes: 30 * 1024 * 1024,
   maxConsoleJsonBytes: 12 * 1024 * 1024,
@@ -1438,6 +1449,12 @@ async function ensureSessionRecord(tab) {
   captureState.rolloverPending = false;
   captureState.pendingFinalizePart = null;
   captureState.pendingFinalizeStartNewPart = false;
+  debugPersistLog("[LOGS][PERSIST][SESSION_LINK]", {
+    sessionId: captureState.sessionId || null,
+    partId: captureState.partId || null,
+    partNumber: captureState.partNumber || null,
+    session: session ? session.session_id : null,
+  });
   const sessionRecord = {
     sessionId: session.session_id,
     createdAtMs,
@@ -1456,6 +1473,12 @@ async function startNewPart(reason) {
   }
   captureState.partNumber += 1;
   captureState.partId = buildPartId(captureState.sessionId, captureState.partNumber);
+  debugPersistLog("[LOGS][PERSIST][SESSION_LINK]", {
+    sessionId: captureState.sessionId || null,
+    partId: captureState.partId || null,
+    partNumber: captureState.partNumber || null,
+    session: session ? session.session_id : null,
+  });
   captureState.partCreatedAtMs = Date.now();
   captureState.requestsInPart = 0;
   captureState.bytesInPart = 0;
@@ -1567,7 +1590,24 @@ function scheduleFlush() {
 // V1 STABLE: safe flush to avoid data loss on IDB errors.
 // Changes require retesting normal stop and unexpected detach.
 async function flushQueues() {
+  debugPersistLog("[LOGS][PERSIST][FLUSH_START]", {
+    networkQueueLength: networkQueue.length,
+    consoleQueueLength: consoleQueue.length,
+    flushInProgress,
+    controlOpInFlight,
+    controlOpDeferredFlush,
+    captureSessionId: captureState.sessionId || null,
+    capturePartId: captureState.partId || null,
+  });
   if (flushInProgress || controlOpInFlight) {
+    debugPersistLog("[LOGS][PERSIST][FLUSH_SKIPPED]", {
+      reason: flushInProgress ? "flush_in_progress" : "control_op_in_flight",
+      networkQueueLength: networkQueue.length,
+      consoleQueueLength: consoleQueue.length,
+      flushInProgress,
+      controlOpInFlight,
+      controlOpDeferredFlush,
+    });
     return;
   }
   flushInProgress = true;
@@ -1577,10 +1617,23 @@ async function flushQueues() {
     if (networkBatch.length > 0) {
       try {
         await ReproIdb.putMany("network_entries", networkBatch);
+        debugPersistLog("[LOGS][PERSIST][FLUSH_NETWORK_OK]", {
+          count: networkBatch.length,
+          sessionId: networkBatch[0]?.sessionId || null,
+          partId: networkBatch[0]?.partId || null,
+        });
         networkQueue.splice(0, networkBatch.length);
         wroteAny = true;
         flushBackoffMs = 0;
       } catch (error) {
+        debugPersistLog("[LOGS][PERSIST][FLUSH_FAILED]", {
+          storeName: "network_entries",
+          error: error?.message || String(error),
+          networkQueueLength: networkQueue.length,
+          consoleQueueLength: consoleQueue.length,
+          captureSessionId: captureState.sessionId || null,
+          capturePartId: captureState.partId || null,
+        });
         console.warn("[NETWORK][FLUSH_FAILED]", error);
         setStatusMessage(
           "Logging storage issue. Retrying network flush.",
@@ -1595,10 +1648,23 @@ async function flushQueues() {
     if (consoleBatch.length > 0) {
       try {
         await ReproIdb.putMany("console_entries", consoleBatch);
+        debugPersistLog("[LOGS][PERSIST][FLUSH_CONSOLE_OK]", {
+          count: consoleBatch.length,
+          sessionId: consoleBatch[0]?.sessionId || null,
+          partId: consoleBatch[0]?.partId || null,
+        });
         consoleQueue.splice(0, consoleBatch.length);
         wroteAny = true;
         flushBackoffMs = 0;
       } catch (error) {
+        debugPersistLog("[LOGS][PERSIST][FLUSH_FAILED]", {
+          storeName: "console_entries",
+          error: error?.message || String(error),
+          networkQueueLength: networkQueue.length,
+          consoleQueueLength: consoleQueue.length,
+          captureSessionId: captureState.sessionId || null,
+          capturePartId: captureState.partId || null,
+        });
         console.warn("[CONSOLE][FLUSH_FAILED]", error);
         setStatusMessage(
           "Logging storage issue. Retrying console flush.",
@@ -5621,6 +5687,14 @@ async function runEvidenceZipExport(context) {
       (session && session.session_id) ||
       (data.session && data.session.session_id) ||
       null;
+    debugPersistLog("[LOGS][EXPORT][SESSION_KEY]", {
+      exportSessionId: exportSessionId || null,
+      captureSessionId: captureState.sessionId || null,
+      sessionId: session ? session.session_id : null,
+      dataSessionId: data?.session?.session_id || null,
+      capturePartId: captureState.partId || null,
+      usePartExport,
+    });
     const buildPostmanAutomationItem = (entries, sourceName, filters) => {
       let postmanEntries = redactNetworkEntry
         ? entries.map((entry) => redactNetworkEntry(entry))
@@ -5912,6 +5986,12 @@ async function runEvidenceZipExport(context) {
               ? data.exportLimits.maxRequests
               : EXPORT_LIMITS.maxRequests,
           });
+          debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+            storeName: "network_entries",
+            indexName: "partId",
+            keyUsed: data.partId || null,
+            loadedCount: entries.length,
+          });
           const redactedEntries = redactNetworkEntry
             ? entries.map((entry) => redactNetworkEntry(entry))
             : entries;
@@ -5963,6 +6043,12 @@ async function runEvidenceZipExport(context) {
             ? data.exportLimits.maxRequests
             : EXPORT_LIMITS.maxRequests,
         });
+        debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+          storeName: "network_entries",
+          indexName: "partId",
+          keyUsed: data.partId || null,
+          loadedCount: entries.length,
+        });
         const sourceName =
           data.partId ||
           (data.session && data.session.session_id
@@ -5987,6 +6073,12 @@ async function runEvidenceZipExport(context) {
             limit: data.exportLimits
               ? data.exportLimits.maxConsoleEntries
               : EXPORT_LIMITS.maxConsoleEntries,
+          });
+          debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+            storeName: "console_entries",
+            indexName: "partId",
+            keyUsed: data.partId || null,
+            loadedCount: entries.length,
           });
           const redactedEntries = redactConsoleEntry
             ? entries.map((entry) => redactConsoleEntry(entry))
@@ -6058,11 +6150,28 @@ async function runEvidenceZipExport(context) {
                 ? data.exportLimits.maxRequests
                 : EXPORT_LIMITS.maxRequests,
             });
+            debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+              storeName: "network_entries",
+              indexName: "sessionId",
+              keyUsed: exportSessionId,
+              loadedCount: entries.length,
+            });
           } else {
             entries =
               data.networkLogs && Array.isArray(data.networkLogs.entries)
                 ? data.networkLogs.entries
                 : [];
+            debugPersistLog("[LOGS][EXPORT][FALLBACK_MEMORY]", {
+              reason: exportSessionId ? "idb_unavailable" : "missing_session_id",
+              networkMemoryCount:
+                data.networkLogs && Array.isArray(data.networkLogs.entries)
+                  ? data.networkLogs.entries.length
+                  : 0,
+              consoleMemoryCount:
+                data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                  ? data.consoleLogs.entries.length
+                  : 0,
+            });
           }
           const redactedEntries = redactNetworkEntry
             ? entries.map((entry) => redactNetworkEntry(entry))
@@ -6117,11 +6226,28 @@ async function runEvidenceZipExport(context) {
               ? data.exportLimits.maxRequests
               : EXPORT_LIMITS.maxRequests,
           });
+          debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+            storeName: "network_entries",
+            indexName: "sessionId",
+            keyUsed: exportSessionId,
+            loadedCount: entries.length,
+          });
         } else {
           entries =
             data.networkLogs && Array.isArray(data.networkLogs.entries)
               ? data.networkLogs.entries
               : [];
+          debugPersistLog("[LOGS][EXPORT][FALLBACK_MEMORY]", {
+            reason: exportSessionId ? "idb_unavailable" : "missing_session_id",
+            networkMemoryCount:
+              data.networkLogs && Array.isArray(data.networkLogs.entries)
+                ? data.networkLogs.entries.length
+                : 0,
+            consoleMemoryCount:
+              data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                ? data.consoleLogs.entries.length
+                : 0,
+          });
         }
         const sourceName =
           data.partId ||
@@ -6154,11 +6280,28 @@ async function runEvidenceZipExport(context) {
                 ? data.exportLimits.maxConsoleEntries
                 : EXPORT_LIMITS.maxConsoleEntries,
             });
+            debugPersistLog("[LOGS][EXPORT][IDB_COUNTS]", {
+              storeName: "console_entries",
+              indexName: "sessionId",
+              keyUsed: exportSessionId,
+              loadedCount: entries.length,
+            });
           } else {
             entries =
               data.consoleLogs && Array.isArray(data.consoleLogs.entries)
                 ? data.consoleLogs.entries
                 : [];
+            debugPersistLog("[LOGS][EXPORT][FALLBACK_MEMORY]", {
+              reason: exportSessionId ? "idb_unavailable" : "missing_session_id",
+              networkMemoryCount:
+                data.networkLogs && Array.isArray(data.networkLogs.entries)
+                  ? data.networkLogs.entries.length
+                  : 0,
+              consoleMemoryCount:
+                data.consoleLogs && Array.isArray(data.consoleLogs.entries)
+                  ? data.consoleLogs.entries.length
+                  : 0,
+            });
           }
           const redactedEntries = redactConsoleEntry
             ? entries.map((entry) => redactConsoleEntry(entry))
@@ -9896,6 +10039,14 @@ function queueNetworkRecord(record) {
     return;
   }
   networkQueue.push(record);
+  debugPersistLog("[LOGS][PERSIST][NETWORK_QUEUE]", {
+    recordId: record.id || record.requestId || null,
+    sessionId: record.sessionId || null,
+    partId: record.partId || null,
+    queueLength: networkQueue.length,
+    captureSessionId: captureState.sessionId || null,
+    capturePartId: captureState.partId || null,
+  });
   if (networkQueue.length > NETWORK_QUEUE_MAX) {
     const dropped = networkQueue.splice(
       0,
@@ -9932,6 +10083,14 @@ function queueConsoleRecord(record) {
     return;
   }
   consoleQueue.push(record);
+  debugPersistLog("[LOGS][PERSIST][CONSOLE_QUEUE]", {
+    recordId: record.id || null,
+    sessionId: record.sessionId || null,
+    partId: record.partId || null,
+    queueLength: consoleQueue.length,
+    captureSessionId: captureState.sessionId || null,
+    capturePartId: captureState.partId || null,
+  });
   if (consoleQueue.length > CONSOLE_QUEUE_MAX) {
     const dropped = consoleQueue.splice(
       0,
