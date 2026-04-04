@@ -1567,7 +1567,7 @@ function scheduleFlush() {
 // V1 STABLE: safe flush to avoid data loss on IDB errors.
 // Changes require retesting normal stop and unexpected detach.
 async function flushQueues() {
-  if (flushInProgress || controlOperationInFlight) {
+  if (flushInProgress || controlOpInFlight) {
     return;
   }
   flushInProgress = true;
