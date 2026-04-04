@@ -221,6 +221,7 @@ const MSG = {
   CAPTURE_SCREENSHOT: "CAPTURE_SCREENSHOT",
   GET_STATUS: "GET_STATUS",
   GET_CAPABILITIES: "GET_CAPABILITIES",
+  RESET_TO_FRESH_START: "RESET_TO_FRESH_START",
   RESET_SESSION: "RESET_SESSION",
   NETWORK_RESET: "NETWORK_RESET",
 };
@@ -2863,25 +2864,34 @@ async function handleSessionViewer() {
   showToast("Open the exported ZIP and launch viewer/index.html.");
 }
 
-async function handleSessionReset() {
+async function handleFreshStartReset() {
   const confirmed = window.confirm(
     "Reset this session in DebugDuck? Downloaded files will remain on disk."
   );
   if (!confirmed) {
     return;
   }
-  const response = await send(MSG.RESET_SESSION);
+  const response = await send(MSG.RESET_TO_FRESH_START);
   if (!response.ok) {
-    showToast(response.error || "Failed to reset session.", "error");
+    showToast(
+      response.error || "Failed to reset session.",
+      response.code === "reset_blocked" ? "error" : "error"
+    );
     return;
   }
   recordingLiveState = null;
+  recordingStatusMessage = null;
+  chrome.storage.session.remove(["recordingStatusMessage"]);
+  clearRecordingDownloadData();
+  await setLastExportFilename(null);
+  currentMode = "screenshot";
+  setMode(currentMode);
   if (response.state) {
     updateStatusUI(response.state);
+  } else {
+    await refreshStatus();
   }
-  await setLastExportFilename(null);
   showToast("Session reset.");
-  await refreshStatus();
 }
 
 async function handleSessionClearAll() {
@@ -3799,7 +3809,7 @@ function routeAction(action, el) {
       handleSessionViewer();
       break;
     case "launcher:session_reset":
-      handleSessionReset();
+      handleFreshStartReset();
       break;
     case "launcher:session_clear_all":
       handleSessionClearAll();

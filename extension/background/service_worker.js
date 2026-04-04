@@ -11305,6 +11305,33 @@ async function handleMessage(message, sender) {
       await resetNetworkState();
       result = { ok: true, state: getStatusSnapshot() };
       break;
+    case "RESET_TO_FRESH_START":
+      if (exportJob && exportJob.active) {
+        result = {
+          ok: false,
+          code: "reset_blocked",
+          error: "Reset blocked while export/finalizing is active.",
+        };
+        break;
+      }
+      if (session && session.state === "finalizing") {
+        result = {
+          ok: false,
+          code: "reset_blocked",
+          error: "Reset blocked while export/finalizing is active.",
+        };
+        break;
+      }
+      await resetSession();
+      {
+        const clearResult = await clearAllCaptureData();
+        if (!clearResult.ok) {
+          result = { ok: false, error: clearResult.error };
+          break;
+        }
+      }
+      result = { ok: true, state: getStatusSnapshot() };
+      break;
     case "RESET_SESSION":
       await resetSession();
       result = { ok: true, state: getStatusSnapshot() };
