@@ -17,6 +17,8 @@ const helpCloseButton = document.getElementById("help_close");
 const launcherHelpButton = document.getElementById("launcher_help_button");
 const launcherHelpModal = document.getElementById("launcher_help_modal");
 const launcherHelpClose = document.getElementById("launcher_help_close");
+const launcherCard = document.querySelector(".launcher-card");
+const launcherLoading = document.getElementById("launcher_loading");
 const launcherSessionStatus = document.getElementById("launcher_session_status");
 const launcherSessionIndicator = document.getElementById("launcher_session_indicator");
 const launcherSessionLabel = document.getElementById("launcher_session_label");
@@ -58,6 +60,7 @@ const buttons = {
 };
 
 let currentMode = "screenshot";
+let popupHydrated = false;
 const redactionToggle = document.getElementById("redactionToggle");
 const redactionStatus = document.getElementById("redactionStatus");
 const screenshotHint = document.getElementById("screenshotHint");
@@ -2215,7 +2218,7 @@ function updateStatusUI(state) {
   let sessionState = hasLiveRecording
     ? recordingLiveState.state
     : sessionStateRaw || (hasLiveNetwork ? "capturing" : "idle");
-  if (state.logsState === "paused") {
+  if (state.logsState === "paused" && !hasLiveRecording) {
     sessionState = "paused";
   }
   const sessionActive =
@@ -2527,17 +2530,24 @@ async function refreshStatus() {
     setStatus(statusElements.download, response.error, "error");
     return;
   }
-  const live = await send(MSG.RECORDING_GET_STATE);
-  if (live && live.ok) {
-    recordingLiveState = live;
-    console.log(
-      "[REC][popup] GET_STATE ->",
-      `state=${live.state}`,
-      `hasData=${live.hasData}`,
-      `recorderState=${live.recorderState}`
-    );
-  } else {
-    recordingLiveState = null;
+  const nextRecordingState =
+    response.state && response.state.recordingStatus
+      ? response.state.recordingStatus
+      : null;
+  if (nextRecordingState) {
+    recordingLiveState = { state: nextRecordingState };
+  }
+  if (nextRecordingState === "recording" || nextRecordingState === "paused") {
+    const live = await send(MSG.RECORDING_GET_STATE);
+    if (live && live.ok) {
+      recordingLiveState = live;
+      console.log(
+        "[REC][popup] GET_STATE ->",
+        `state=${live.state}`,
+        `hasData=${live.hasData}`,
+        `recorderState=${live.recorderState}`
+      );
+    }
   }
   updateStatusUI(response.state);
   await refreshCompletedParts();
@@ -2653,7 +2663,21 @@ async function handleSessionPause() {
     return;
   }
   if (statusResponse.state.recordingStatus === "recording") {
-    await handleRecordingPause({ force: true });
+    const pauseResult = await send(MSG.RECORDING_PAUSE);
+    if (!pauseResult.ok) {
+      showToast(pauseResult.error || "Failed to pause recording.", "error");
+      await refreshStatus();
+      return;
+    }
+    const st = await send(MSG.RECORDING_GET_STATE);
+    if (st && st.ok) {
+      recordingLiveState = st;
+    }
+    setRecordingButtons({ recordingStatus: st?.state || "idle" });
+    if (st?.state !== "paused") {
+      await refreshStatus();
+      return;
+    }
   }
   if (statusResponse.state.networkActive) {
     const logsPause = await send(MSG.LOGS_PAUSE);
@@ -2673,7 +2697,21 @@ async function handleSessionResume() {
     return;
   }
   if (statusResponse.state.recordingStatus === "paused") {
-    await handleRecordingResume({ force: true });
+    const resumeResult = await send(MSG.RECORDING_RESUME);
+    if (!resumeResult.ok) {
+      showToast(resumeResult.error || "Failed to resume recording.", "error");
+      await refreshStatus();
+      return;
+    }
+    const st = await send(MSG.RECORDING_GET_STATE);
+    if (st && st.ok) {
+      recordingLiveState = st;
+    }
+    setRecordingButtons({ recordingStatus: st?.state || "idle" });
+    if (st?.state !== "recording") {
+      await refreshStatus();
+      return;
+    }
   }
   if (statusResponse.state.networkActive) {
     const logsResume = await send(MSG.LOGS_RESUME);
@@ -4294,6 +4332,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function initPopup() {
   console.log("[DebugDuck Popup] DOM ready");
   assertRequiredPopupElements();
+  if (launcherCard) {
+    launcherCard.classList.add("is-loading");
+  }
+  if (launcherLoading) {
+    launcherLoading.classList.remove("is-hidden");
+  }
+  if (launcherSessionStatus) {
+    launcherSessionStatus.classList.add("is-hidden");
+  }
+  if (launcherSessionMessage) {
+    launcherSessionMessage.textContent = "Loading session state…";
+  }
   const manifest = chrome.runtime.getManifest();
   const appName = manifest && manifest.name ? manifest.name : "DebugDuck";
   const headerText = `${appName} — ${APP_TAGLINE}`;
@@ -4306,9 +4356,6 @@ async function initPopup() {
   }
   document.title = headerText;
   assertJsZipAvailable();
-  const lastMode = await loadLastSelectedMode();
-  currentMode = lastMode;
-  setMode(currentMode);
   await loadLastExportFilename();
   await loadRedactionSetting();
   await loadCaptureSettings();
@@ -4325,6 +4372,21 @@ async function initPopup() {
     // Ignore session storage failures.
   }
   await refreshStatus();
+  const lastMode = await loadLastSelectedMode();
+  if (
+    !launcherSessionStatus ||
+    launcherSessionStatus.classList.contains("is-hidden")
+  ) {
+    currentMode = lastMode;
+    setMode(currentMode);
+  }
+  popupHydrated = true;
+  if (launcherCard) {
+    launcherCard.classList.remove("is-loading");
+  }
+  if (launcherLoading) {
+    launcherLoading.classList.add("is-hidden");
+  }
   setInterval(refreshStatus, 1000);
   if (versionBadge) {
     versionBadge.textContent = APP_VERSION;
