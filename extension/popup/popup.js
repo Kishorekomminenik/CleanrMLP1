@@ -2864,20 +2864,14 @@ async function handleSessionViewer() {
   showToast("Open the exported ZIP and launch viewer/index.html.");
 }
 
-async function handleFreshStartReset() {
-  const confirmed = window.confirm(
-    "Start fresh? This clears session data and logs. Downloaded files remain on disk."
-  );
-  if (!confirmed) {
-    return;
-  }
+async function runFreshStartReset() {
   const response = await send(MSG.RESET_TO_FRESH_START);
   if (!response.ok) {
     showToast(
-      response.error || "Failed to reset session.",
+      response.error || "Failed to start fresh.",
       response.code === "reset_blocked" ? "error" : "error"
     );
-    return;
+    return false;
   }
   recordingLiveState = null;
   recordingStatusMessage = null;
@@ -2891,24 +2885,22 @@ async function handleFreshStartReset() {
   } else {
     await refreshStatus();
   }
-  showToast("Session reset.");
+  showToast("Fresh start ready.");
+  return true;
 }
 
-async function handleSessionClearAll() {
+async function handleFreshStartReset() {
   const confirmed = window.confirm(
-    "Clear captured session evidence? Downloaded files will remain on disk."
+    "Start fresh? This clears session data and logs. Downloaded files remain on disk."
   );
   if (!confirmed) {
     return;
   }
-  const response = await send("CLEAR_ALL_CAPTURE_DATA");
-  if (!response.ok) {
-    showToast(response.error || "Failed to clear session data.", "error");
-    return;
-  }
-  await refreshCompletedParts();
-  await refreshStatus();
-  showToast("Session evidence cleared.");
+  await runFreshStartReset();
+}
+
+async function handleSessionClearAll() {
+  return handleFreshStartReset();
 }
 
 function beginCaptureAfterDismissal(mode, payload) {
@@ -3484,23 +3476,12 @@ async function handleDeletePart(partId, partNumber) {
 async function handleClearAll() {
   hideStorageLimitModal();
   const confirmClear = window.confirm(
-    "Clear all locally stored capture data (all parts)? This cannot be undone."
+    "Start fresh? This clears session data and logs. Downloaded files remain on disk."
   );
   if (!confirmClear) {
     return;
   }
-  const response = await send("CLEAR_ALL_CAPTURE_DATA");
-  if (!response.ok) {
-    setStatus(
-      statusElements.message,
-      response.error || "Failed to clear data.",
-      "error"
-    );
-    return;
-  }
-  await refreshCompletedParts();
-  await refreshStatus();
-  setStatus(statusElements.message, "Cleared local capture data.", "success");
+  await runFreshStartReset();
 }
 
 async function handleRecordingDownload() {
@@ -3812,7 +3793,7 @@ function routeAction(action, el) {
       handleFreshStartReset();
       break;
     case "launcher:session_clear_all":
-      handleSessionClearAll();
+      handleFreshStartReset();
       break;
     case "launcher:record_screen":
       handleOpenRecordingPanel();
