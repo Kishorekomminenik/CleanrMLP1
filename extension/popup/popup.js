@@ -2866,7 +2866,7 @@ async function handleSessionViewer() {
 
 async function handleFreshStartReset() {
   const confirmed = window.confirm(
-    "Reset this session in DebugDuck? Downloaded files will remain on disk."
+    "Start fresh? This clears session data and logs. Downloaded files remain on disk."
   );
   if (!confirmed) {
     return;
