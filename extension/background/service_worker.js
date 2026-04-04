@@ -4121,6 +4121,14 @@ function syncRecordingState(snapshot, context = {}) {
     }
     markSessionStopped();
   }
+  if (
+    publicState === "idle" &&
+    session &&
+    session.state === "finalizing" &&
+    !state.network.active
+  ) {
+    markSessionStopped();
+  }
 }
 
 function normalizeHeaders(headers) {
