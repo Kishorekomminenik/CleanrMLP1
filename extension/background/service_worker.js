@@ -62,7 +62,7 @@ const FULL_CAPTURE_CONFIG = {
 };
 const DEBUG_FULLPAGE = true;
 const DEBUG_LOGS_PAUSE = false;
-const DEBUG_CDP_LOGS = false;
+const DEBUG_CDP_LOGS = true;
 const DEBUG_PERSIST_LOGS = true;
 const DEBUG_CDP_LOGS_TIMEOUT_MS = 5000;
 let debuggerEventStats = null;
@@ -7020,7 +7020,14 @@ function attachDebugger(tabId) {
   return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION, () => {
       if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+        const message = chrome.runtime.lastError.message;
+        if (DEBUG_CDP_LOGS) {
+          console.warn("[LOGS][CDP][ATTACH_LAST_ERROR]", {
+            tabId,
+            error: message,
+          });
+        }
+        reject(new Error(message));
         return;
       }
       resolve();
@@ -8993,6 +9000,18 @@ async function startNetworkCapture(filters, options = {}) {
 
   tab = await getActiveTab();
   ensureTabIsCapturable(tab);
+  if (DEBUG_CDP_LOGS) {
+    console.log("[LOGS][CDP][ATTACH_CONTEXT]", {
+      tabId: tab && tab.id ? tab.id : null,
+      url: tab && tab.url ? tab.url : "",
+      sessionState: session ? session.state : null,
+      sessionMode: session ? session.mode : null,
+      recordingState: recordingController.state || state.recording.status || null,
+      logsState: getLogsCaptureState(),
+      networkActive: state.network.active,
+      consoleActive: state.console.active,
+    });
+  }
 
   const allowExistingSession = options.allowExistingSession === true;
   if (!session) {
@@ -9044,7 +9063,26 @@ async function startNetworkCapture(filters, options = {}) {
   const attemptAttach = async (label) => {
     attachAttempts += 1;
     if (DEBUG_CDP_LOGS) {
-      console.log("[LOGS][CDP][ATTACH_START]", { tabId: tab.id, label });
+      console.log("[LOGS][CDP][ATTACH_START]", {
+        tabId: tab.id,
+        label,
+        url: tab.url || "",
+        recordingState: recordingController.state || state.recording.status || "idle",
+        recordingStatus: state.recording.status || "idle",
+        sessionState: session ? session.state : null,
+        captureState: {
+          sessionId: captureState.sessionId || null,
+          partId: captureState.partId || null,
+          logsState: captureState.logsState || null,
+        },
+        networkState: {
+          active: state.network.active,
+          captureEnabled: state.network.captureEnabled,
+        },
+        consoleState: {
+          active: state.console.active,
+        },
+      });
     }
     await attachDebugger(tab.id);
     attached = true;
@@ -9076,7 +9114,18 @@ async function startNetworkCapture(filters, options = {}) {
   } catch (error) {
     const message = error.message || String(error);
     if (DEBUG_CDP_LOGS) {
-      console.warn("[LOGS][CDP][ATTACH_FAILED]", { tabId: tab.id, error: message });
+      console.warn("[LOGS][CDP][ATTACH_FAILED]", {
+        tabId: tab.id,
+        error: message,
+        recordingState: recordingController.state || state.recording.status || "idle",
+        recordingStatus: state.recording.status || "idle",
+        sessionState: session ? session.state : null,
+        captureState: {
+          sessionId: captureState.sessionId || null,
+          partId: captureState.partId || null,
+          logsState: captureState.logsState || null,
+        },
+      });
     }
     await delay(200);
     try {
@@ -9088,6 +9137,14 @@ async function startNetworkCapture(filters, options = {}) {
           tabId: tab.id,
           error: retryMessage,
           attempts: attachAttempts,
+          recordingState: recordingController.state || state.recording.status || "idle",
+          recordingStatus: state.recording.status || "idle",
+          sessionState: session ? session.state : null,
+          captureState: {
+            sessionId: captureState.sessionId || null,
+            partId: captureState.partId || null,
+            logsState: captureState.logsState || null,
+          },
         });
       }
       addDiagnostic("error", "Debugger attach failed.", {
@@ -9680,6 +9737,19 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId !== state.network.tabId) {
     return;
+  }
+  if (DEBUG_CDP_LOGS) {
+    console.warn("[LOGS][CDP][DETACH]", {
+      tabId: source.tabId || null,
+      reason,
+      recordingState: recordingController.state || state.recording.status || "idle",
+      sessionState: session ? session.state : null,
+      captureState: {
+        sessionId: captureState.sessionId || null,
+        partId: captureState.partId || null,
+        logsState: captureState.logsState || null,
+      },
+    });
   }
   state.network.active = false;
   setNetworkCaptureEnabled(false);
