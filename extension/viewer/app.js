@@ -1,3 +1,20 @@
+const DEBUG_VIEWER_LOADER_LOGS = true;
+const debugViewerLoaderLog = (label, payload = null) => {
+  if (!DEBUG_VIEWER_LOADER_LOGS) {
+    return;
+  }
+  try {
+    if (payload === null) {
+      console.log(label);
+    } else {
+      console.log(label, payload);
+    }
+  } catch (error) {
+    // ignore logging failures
+  }
+};
+debugViewerLoaderLog("[Viewer Loader] app.js start");
+
 const openZipBtn = document.getElementById("openZipBtn");
 const openAnotherBtn = document.getElementById("openAnotherBtn");
 const resetBtn = document.getElementById("resetBtn");
@@ -62,6 +79,17 @@ const filterConsole = document.getElementById("filterConsole");
 const filterScreenshots = document.getElementById("filterScreenshots");
 const filterErrors = document.getElementById("filterErrors");
 const searchInput = document.getElementById("searchInput");
+debugViewerLoaderLog("[Viewer Loader] DOM refs", {
+  openUnifiedBtn: Boolean(openUnifiedBtn),
+  openSessionFolderBtn: Boolean(openSessionFolderBtn),
+  openZipBtn: Boolean(openZipBtn),
+  zipInput: Boolean(zipInput),
+  sessionAnyInput: Boolean(sessionAnyInput),
+  sessionFolderInput: Boolean(sessionFolderInput),
+  headerActions: Boolean(headerActions),
+  dropZone: Boolean(dropZone),
+  loaderPanel: Boolean(loaderPanel),
+});
 const summaryPanel = document.getElementById("summaryPanel");
 const summaryNetworkRequests = document.getElementById("summaryNetworkRequests");
 const summaryNetworkFailures = document.getElementById("summaryNetworkFailures");
@@ -1670,10 +1698,15 @@ function setHeaderActionsVisible(visible) {
   if (!headerActions) {
     return;
   }
+  debugViewerLoaderLog("[Viewer Loader] setHeaderActionsVisible", { visible });
   headerActions.classList.toggle("hidden", !visible);
 }
 
 function setZipControlsAvailable(enabled, reason = "") {
+  debugViewerLoaderLog("[Viewer Loader] setZipControlsAvailable", {
+    enabled,
+    reason,
+  });
   if (openZipBtn) {
     openZipBtn.style.display = enabled ? "" : "none";
     openZipBtn.disabled = !enabled;
@@ -7323,6 +7356,15 @@ async function loadSessionPackage(input, options = {}) {
 
 async function handlePackageFiles(files, label) {
   const list = Array.from(files || []);
+  debugViewerLoaderLog("[Viewer Loader] handlePackageFiles", {
+    label,
+    fileCount: list.length,
+    hasZip: list.some((file) => /\.zip$/i.test(file.name || "")),
+    hasSessionJson: list.some((file) =>
+      /session\.json$/i.test(file.name || file.webkitRelativePath || "")
+    ),
+    hasRelativePath: list.some((file) => Boolean(file.webkitRelativePath)),
+  });
   if (!list.length) {
     return false;
   }
@@ -7376,14 +7418,22 @@ async function handlePackageFiles(files, label) {
 }
 
 async function loadZip(file) {
+  debugViewerLoaderLog("[Viewer Loader] loadZip", {
+    name: file?.name || null,
+    size: file?.size || null,
+  });
   return loadSessionPackage({ kind: "zip-file", file }, { label: file.name });
 }
 
 async function tryLoadPackageSession() {
+  debugViewerLoaderLog("[Viewer Loader] tryLoadPackageSession", {
+    autoLoad: false,
+  });
   return false;
 }
 
 function resetState() {
+  debugViewerLoaderLog("[Viewer Loader] resetState");
   state.pkg = null;
   state.session = null;
   state.integrityReport = null;
@@ -7695,40 +7745,52 @@ function clearAllLoaderInputs() {
 
 if (openZipBtn && zipInput) {
   openZipBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Open Evidence ZIP");
     clearAllLoaderInputs();
     zipInput.click();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Open Evidence ZIP");
 }
 if (openUnifiedBtn && sessionAnyInput) {
   openUnifiedBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Open ZIP (unified)");
     clearAllLoaderInputs();
     sessionAnyInput.click();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Open ZIP (unified)");
 }
 if (openSessionBtn && sessionFileInput) {
   openSessionBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Open session.json");
     clearAllLoaderInputs();
     sessionFileInput.click();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Open session.json");
 }
 if (openSessionFolderBtn && sessionFolderInput) {
   openSessionFolderBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Open Folder");
     clearAllLoaderInputs();
     sessionFolderInput.click();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Open Folder");
 }
 if (openAnotherBtn && zipInput) {
   openAnotherBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Open another ZIP");
     resetState();
     clearAllLoaderInputs();
     zipInput.click();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Open another ZIP");
 }
 if (resetBtn) {
   resetBtn.addEventListener("click", () => {
+    debugViewerLoaderLog("[Viewer Loader] click Reset");
     resetState();
     clearAllLoaderInputs();
   });
+  debugViewerLoaderLog("[Viewer Loader] bound Reset");
 }
 if (screenshotZoomInBtn) {
   screenshotZoomInBtn.addEventListener("click", () => {
@@ -7857,17 +7919,26 @@ document.addEventListener("dragover", (event) => {
 });
 document.addEventListener("drop", (event) => {
   event.preventDefault();
+  debugViewerLoaderLog("[Viewer Loader] document drop prevented", {
+    target: event.target?.tagName || null,
+  });
 });
+debugViewerLoaderLog("[Viewer Loader] bound document dragover/drop");
 if (zipInput) {
   zipInput.addEventListener("change", (event) => {
     const file = event.target.files[0];
     if (file) {
+      debugViewerLoaderLog("[Viewer Loader] zipInput change", {
+        name: file.name,
+        size: file.size,
+      });
       resetState();
       loadZip(file).catch((error) => {
         showError(error?.message || "Failed to load ZIP.");
       });
     }
   });
+  debugViewerLoaderLog("[Viewer Loader] bound zipInput change");
 }
 
 if (sessionAnyInput) {
@@ -7876,9 +7947,14 @@ if (sessionAnyInput) {
     if (!files.length) {
       return;
     }
+    debugViewerLoaderLog("[Viewer Loader] sessionAnyInput change", {
+      fileCount: files.length,
+      firstName: files[0]?.name || null,
+    });
     resetState();
     await handlePackageFiles(files, "selected files");
   });
+  debugViewerLoaderLog("[Viewer Loader] bound sessionAnyInput change");
 }
 
 if (dropZone) {
@@ -7893,6 +7969,9 @@ if (dropZone) {
     event.preventDefault();
     dropZone.classList.remove("active");
     const files = Array.from(event.dataTransfer?.files || []);
+    debugViewerLoaderLog("[Viewer Loader] dropZone drop", {
+      fileCount: files.length,
+    });
     if (!files.length) {
       showError("No files were dropped.");
       return;
@@ -7900,6 +7979,7 @@ if (dropZone) {
     resetState();
     await handlePackageFiles(files, "dropped files");
   });
+  debugViewerLoaderLog("[Viewer Loader] bound dropZone drag/drop");
 }
 
 if (sessionFileInput) {
@@ -7908,6 +7988,10 @@ if (sessionFileInput) {
     if (!file) {
       return;
     }
+    debugViewerLoaderLog("[Viewer Loader] sessionFileInput change", {
+      name: file.name,
+      size: file.size,
+    });
     resetState();
     const loaded = await loadSessionPackage(
       { kind: "session-json-file", file },
@@ -7924,6 +8008,7 @@ if (sessionFileInput) {
       );
     }
   });
+  debugViewerLoaderLog("[Viewer Loader] bound sessionFileInput change");
 }
 
 if (sessionFolderInput) {
@@ -7932,14 +8017,22 @@ if (sessionFolderInput) {
     if (!files.length) {
       return;
     }
+    debugViewerLoaderLog("[Viewer Loader] sessionFolderInput change", {
+      fileCount: files.length,
+      firstName: files[0]?.name || null,
+    });
     resetState();
     await handlePackageFiles(files, "session folder");
   });
+  debugViewerLoaderLog("[Viewer Loader] bound sessionFolderInput change");
 }
 
 tryLoadPackageSession()
   .then((loaded) => {
     if (!loaded) {
+      debugViewerLoaderLog("[Viewer Loader] tryLoadPackageSession resolved", {
+        loaded,
+      });
       setHeaderActionsVisible(true);
       if (openSessionBtn) {
         openSessionBtn.style.display = "";
