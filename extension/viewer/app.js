@@ -7870,6 +7870,7 @@ if (screenshotPreview) {
   });
 }
 console.log("[DebugDuck Viewer] bind controls start");
+setHeaderActionsVisible(true);
 const missingRequiredElements = [
   ["#timeline", timeline],
   ["#filterMarkers", filterMarkers],
@@ -7881,14 +7882,9 @@ const missingRequiredElements = [
 ].filter(([, el]) => !el);
 if (missingRequiredElements.length) {
   const missingSelectors = missingRequiredElements.map(([selector]) => selector);
-  console.error(
-    "[DebugDuck Viewer] Missing required elements:",
+  console.warn(
+    "[DebugDuck Viewer] Missing optional elements:",
     missingSelectors.join(", ")
-  );
-  throw new Error(
-    `DebugDuck viewer boot failed: missing required elements: ${missingSelectors.join(
-      ", "
-    )}`
   );
 }
 
