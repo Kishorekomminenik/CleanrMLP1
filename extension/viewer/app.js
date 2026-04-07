@@ -7871,22 +7871,6 @@ if (screenshotPreview) {
 }
 console.log("[DebugDuck Viewer] bind controls start");
 setHeaderActionsVisible(true);
-const missingRequiredElements = [
-  ["#timeline", timeline],
-  ["#filterMarkers", filterMarkers],
-  ["#filterNetwork", filterNetwork],
-  ["#filterConsole", filterConsole],
-  ["#filterScreenshots", filterScreenshots],
-  ["#filterErrors", filterErrors],
-  ["#searchInput", searchInput],
-].filter(([, el]) => !el);
-if (missingRequiredElements.length) {
-  const missingSelectors = missingRequiredElements.map(([selector]) => selector);
-  console.warn(
-    "[DebugDuck Viewer] Missing optional elements:",
-    missingSelectors.join(", ")
-  );
-}
 
 window.addEventListener("mousemove", (event) => {
   if (!modalState.dragging) {
@@ -8132,6 +8116,23 @@ if (errorOnlyToggle) {
     }
     updateCurrentTimeContext();
   });
+}
+
+const missingRequiredElements = [
+  ["#timeline", timeline],
+  ["#filterMarkers", filterMarkers],
+  ["#filterNetwork", filterNetwork],
+  ["#filterConsole", filterConsole],
+  ["#filterScreenshots", filterScreenshots],
+  ["#filterErrors", filterErrors],
+  ["#searchInput", searchInput],
+].filter(([, el]) => !el);
+if (missingRequiredElements.length) {
+  const missingSelectors = missingRequiredElements.map(([selector]) => selector);
+  console.warn(
+    "[DebugDuck Viewer] Missing optional elements:",
+    missingSelectors.join(", ")
+  );
 }
 
 if (followPlayheadToggle) {
