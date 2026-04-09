@@ -97,6 +97,7 @@ const partProgressStatus = document.getElementById("status_current_part");
 const exportQueueStatus = document.getElementById("status_export_queue");
 const autoDownloadStatusLine = document.getElementById("status_auto_download");
 const downloadHelp = document.getElementById("status_download_help");
+const debugLogBufferEl = document.getElementById("debug_log_buffer");
 const completedPartsList = document.getElementById("completed_parts_list");
 const completedPartsEmpty = document.getElementById("completed_parts_empty");
 const exportProgressStatus = document.getElementById("status_export_progress");
@@ -135,6 +136,7 @@ let recordingObjectUrl = null;
 let recordingMimeType = "video/webm";
 let recordingCapturedAt = null;
 let recordingStopReason = null;
+let debugLogPollingTimer = null;
 let recordingSegmentMode = false;
 let recordingLiveState = null;
 let recordingState = "idle";
@@ -2527,6 +2529,37 @@ function updateStatusUI(state) {
   }
 }
 
+function formatDebugLogEntry(entry) {
+  if (!entry) {
+    return "";
+  }
+  const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "-";
+  const message = entry.message || "";
+  const payload =
+    entry.payload && typeof entry.payload === "object"
+      ? JSON.stringify(entry.payload)
+      : entry.payload
+        ? String(entry.payload)
+        : "";
+  return payload ? `${ts} ${message} ${payload}` : `${ts} ${message}`;
+}
+
+function updateDebugLogBuffer(state) {
+  if (!debugLogBufferEl || !state) {
+    return;
+  }
+  if (debugLogPanel && debugLogPanel.classList.contains("hidden")) {
+    debugLogPanel.classList.remove("hidden");
+  }
+  const entries = Array.isArray(state.debugLogs) ? state.debugLogs : [];
+  if (!entries.length) {
+    debugLogBufferEl.textContent = "No debug logs yet.";
+    return;
+  }
+  const lines = entries.map(formatDebugLogEntry);
+  debugLogBufferEl.textContent = lines.join("\n");
+}
+
 async function refreshStatus() {
   if (refreshInFlight) {
     refreshPending = true;
@@ -2559,6 +2592,7 @@ async function refreshStatus() {
       }
     }
     updateStatusUI(response.state);
+    updateDebugLogBuffer(response.state);
     await refreshCompletedParts();
     if (!jszipAvailable) {
       assertJsZipAvailable();

@@ -64,10 +64,52 @@ const DEBUG_FULLPAGE = true;
 const DEBUG_LOGS_PAUSE = false;
 const DEBUG_CDP_LOGS = true;
 const DEBUG_PERSIST_LOGS = true;
+const DEBUG_LOG_BUFFER_MAX = 200;
+const DEBUG_LOG_BUFFER_PREFIX = "[DD][DBG]";
+let debugLogBuffer = [];
+
+function pushDebugLog(message, payload = null) {
+  if (!DEBUG_PERSIST_LOGS) {
+    return;
+  }
+  const entry = {
+    ts: Date.now(),
+    message: message || "",
+    payload: payload ?? null,
+  };
+  debugLogBuffer.push(entry);
+  if (debugLogBuffer.length > DEBUG_LOG_BUFFER_MAX) {
+    debugLogBuffer.splice(0, debugLogBuffer.length - DEBUG_LOG_BUFFER_MAX);
+  }
+}
+
+function appendDebugLog(message, payload = null) {
+  const fullMessage = message
+    ? `${DEBUG_LOG_BUFFER_PREFIX} ${message}`
+    : DEBUG_LOG_BUFFER_PREFIX;
+  pushDebugLog(fullMessage, payload);
+}
+
+function appendCdpDebugLog(label, payload) {
+  if (!DEBUG_CDP_LOGS) {
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  const entry = `${timestamp} ${label}${
+    payload ? ` ${JSON.stringify(payload)}` : ""
+  }`;
+  pushDebugLog(entry);
+  try {
+    chrome.storage.session.set({ debugLogBuffer });
+  } catch (error) {
+    // ignore storage failures
+  }
+}
 const DEBUG_CDP_LOGS_TIMEOUT_MS = 5000;
 console.log("[DD][SW] CDP diagnostics build loaded.", {
   DEBUG_CDP_LOGS,
 });
+appendDebugLog("[DD][SW] CDP diagnostics build loaded.", { DEBUG_CDP_LOGS });
 let debuggerEventStats = null;
 let debuggerEventCheckTimer = null;
 const TRUNCATION_SUFFIX = "...[truncated]";
@@ -3980,6 +4022,9 @@ function getStatusSnapshot() {
     recordingStatus: state.recording.status,
     recordingCapturedAt: state.recording.capturedAt,
     networkActive: state.network.active,
+    debugLogs: DEBUG_PERSIST_LOGS
+      ? debugLogBuffer.slice(-DEBUG_LOG_BUFFER_MAX)
+      : [],
     logsState: getLogsCaptureState(),
     networkCount: captureState.sessionId
       ? captureState.totalRequests
@@ -7025,10 +7070,9 @@ function attachDebugger(tabId) {
       if (chrome.runtime.lastError) {
         const message = chrome.runtime.lastError.message;
         if (DEBUG_CDP_LOGS) {
-          console.warn("[LOGS][CDP][ATTACH_LAST_ERROR]", {
-            tabId,
-            error: message,
-          });
+          const attachLastErrorPayload = { tabId, error: message };
+          console.warn("[LOGS][CDP][ATTACH_LAST_ERROR]", attachLastErrorPayload);
+          appendCdpDebugLog("[LOGS][CDP][ATTACH_LAST_ERROR]", attachLastErrorPayload);
         }
         reject(new Error(message));
         return;
@@ -9066,7 +9110,7 @@ async function startNetworkCapture(filters, options = {}) {
   const attemptAttach = async (label) => {
     attachAttempts += 1;
     if (DEBUG_CDP_LOGS) {
-      console.log("[LOGS][CDP][ATTACH_START]", {
+      const attachPayload = {
         tabId: tab.id,
         label,
         url: tab.url || "",
@@ -9085,12 +9129,16 @@ async function startNetworkCapture(filters, options = {}) {
         consoleState: {
           active: state.console.active,
         },
-      });
+      };
+      console.log("[LOGS][CDP][ATTACH_START]", attachPayload);
+      appendCdpDebugLog("[LOGS][CDP][ATTACH_START]", attachPayload);
     }
     await attachDebugger(tab.id);
     attached = true;
     if (DEBUG_CDP_LOGS) {
-      console.log("[LOGS][CDP][ATTACH_OK]", { tabId: tab.id, url: tab.url || "" });
+      const attachOkPayload = { tabId: tab.id, url: tab.url || "" };
+      console.log("[LOGS][CDP][ATTACH_OK]", attachOkPayload);
+      appendCdpDebugLog("[LOGS][CDP][ATTACH_OK]", attachOkPayload);
       debuggerEventStats = {
         tabId: tab.id,
         startMs: Date.now(),
@@ -9129,27 +9177,42 @@ async function startNetworkCapture(filters, options = {}) {
           logsState: captureState.logsState || null,
         },
       });
+      const attachFailedPayload = {
+        tabId: tab.id,
+        error: message,
+        recordingState: recordingController.state || state.recording.status || "idle",
+        recordingStatus: state.recording.status || "idle",
+        sessionState: session ? session.state : null,
+        captureState: {
+          sessionId: captureState.sessionId || null,
+          partId: captureState.partId || null,
+          logsState: captureState.logsState || null,
+        },
+      };
+      appendCdpDebugLog("[LOGS][CDP][ATTACH_FAILED]", attachFailedPayload);
     }
     await delay(200);
     try {
       await attemptAttach("retry");
     } catch (retryError) {
       const retryMessage = retryError.message || String(retryError);
-      if (DEBUG_CDP_LOGS) {
-        console.warn("[LOGS][CDP][ATTACH_FAILED_FINAL]", {
-          tabId: tab.id,
-          error: retryMessage,
-          attempts: attachAttempts,
-          recordingState: recordingController.state || state.recording.status || "idle",
-          recordingStatus: state.recording.status || "idle",
-          sessionState: session ? session.state : null,
-          captureState: {
-            sessionId: captureState.sessionId || null,
-            partId: captureState.partId || null,
-            logsState: captureState.logsState || null,
-          },
-        });
-      }
+    if (DEBUG_CDP_LOGS) {
+      const attachFailedFinalPayload = {
+        tabId: tab.id,
+        error: retryMessage,
+        attempts: attachAttempts,
+        recordingState: recordingController.state || state.recording.status || "idle",
+        recordingStatus: state.recording.status || "idle",
+        sessionState: session ? session.state : null,
+        captureState: {
+          sessionId: captureState.sessionId || null,
+          partId: captureState.partId || null,
+          logsState: captureState.logsState || null,
+        },
+      };
+      console.warn("[LOGS][CDP][ATTACH_FAILED_FINAL]", attachFailedFinalPayload);
+      appendCdpDebugLog("[LOGS][CDP][ATTACH_FAILED_FINAL]", attachFailedFinalPayload);
+    }
       addDiagnostic("error", "Debugger attach failed.", {
         error: retryMessage,
         attempts: attachAttempts,
@@ -9738,6 +9801,25 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // V1 STABLE: detach finalization must preserve queued logs.
 chrome.debugger.onDetach.addListener((source, reason) => {
+  appendCdpDebugLog("[LOGS][CDP][DETACH]", {
+    tabId: source.tabId || null,
+    reason,
+    recordingState: recordingController.state || state.recording.status || "idle",
+    recordingStatus: state.recording.status || "idle",
+    sessionState: session ? session.state : null,
+    captureState: {
+      sessionId: captureState.sessionId || null,
+      partId: captureState.partId || null,
+      logsState: captureState.logsState || null,
+    },
+    networkState: {
+      active: state.network.active,
+      captureEnabled: state.network.captureEnabled,
+    },
+    consoleState: {
+      active: state.console.active,
+    },
+  });
   if (source.tabId !== state.network.tabId) {
     return;
   }
