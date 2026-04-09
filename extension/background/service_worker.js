@@ -65,6 +65,9 @@ const DEBUG_LOGS_PAUSE = false;
 const DEBUG_CDP_LOGS = true;
 const DEBUG_PERSIST_LOGS = true;
 const DEBUG_CDP_LOGS_TIMEOUT_MS = 5000;
+console.log("[DD][SW] CDP diagnostics build loaded.", {
+  DEBUG_CDP_LOGS,
+});
 let debuggerEventStats = null;
 let debuggerEventCheckTimer = null;
 const TRUNCATION_SUFFIX = "...[truncated]";
