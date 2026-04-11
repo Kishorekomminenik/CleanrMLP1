@@ -7244,24 +7244,26 @@ function applyDebugArtifactFallbacks(pkg, manifest) {
     manifest.artifacts = {};
   }
   if (!manifest.artifacts.network?.present && networkCandidates.length === 1) {
-    manifest.artifacts.network = {
-      ...(manifest.artifacts.network || {}),
+    const networkArtifact = {
+      ...manifest.artifacts.network,
       present: true,
       path: networkCandidates[0],
       format: manifest.artifacts.network?.format || "ndjson",
     };
+    manifest.artifacts.network = networkArtifact;
     debugWarn(
       "[DD Debug] Network log recovery enabled for",
       networkCandidates[0]
     );
   }
   if (!manifest.artifacts.console?.present && consoleCandidates.length === 1) {
-    manifest.artifacts.console = {
-      ...(manifest.artifacts.console || {}),
+    const consoleArtifact = {
+      ...manifest.artifacts.console,
       present: true,
       path: consoleCandidates[0],
       format: manifest.artifacts.console?.format || "ndjson",
     };
+    manifest.artifacts.console = consoleArtifact;
     debugWarn(
       "[DD Debug] Console log recovery enabled for",
       consoleCandidates[0]
