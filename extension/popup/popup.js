@@ -97,6 +97,7 @@ const partProgressStatus = document.getElementById("status_current_part");
 const exportQueueStatus = document.getElementById("status_export_queue");
 const autoDownloadStatusLine = document.getElementById("status_auto_download");
 const downloadHelp = document.getElementById("status_download_help");
+const debugLogPanel = document.getElementById("debug_log_panel");
 const debugLogBufferEl = document.getElementById("debug_log_buffer");
 const completedPartsList = document.getElementById("completed_parts_list");
 const completedPartsEmpty = document.getElementById("completed_parts_empty");
@@ -2545,10 +2546,10 @@ function formatDebugLogEntry(entry) {
 }
 
 function updateDebugLogBuffer(state) {
-  if (!debugLogBufferEl || !state) {
+  if (!debugLogPanel || !debugLogBufferEl || !state) {
     return;
   }
-  if (debugLogPanel && debugLogPanel.classList.contains("hidden")) {
+  if (debugLogPanel.classList.contains("hidden")) {
     debugLogPanel.classList.remove("hidden");
   }
   const entries = Array.isArray(state.debugLogs) ? state.debugLogs : [];
