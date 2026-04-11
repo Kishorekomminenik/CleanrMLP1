@@ -1723,6 +1723,8 @@ function setHeaderActionsVisible(visible) {
   }
 }
 
+setHeaderActionsVisible(true);
+
 function setZipControlsAvailable(enabled, reason = "") {
   debugViewerLoaderLog("[Viewer Loader] setZipControlsAvailable", {
     enabled,
