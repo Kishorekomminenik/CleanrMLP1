@@ -40,6 +40,14 @@ const sessionIdentityMeta = document.getElementById("sessionIdentityMeta");
 const banner = document.getElementById("howtoBanner");
 const bannerClose = document.getElementById("bannerClose");
 const headerActions = document.querySelector(".header-actions");
+if (headerActions) {
+  headerActions.classList.remove("hidden");
+  headerActions.removeAttribute("hidden");
+  headerActions.style.display = "";
+  headerActions.style.visibility = "";
+  headerActions.style.opacity = "";
+  headerActions.style.pointerEvents = "";
+}
 const appRoot = document.querySelector(".app");
 const timeline = document.getElementById("timeline");
 const timelinePanel = document.querySelector(".timeline-panel");
@@ -1699,7 +1707,20 @@ function setHeaderActionsVisible(visible) {
     return;
   }
   debugViewerLoaderLog("[Viewer Loader] setHeaderActionsVisible", { visible });
-  headerActions.classList.toggle("hidden", !visible);
+  if (!visible) {
+    headerActions.classList.add("hidden");
+    return;
+  }
+  headerActions.classList.remove("hidden");
+  headerActions.removeAttribute("hidden");
+  headerActions.style.display = "";
+  headerActions.style.visibility = "";
+  headerActions.style.opacity = "";
+  headerActions.style.pointerEvents = "";
+  const actionsParent = headerActions.closest(".header");
+  if (actionsParent) {
+    actionsParent.style.display = "";
+  }
 }
 
 function setZipControlsAvailable(enabled, reason = "") {
