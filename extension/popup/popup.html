@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DebugDuck</title>
+    <link rel="icon" href="../icons/debugduck32.png" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="launcher-shell">
+      <div class="launcher-card">
+        <div class="launcher-header">
+          <div class="launcher-brand">
+            <div class="launcher-brand-row">
+              <img
+                class="launcher-logo"
+                src="../icons/debugduck32.png"
+                alt=""
+                loading="lazy"
+              />
+              <div class="launcher-brand-text">
+                <div class="launcher-title">DebugDuck</div>
+                <div class="launcher-subtitle">Show the duck what happened.</div>
+              </div>
+            </div>
+          </div>
+          <div class="launcher-meta">
+            <div class="launcher-badge">Local only</div>
+            <button
+              id="launcher_help_button"
+              class="launcher-help-button"
+              type="button"
+              aria-label="Help"
+              title="Help"
+            >
+              ⓘ
+            </button>
+          </div>
+        </div>
+        <div id="launcher_loading" class="launcher-loading is-hidden">
+          Loading session state…
+        </div>
+        <div class="launcher-actions">
+          <div class="launcher-section">
+            <div class="launcher-section-title">Session Capture</div>
+            <button
+              id="btn_session_start"
+              class="launcher-btn primary"
+              type="button"
+              data-action="launcher:session_start"
+            >
+              Start Session
+            </button>
+            <div class="launcher-row">
+              <button
+                id="btn_record_screen"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:record_screen"
+              >
+                Record Screen
+              </button>
+              <button
+                id="btn_session_screenshot"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_screenshot"
+              >
+                Screenshot
+              </button>
+            </div>
+            <button
+              id="btn_session_fullpage"
+              class="launcher-btn"
+              type="button"
+              data-action="launcher:session_fullpage"
+            >
+              Full Page
+            </button>
+            <div id="launcher_screenshot_hint" class="launcher-hint">
+              Start a session to add timeline screenshots.
+            </div>
+          </div>
+
+          <div id="launcher_session_status" class="launcher-status is-hidden">
+            <div class="launcher-status-header">
+              <div id="launcher_session_indicator" class="launcher-indicator">
+                <span class="indicator-dot"></span>
+                <span id="launcher_session_label">Session Recording</span>
+              </div>
+              <div id="launcher_session_duration" class="launcher-duration">00:00</div>
+            </div>
+            <div class="launcher-status-grid">
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Network</div>
+                <div id="launcher_count_network" class="launcher-stat-value">0</div>
+              </div>
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Console</div>
+                <div id="launcher_count_console" class="launcher-stat-value">0</div>
+              </div>
+              <div class="launcher-stat">
+                <div class="launcher-stat-label">Shots</div>
+                <div id="launcher_count_screenshots" class="launcher-stat-value">0</div>
+              </div>
+            </div>
+            <div id="launcher_session_message" class="launcher-session-message"></div>
+            <div class="launcher-session-controls">
+              <button
+                id="btn_session_pause"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_pause"
+              >
+                Pause
+              </button>
+              <button
+                id="btn_session_resume"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_resume"
+              >
+                Resume
+              </button>
+              <button
+                id="btn_session_stop"
+                class="launcher-btn danger"
+                type="button"
+                data-action="launcher:session_stop"
+              >
+                Stop Session
+              </button>
+            </div>
+            <div class="launcher-session-actions">
+              <button
+                id="btn_session_export"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_export"
+              >
+                Export Session
+              </button>
+              <button
+                id="btn_session_viewer"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_viewer"
+              >
+                Open Viewer
+              </button>
+              <button
+                id="btn_session_reset"
+                class="launcher-btn"
+                type="button"
+                data-action="launcher:session_reset"
+              >
+                Fresh Start
+              </button>
+              <button
+                id="btn_session_clear_all"
+                class="launcher-btn is-hidden"
+                type="button"
+                data-action="launcher:session_clear_all"
+                aria-hidden="true"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="launcher_error" class="launcher-error is-hidden"></div>
+      </div>
+    </div>
+
+    <div id="launcher_help_modal" class="launcher-help-modal" aria-hidden="true">
+      <div
+        class="launcher-help-backdrop"
+        data-help-close="true"
+      ></div>
+      <div
+        class="launcher-help-card help-modal-card"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="launcher-help-header help-modal-header">
+          <div class="help-title">How DebugDuck Works</div>
+          <button
+            id="launcher_help_close"
+            class="launcher-help-close help-close-btn"
+            type="button"
+            aria-label="Close help"
+            data-help-close="true"
+          >
+            ×
+          </button>
+        </div>
+        <div class="launcher-help-content help-modal-body">
+          <div class="help-section">
+            <div class="help-heading">Visual Capture</div>
+            <ul>
+              <li>Screenshot — Capture visible screen.</li>
+              <li>Full Page — Capture entire scrollable page.</li>
+              <li>Annotate, copy, or download.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Session Recording</div>
+            <ul>
+              <li>Record tab video (WebM).</li>
+              <li>Start, Pause, Stop anytime.</li>
+              <li>Video stored locally.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">QA-Grade Logs</div>
+            <ul>
+              <li>Capture Network (XHR/Fetch).</li>
+              <li>Capture Console errors.</li>
+              <li>Readable log export.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Automation Bridge</div>
+            <ul>
+              <li>Export API calls as Postman Collection.</li>
+              <li>Structured evidence bundle.</li>
+              <li>Designed for defect acceleration.</li>
+            </ul>
+          </div>
+          <div class="help-section">
+            <div class="help-heading">Privacy</div>
+            <ul>
+              <li>All data stored locally.</li>
+              <li>No external transmission.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container legacy-shell" aria-hidden="true">
+      <header class="app-header">
+        <div class="header-row">
+          <div class="app-title">
+            <img id="app_icon" class="app-icon" alt="" />
+            <span id="app_title"></span>
+          </div>
+          <div class="header-actions">
+            <span id="session_pill" class="status-pill">Idle</span>
+            <button
+              id="help_button"
+              class="icon-button"
+              type="button"
+              data-action="help:open"
+              aria-label="Help"
+              title="Help"
+            >
+              ⓘ
+            </button>
+          </div>
+        </div>
+        <div id="session_meta" class="meta-line">Screenshot • 0 req • 0 err</div>
+        <p class="warning">
+          Captures active tab only. Starts only when you press Start.
+        </p>
+      </header>
+
+      <section class="segmented" id="mode_segment">
+        <button
+          type="button"
+          id="mode_recording"
+          class="seg-btn"
+          data-action="mode:recording"
+          data-mode="recording"
+        >
+          Record Session
+        </button>
+        <button
+          type="button"
+          id="mode_network"
+          class="seg-btn"
+          data-action="mode:network_console"
+          data-mode="network_console"
+        >
+          Capture Logs
+        </button>
+        <button
+          type="button"
+          id="mode_screenshot"
+          class="seg-btn is-active"
+          data-action="mode:screenshot"
+          data-mode="screenshot"
+        >
+          Screenshot
+        </button>
+      </section>
+
+      <div id="capability-messages" class="capability-messages">
+        <div id="recording-disabled-msg" class="capability-msg hidden">
+          Recording unavailable due to browser/enterprise policy. Use Screenshot or Logs.
+        </div>
+        <div id="network-disabled-msg" class="capability-msg hidden">
+          Logs blocked by enterprise policy.
+        </div>
+      </div>
+
+      <section class="card mode-controls" data-mode="recording screenshot">
+        <h2>Controls</h2>
+        <div class="mode-controls" data-mode="screenshot">
+          <p id="screenshotHint" class="hint">
+            Use Screenshot or Full Page below to capture.
+          </p>
+        </div>
+        <div class="mode-controls" data-mode="recording">
+          <div class="button-row control-grid">
+            <button id="btn_start_recording" class="primary" data-action="recording:start">
+              Start
+            </button>
+            <button id="btn_pause_recording" data-action="recording:pause" disabled>
+              Pause
+            </button>
+            <button id="btn_resume_recording" data-action="recording:resume" disabled>
+              Resume
+            </button>
+            <button id="btn_stop_recording" class="danger" data-action="recording:stop" disabled>
+              Stop
+            </button>
+            <button id="btn_open_recording_panel" class="ghost" data-action="recording:panel">
+              Panel
+            </button>
+          </div>
+          <p id="controlsStatus" class="status-strip">-</p>
+          <div class="button-row">
+            <button
+              id="btn_download_recording"
+              class="primary"
+              data-action="export:webm"
+            >
+              Download WebM
+            </button>
+          </div>
+          <p id="recordingDownloadHint" class="hint">
+            WebM includes video only.
+          </p>
+        </div>
+        <div class="mode-controls" data-mode="screenshot recording">
+          <div class="toggle-row">
+            <span class="label">Timestamp overlay</span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                id="toggle_timestamp_overlay"
+                data-action="overlay:toggle"
+              />
+              <span id="timestampOverlayStatus">OFF</span>
+            </label>
+          </div>
+          <p class="hint">
+            Adds a small timestamp to screenshots and recordings. OFF keeps evidence clean.
+          </p>
+        </div>
+      </section>
+
+      <section class="card mode-controls" data-mode="screenshot">
+        <div class="action-row" id="quick_actions">
+          <button id="btn_take_screenshot" class="secondary" data-action="screenshot:snap">
+            &#128247; Screenshot
+          </button>
+          <button
+            id="btn_fullpage_screenshot_mode"
+            class="secondary"
+            data-action="screenshot:full"
+          >
+            &#128470; Full Page
+          </button>
+        </div>
+        <p id="fullPageHint" class="hint">
+          Captures the entire page by scrolling and stitching.
+        </p>
+        <p id="fullPageProgress" class="status-strip is-hidden"></p>
+      </section>
+
+      <section class="card mode-controls" data-mode="recording">
+        <button
+          id="status_toggle"
+          class="section-toggle"
+          type="button"
+          data-action="status:toggle"
+          data-section="status"
+        >
+          <span>Session Status</span>
+          <span id="status_chevron" class="chevron">▸</span>
+        </button>
+        <div id="status_body" class="status-body collapsed">
+          <div class="status-row">
+            <span class="label">Message</span>
+            <span id="status_message">-</span>
+          </div>
+          <div class="status-row">
+            <span class="label">Mode</span>
+            <span id="status_mode">-</span>
+          </div>
+          <div class="status-row">
+            <span class="label">State</span>
+            <span id="status_state">idle</span>
+          </div>
+          <div class="status-row" id="status_timer_row">
+            <span class="label">Elapsed</span>
+            <span id="status_timer">00:00</span>
+          </div>
+          <div class="status-row" id="status_counts_row">
+            <span class="label">Counts</span>
+            <span id="status_counts">0 requests, 0 logs, 0 errors</span>
+          </div>
+          <div id="network_tip" class="status-tip is-hidden">
+            No requests yet. Try Refresh (Ctrl+R) or click a link / trigger an API call.
+          </div>
+        </div>
+      </section>
+
+      <section class="card mode-controls" data-mode="network_console">
+        <h2>Capture Logs</h2>
+          <button
+            id="filters_toggle"
+            class="section-toggle"
+            type="button"
+            data-action="filters:toggle"
+            data-section="filters"
+          >
+            <span>Capture Filters</span>
+            <span id="filters_chevron" class="chevron">▸</span>
+          </button>
+          <div id="filters_body" class="filters-body collapsed">
+            <div class="settings-row">
+              <label class="label" for="filter_request_type">Request type</label>
+              <select id="filter_request_type" data-action="filters:update">
+                <option value="xhr_fetch">XHR + Fetch</option>
+                <option value="xhr">XHR only</option>
+                <option value="fetch">Fetch only</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+            <div class="settings-row">
+              <label class="label" for="filter_status_mode">Status</label>
+              <select id="filter_status_mode" data-action="filters:update">
+                <option value="all">All statuses</option>
+                <option value="errors">Errors only (>= 400)</option>
+                <option value="custom">Custom status list...</option>
+              </select>
+            </div>
+            <div id="filter_status_custom_wrap" class="settings-row is-hidden">
+              <label class="label" for="filter_status_custom_list">Codes</label>
+              <input
+                id="filter_status_custom_list"
+                type="text"
+                placeholder="e.g., 400,404,409,410,500"
+                data-action="filters:update"
+              />
+            </div>
+            <div id="filter_status_error" class="hint is-hidden"></div>
+            <div class="settings-row">
+              <label class="label" for="filter_url_contains">URL contains</label>
+              <input
+                id="filter_url_contains"
+                type="text"
+                placeholder="e.g., /payments or auth-service"
+                data-action="filters:update"
+              />
+            </div>
+            <p class="hint">Matches anywhere in the URL.</p>
+            <div class="settings-row">
+              <label class="label" for="filter_url_excludes">Exclude contains</label>
+              <input
+                id="filter_url_excludes"
+                type="text"
+                placeholder="e.g., analytics, heartbeat"
+                data-action="filters:update"
+              />
+            </div>
+            <p class="hint">Optional. Excludes noisy endpoints.</p>
+            <div class="settings-row">
+              <label class="label">Capture mode</label>
+              <div class="radio-group" id="filter_capture_mode">
+                <label>
+                  <input
+                    type="radio"
+                    name="filter_capture_mode"
+                    value="filtered_capture"
+                    data-action="filters:update"
+                  />
+                  Filtered capture only (recommended)
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="filter_capture_mode"
+                    value="capture_all_export_filter"
+                    data-action="filters:update"
+                  />
+                  Capture everything, filter on export
+                </label>
+              </div>
+            </div>
+            <p class="hint">Filters apply when you press Start.</p>
+            <p class="hint">
+              Changing filters during capture requires Stop → Start.
+            </p>
+            <p class="hint">Capture everything increases storage size and export time.</p>
+            <p id="filters_disabled_hint" class="hint is-hidden">
+              Stop capture to change filters.
+            </p>
+            <p id="filters_summary" class="status-strip is-hidden"></p>
+          </div>
+          <div class="toggle-row">
+            <span class="label">Auto-download on rollover</span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                id="toggle_auto_download_rollover"
+                data-action="part:auto_download"
+              />
+              <span id="autoDownloadStatus">OFF</span>
+            </label>
+          </div>
+          <p class="hint">
+            Downloads a completed part automatically when it reaches the cap or when you stop. Never downloads empty parts.
+          </p>
+          <div class="settings-row">
+            <label class="label" for="dropdown_part_cap_requests">Requests per part</label>
+            <select id="dropdown_part_cap_requests" data-action="part:cap_requests">
+              <option value="1000">1000</option>
+              <option value="2500">2500</option>
+              <option value="5000" selected>5000</option>
+              <option value="10000">10000</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="label" for="dropdown_max_body_kb">Max body size per request</label>
+            <select id="dropdown_max_body_kb" data-action="part:max_body">
+              <option value="50">50 KB</option>
+              <option value="200" selected>200 KB</option>
+              <option value="1024">1024 KB</option>
+            </select>
+          </div>
+          <p class="hint">
+            Request/response bodies larger than this are truncated but metadata is stored.
+          </p>
+          <p id="status_current_part" class="status-strip">
+            Part - — 0/0 requests
+          </p>
+          <div class="status-secondary">
+            <span id="status_export_queue">Export queue: 0</span>
+            <span id="status_auto_download">Auto-download: OFF</span>
+          </div>
+          <p id="status_near_limit" class="hint is-hidden"></p>
+          <p id="status_export_progress" class="status-strip is-hidden"></p>
+          <p id="status_download_banner" class="status-strip is-hidden"></p>
+          <p id="status_download_help" class="hint is-hidden">
+            Stop to download the current part.
+          </p>
+          <div class="button-row control-grid">
+            <button id="btn_start_capture" class="primary" data-action="network:start">
+              Start
+            </button>
+            <button id="btn_stop_capture" class="danger" data-action="network:stop" disabled>
+              Stop
+            </button>
+            <button
+              id="refreshTabBtn"
+              class="secondary"
+              data-action="network:refresh"
+              disabled
+            >
+              Refresh
+            </button>
+          </div>
+          <p id="networkGuidance" class="hint is-hidden">
+            Capture started - now Refresh (Ctrl+R) or click a link to capture requests.
+          </p>
+          <p class="status-strip is-hidden" id="networkStatusStrip">-</p>
+          <div id="completed_parts_section" class="completed-parts">
+            <div class="completed-header">Completed parts</div>
+            <div id="completed_parts_empty" class="hint">No completed parts yet.</div>
+            <div id="completed_parts_list" class="completed-list"></div>
+          </div>
+          <div class="button-row">
+            <button id="btn_clear_all" class="danger" data-action="storage:clear_all">
+              Clear all
+            </button>
+          </div>
+      </section>
+
+      <section class="card mode-controls" data-mode="network_console">
+        <h2>Export</h2>
+        <div class="toggle-row">
+          <span class="label">Redaction</span>
+          <label class="toggle">
+            <input type="checkbox" id="redactionToggle" data-action="redaction:toggle" />
+            <span id="redactionStatus">ON</span>
+          </label>
+        </div>
+        <div class="button-row" id="download_controls">
+          <button id="btn_download_zip" class="primary" data-action="export:zip">
+            Export Evidence
+          </button>
+          <button id="btn_reset_session" data-action="session:reset">Reset</button>
+        </div>
+        <p id="exportHint" class="hint is-hidden">Stop to export.</p>
+        <p id="downloadStatus" class="status">Ready.</p>
+        <details id="debug_log_panel" class="status-panel hidden">
+          <summary>Debug logs</summary>
+          <pre id="debug_log_buffer" class="status-strip muted"></pre>
+        </details>
+      </section>
+
+      <div id="toast" class="toast">Saved</div>
+    </div>
+
+    <div id="help_modal" class="help-modal hidden" aria-hidden="true">
+      <div class="help-backdrop" data-action="help:close"></div>
+      <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help_title">
+        <div class="help-header">
+          <div>
+            <h2 id="help_title">How DebugDuck works</h2>
+            <p class="help-subtitle">
+              Capture screenshots, recordings, logs, and bug evidence locally.
+            </p>
+          </div>
+          <button
+            id="help_close"
+            class="icon-button"
+            type="button"
+            data-action="help:close"
+            aria-label="Close help"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="help-section">
+          <h3>Choose a mode</h3>
+          <div class="help-lines">
+            <div class="help-line">
+              <span class="help-mode">Screenshot</span>
+              <span class="help-desc">Capture screenshots (visible or full page)</span>
+            </div>
+            <div class="help-line">
+              <span class="help-mode">Record Session</span>
+              <span class="help-desc">Capture video with optional logs</span>
+            </div>
+            <div class="help-line">
+              <span class="help-mode">Capture Logs</span>
+              <span class="help-desc">Capture network and console only</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="help-section">
+          <h3>What gets captured</h3>
+          <ul>
+            <li>Nothing is captured until you press Start</li>
+            <li>Screenshots and Full Page are always manual</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h3>Export rules</h3>
+          <ul>
+            <li>Export Evidence is available after Stop for recordings and screenshots</li>
+            <li>Completed log parts can be downloaded while capture continues</li>
+            <li>WebM = video only</li>
+            <li>Export Evidence includes logs, screenshots (+ video if recorded)</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h3>Known limits</h3>
+          <ul>
+            <li>Full Page may not work on protected or streaming pages</li>
+            <li>Some pages block screenshots by browser design</li>
+            <li>All data stays local to your machine</li>
+          </ul>
+        </div>
+
+        <div class="help-footer">
+          <button
+            id="help_got_it"
+            class="primary"
+            type="button"
+            data-action="help:gotit"
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal_storage_limit" class="help-modal hidden" aria-hidden="true">
+      <div class="help-backdrop" data-action="storage:close"></div>
+      <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="storage_limit_title">
+        <div class="help-header">
+          <div>
+            <h2 id="storage_limit_title">Storage limit reached</h2>
+            <p class="help-subtitle" id="storage_limit_body">
+              You have 3 completed parts saved locally (max 3). Download or delete a completed part to continue capturing.
+            </p>
+          </div>
+        </div>
+        <div class="help-footer">
+          <button
+            class="primary"
+            type="button"
+            data-action="storage:download"
+          >
+            Download a part
+          </button>
+          <button
+            class="danger"
+            type="button"
+            data-action="storage:delete"
+          >
+            Delete a part
+          </button>
+          <button
+            class="danger"
+            type="button"
+            data-action="storage:clear"
+          >
+            Clear all
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../lib/jszip.min.js"></script>
+    <script src="../lib/idb.js"></script>
+    <script src="../utils/redact.js"></script>
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

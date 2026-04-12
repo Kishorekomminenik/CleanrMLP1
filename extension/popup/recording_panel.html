@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DebugDuck Recorder</title>
+    <link rel="stylesheet" href="recording_panel.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <div class="panel-header">
+        <div class="brand">
+          <div class="brand-title">DebugDuck</div>
+          <div class="brand-subtitle">Recording</div>
+        </div>
+        <button id="closePanel" class="icon-btn" type="button">Close</button>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Timer</span>
+          <span id="panel_timer" class="value">00:00</span>
+        </div>
+        <div class="stat">
+          <span class="label">Status</span>
+          <span id="panel_state" class="value">Idle</span>
+        </div>
+      </div>
+      <div id="panel_message" class="message">-</div>
+      <div class="button-row">
+        <button id="panel_start" class="primary" type="button">Start</button>
+        <button id="panel_pause" type="button">Pause</button>
+        <button id="panel_resume" type="button">Resume</button>
+        <button id="panel_stop" class="danger" type="button">Stop</button>
+      </div>
+      <div class="button-row">
+        <button id="panel_download" class="ghost" type="button">
+          Download WebM
+        </button>
+        <button id="panel_reset" class="ghost" type="button">Reset</button>
+      </div>
+    </div>
+
+    <script src="recording_panel.js"></script>
+  </body>
+</html>

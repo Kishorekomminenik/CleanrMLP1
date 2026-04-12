@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DebugDuck Viewer</title>
+    <link rel="icon" href="../icons/debugduck32.png" />
+    <link rel="stylesheet" href="screenshot_viewer.css" />
+  </head>
+  <body>
+    <div id="editorRoot">
+      <div id="toolbar" class="toolbar">
+        <div class="toolbar-row">
+          <div class="toolbar-group tools">
+            <button id="toolPointer" class="tool-button active" type="button" title="Select">
+              <span class="btn-icon" aria-hidden="true">&#11044;</span>
+              <span class="btn-label">Select</span>
+            </button>
+            <button id="toolPen" class="tool-button" type="button" title="Pen">
+              <span class="btn-icon" aria-hidden="true">&#9998;</span>
+              <span class="btn-label">Pen</span>
+            </button>
+            <button id="toolRectangle" class="tool-button" type="button" title="Rectangle">
+              <span class="btn-icon" aria-hidden="true">&#9633;</span>
+              <span class="btn-label">Rect</span>
+            </button>
+            <button id="toolArrow" class="tool-button" type="button" title="Arrow">
+              <span class="btn-icon" aria-hidden="true">&#10132;</span>
+              <span class="btn-label">Arrow</span>
+            </button>
+            <button id="toolHighlight" class="tool-button" type="button" title="Highlight">
+              <span class="btn-icon" aria-hidden="true">&#11036;</span>
+              <span class="btn-label">Highlight</span>
+            </button>
+            <button id="toolCircle" class="tool-button" type="button" title="Circle">
+              <span class="btn-icon" aria-hidden="true">&#9711;</span>
+              <span class="btn-label">Circle</span>
+            </button>
+            <button id="toolText" class="tool-button" type="button" title="Text">
+              <span class="btn-icon" aria-hidden="true">&#84;</span>
+              <span class="btn-label">Text</span>
+            </button>
+            <button id="toolStep" class="tool-button" type="button" title="Step">
+              <span class="btn-icon" aria-hidden="true">&#9312;</span>
+              <span class="btn-label">Step</span>
+            </button>
+            <button id="toolBlur" class="tool-button" type="button" title="Blur">
+              <span class="btn-icon" aria-hidden="true">&#9681;</span>
+              <span class="btn-label">Blur</span>
+            </button>
+          </div>
+
+          <div class="toolbar-divider" aria-hidden="true"></div>
+
+          <div class="toolbar-group context">
+            <div class="control-group" data-controls="pen circle text rectangle arrow step">
+              <label>
+                Color
+                <input id="mainColor" type="color" value="#ef4444" title="Color" />
+              </label>
+            </div>
+            <div class="control-group" data-controls="pen rectangle arrow">
+              <label>
+                Size
+                <select id="penWidth" title="Stroke size">
+                  <option value="2">2</option>
+                  <option value="4" selected>4</option>
+                  <option value="6">6</option>
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="circle">
+              <label>
+                Size
+                <select id="circleWidth" title="Circle size">
+                  <option value="2">2</option>
+                  <option value="4" selected>4</option>
+                  <option value="6">6</option>
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="highlight">
+              <label>
+                Color
+                <input id="highlightColor" type="color" value="#facc15" title="Highlight color" />
+              </label>
+            </div>
+            <div class="control-group" data-controls="highlight">
+              <label>
+                Opacity
+                <input
+                  id="highlightOpacity"
+                  type="range"
+                  min="0.1"
+                  max="0.6"
+                  step="0.1"
+                  value="0.3"
+                  title="Highlight opacity"
+                />
+              </label>
+            </div>
+            <div class="control-group" data-controls="blur">
+              <label>
+                Blur
+                <select id="blurStrength" title="Blur strength">
+                  <option value="4">Low</option>
+                  <option value="8" selected>Med</option>
+                  <option value="12">High</option>
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="step">
+              <label>
+                Step
+                <select id="stepSize" title="Step size">
+                  <option value="sm">S</option>
+                  <option value="md" selected>M</option>
+                  <option value="lg">L</option>
+                  <option value="xl">XL</option>
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="text">
+              <label>
+                Size
+                <select id="textSize" title="Text size">
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="text">
+              <label>
+                Font
+                <select id="textFontFamily" title="Font">
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="text">
+              <label>
+                Weight
+                <select id="textWeight" title="Weight">
+                </select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="text">
+              <label>
+                Color
+                <select id="textColor" title="Text color"></select>
+              </label>
+            </div>
+            <div class="control-group" data-controls="text">
+              <label>
+                Opacity
+                <select id="textOpacity" title="Text opacity"></select>
+              </label>
+            </div>
+          </div>
+
+          <div class="toolbar-divider" aria-hidden="true"></div>
+
+          <div class="toolbar-group actions">
+            <button id="btnUndo" type="button" disabled title="Undo">
+              <span class="btn-icon" aria-hidden="true">&#8630;</span>
+              <span class="btn-label">Undo</span>
+            </button>
+            <button id="btnRedo" type="button" disabled title="Redo">
+              <span class="btn-icon" aria-hidden="true">&#8631;</span>
+              <span class="btn-label">Redo</span>
+            </button>
+            <button id="btnClear" type="button" disabled title="Reset annotations">
+              <span class="btn-icon" aria-hidden="true">&#10006;</span>
+              <span class="btn-label">Reset</span>
+            </button>
+            <button id="btnResetSteps" type="button" title="Reset step numbers">
+              <span class="btn-icon" aria-hidden="true">&#8634;</span>
+              <span class="btn-label">Reset Steps</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="toolbar-row">
+          <div class="toolbar-group view">
+            <button id="btnZoomOut" type="button" title="Zoom out">
+              <span class="btn-icon" aria-hidden="true">&#8722;</span>
+              <span class="btn-label">Zoom Out</span>
+            </button>
+            <button id="btnZoomIn" type="button" title="Zoom in">
+              <span class="btn-icon" aria-hidden="true">&#43;</span>
+              <span class="btn-label">Zoom In</span>
+            </button>
+            <button id="btnZoomFit" type="button" title="Fit to screen">
+              <span class="btn-icon" aria-hidden="true">&#9635;</span>
+              <span class="btn-label">Fit</span>
+            </button>
+            <button id="btnZoomActual" type="button" title="100%">
+              <span class="btn-icon" aria-hidden="true">100%</span>
+              <span class="btn-label">100%</span>
+            </button>
+          </div>
+
+          <div class="toolbar-divider" aria-hidden="true"></div>
+
+          <div class="toolbar-group status">
+            <span id="statusMetrics">—</span>
+            <span id="statusText">Loading...</span>
+          </div>
+
+          <div class="toolbar-divider" aria-hidden="true"></div>
+
+          <div class="toolbar-group export">
+            <button id="btnCopy" type="button" disabled title="Copy PNG">
+              <span class="btn-icon" aria-hidden="true">&#128203;</span>
+              <span class="btn-label">Copy</span>
+            </button>
+            <button id="btnCopyCompressed" type="button" disabled title="Copy compressed (WebP)">
+              <span class="btn-icon" aria-hidden="true">&#128203;</span>
+              <span class="btn-label">Copy Small</span>
+            </button>
+            <button id="btnDownload" type="button" class="primary" disabled title="Download PNG">
+              <span class="btn-icon" aria-hidden="true">&#128190;</span>
+              <span class="btn-label">Download</span>
+            </button>
+            <button id="btnDownloadCompressed" type="button" disabled title="Download compressed (WebP)">
+              <span class="btn-icon" aria-hidden="true">&#128190;</span>
+              <span class="btn-label">Download Small</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="editor_boot_error" class="boot-error" hidden></div>
+
+      <div id="stage">
+        <div id="canvasWrap">
+          <canvas id="baseCanvas"></canvas>
+          <canvas id="drawCanvas"></canvas>
+          <canvas id="previewCanvas"></canvas>
+          <div id="textLayer"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="../lib/idb.js"></script>
+    <script type="module" src="screenshot_viewer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,95 @@
+/* DebugDuck floating panel overlays (content script) */
+:root {
+  --repro-bg: #f8fafc;
+  --repro-card: rgba(255, 255, 255, 0.96);
+  --repro-border: #e5e7eb;
+  --repro-text: #111827;
+  --repro-muted: #6b7280;
+  --repro-accent: #2563eb;
+  --repro-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  --repro-radius: 12px;
+}
+
+.repro-panel-overlay {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 260px;
+  background: var(--repro-card);
+  border: 1px solid var(--repro-border);
+  border-radius: var(--repro-radius);
+  box-shadow: var(--repro-shadow);
+  z-index: 2147483647;
+  display: none;
+  color: var(--repro-text);
+  font: 12px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+.repro-panel-overlay[data-repro-hidden="true"] {
+  display: none !important;
+}
+
+.repro-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--repro-border);
+  cursor: grab;
+}
+
+.repro-panel-header:active {
+  cursor: grabbing;
+}
+
+.repro-panel-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.repro-panel-title {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.repro-panel-subtitle {
+  color: var(--repro-muted);
+  font-size: 11px;
+}
+
+.repro-panel-close {
+  border: none;
+  background: transparent;
+  color: var(--repro-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.repro-panel-body {
+  padding: 0;
+}
+
+.repro-panel-frame {
+  width: 100%;
+  border: none;
+  display: block;
+  background: transparent;
+}
+
+.repro-panel-overlay.repro-panel-recording .repro-panel-frame {
+  height: 240px;
+}
+
+.repro-panel-overlay.repro-panel-logs .repro-panel-frame {
+  height: 270px;
+}
+
+@media (max-width: 380px) {
+  .repro-panel-overlay {
+    width: 220px;
+    right: 8px;
+    bottom: 8px;
+  }
+}

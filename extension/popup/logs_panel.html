@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DebugDuck Logs</title>
+    <link rel="stylesheet" href="logs_panel.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <div class="panel-header">
+        <div class="brand">
+          <div class="brand-title">DebugDuck</div>
+          <div class="brand-subtitle">Logs</div>
+        </div>
+        <button id="closePanel" class="icon-btn" type="button">Close</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Status</span>
+          <span id="panel_state" class="value">Idle</span>
+        </div>
+        <div class="stat">
+          <span class="label">Requests</span>
+          <span id="panel_requests" class="value">0</span>
+        </div>
+        <div class="stat">
+          <span class="label">Console</span>
+          <span id="panel_console" class="value">0</span>
+        </div>
+      </div>
+
+      <div id="panel_message" class="message">-</div>
+
+      <div class="button-row">
+        <button id="panel_start" class="primary" type="button">Start</button>
+        <button id="panel_pause" type="button">Pause</button>
+        <button id="panel_resume" type="button">Resume</button>
+        <button id="panel_stop" class="danger" type="button">Stop</button>
+      </div>
+      <div class="button-row">
+        <button id="panel_download" class="ghost" type="button">
+          Export Evidence
+        </button>
+        <button id="panel_clear" class="ghost" type="button">Clear all</button>
+        <button id="panel_reset" class="ghost" type="button">Reset</button>
+      </div>
+
+      <div id="panel_export" class="status-hint">Ready.</div>
+    </div>
+
+    <script src="logs_panel.js"></script>
+  </body>
+</html>

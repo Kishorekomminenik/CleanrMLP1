@@ -1,0 +1,145 @@
+:root {
+  --repro-bg: #f8fafc;
+  --repro-card: rgba(255, 255, 255, 0.96);
+  --repro-border: #e5e7eb;
+  --repro-text: #111827;
+  --repro-muted: #6b7280;
+  --repro-accent: #2563eb;
+  --repro-danger: #dc2626;
+  --repro-radius: 12px;
+  --repro-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial;
+  background: var(--repro-bg);
+  color: var(--repro-text);
+}
+
+.panel {
+  margin: 14px;
+  padding: 14px;
+  background: var(--repro-card);
+  border: 1px solid var(--repro-border);
+  border-radius: var(--repro-radius);
+  box-shadow: var(--repro-shadow);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.brand-subtitle {
+  font-size: 12px;
+  color: var(--repro-muted);
+  margin-top: 2px;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--repro-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.stat {
+  background: #ffffff;
+  border: 1px solid var(--repro-border);
+  border-radius: var(--repro-radius);
+  padding: 8px 10px;
+}
+
+.label {
+  display: block;
+  font-size: 11px;
+  color: var(--repro-muted);
+  margin-bottom: 4px;
+}
+
+.value {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.message {
+  font-size: 12px;
+  color: var(--repro-muted);
+  margin-bottom: 12px;
+  min-height: 18px;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+button {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: var(--repro-radius);
+  border: 1px solid var(--repro-border);
+  background: #ffffff;
+  color: var(--repro-text);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--repro-accent);
+  border-color: var(--repro-accent);
+  color: #ffffff;
+}
+
+button.danger {
+  background: var(--repro-danger);
+  border-color: var(--repro-danger);
+  color: #ffffff;
+}
+
+button.ghost {
+  background: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.is-hidden {
+  display: none;
+}
+
+body[data-embedded="true"] .panel {
+  margin: 0;
+  border: none;
+  box-shadow: none;
+  padding: 10px 12px 12px 12px;
+  background: transparent;
+}
+
+body[data-embedded="true"] .panel-header {
+  display: none;
+}
+
+body[data-embedded="true"] {
+  background: transparent;
+}

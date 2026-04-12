@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "DebugDuck",
+  "short_name": "DebugDuck",
+  "version": "0.1.0",
+  "description": "Local-first QA capture for screenshots, recordings, logs, and reproducible bug evidence.",
+  "action": {
+    "default_title": "DebugDuck",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/debugduck16.png",
+      "32": "icons/debugduck32.png",
+      "48": "icons/debugduck48.png",
+      "128": "icons/debugduck128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/debugduck16.png",
+    "32": "icons/debugduck32.png",
+    "48": "icons/debugduck48.png",
+    "128": "icons/debugduck128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "debugger",
+    "tabs",
+    "storage",
+    "downloads",
+    "clipboardWrite",
+    "tabCapture",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup/recording_panel.html",
+        "popup/recording_panel.css",
+        "popup/recording_panel.js",
+        "popup/logs_panel.html",
+        "popup/logs_panel.css",
+        "popup/logs_panel.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

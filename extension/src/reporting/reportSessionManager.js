@@ -1,0 +1,398 @@
+(() => {
+  const getConfig = () => {
+    const config =
+      typeof globalThis !== "undefined" && globalThis.ReportConfig
+        ? globalThis.ReportConfig
+        : {};
+    return {
+      enabled: config.REPORTS_ENABLED === true,
+      version:
+        typeof config.REPORTS_VERSION === "string"
+          ? config.REPORTS_VERSION
+          : "1.1.0-scaffold",
+    };
+  };
+
+  const getModel = () => {
+    if (
+      typeof globalThis !== "undefined" &&
+      globalThis.ReportSessionModel &&
+      typeof globalThis.ReportSessionModel.createEmptyReportSession === "function"
+    ) {
+      return globalThis.ReportSessionModel;
+    }
+    return null;
+  };
+
+  const getIdb = () => {
+    if (
+      typeof globalThis !== "undefined" &&
+      globalThis.ReproIdb &&
+      typeof globalThis.ReproIdb.putOne === "function"
+    ) {
+      return globalThis.ReproIdb;
+    }
+    return null;
+  };
+
+  let currentSession = null;
+
+  const clone = (value) => {
+    if (!value) {
+      return null;
+    }
+    return JSON.parse(JSON.stringify(value));
+  };
+
+  const ensureSession = () => {
+    if (currentSession) {
+      return currentSession;
+    }
+    const config = getConfig();
+    if (!config.enabled) {
+      return null;
+    }
+    const model = getModel();
+    if (!model) {
+      return null;
+    }
+    currentSession = model.createEmptyReportSession();
+    return currentSession;
+  };
+
+  const updateSummary = () => {
+    if (!currentSession) {
+      return;
+    }
+    const artifacts = currentSession.artifacts || {};
+    const steps = Array.isArray(currentSession.steps)
+      ? currentSession.steps
+      : [];
+    const screenshots = Array.isArray(artifacts.screenshots)
+      ? artifacts.screenshots
+      : [];
+    const consoleLogs = artifacts.consoleLogs;
+    const networkLogs = artifacts.networkLogs;
+    const consoleCount = Array.isArray(consoleLogs)
+      ? consoleLogs.length
+      : consoleLogs && typeof consoleLogs.count === "number"
+        ? consoleLogs.count
+        : 0;
+    const networkCount = Array.isArray(networkLogs)
+      ? networkLogs.length
+      : networkLogs && typeof networkLogs.count === "number"
+        ? networkLogs.count
+        : 0;
+    currentSession.summary = {
+      stepCount: steps.length,
+      screenshotCount: screenshots.length,
+      consoleCount,
+      networkCount,
+      hasRecording: Boolean(artifacts.recording),
+    };
+  };
+
+  const touch = () => {
+    if (currentSession) {
+      currentSession.updatedAt = new Date().toISOString();
+    }
+  };
+
+  const buildStepRecord = (session, step) => {
+    const sessionId = session && session.sessionId ? session.sessionId : null;
+    const stepId = step && step.stepId ? step.stepId : step && step.id ? step.id : "";
+    const key = sessionId ? `${sessionId}:${stepId}` : stepId;
+    const createdAtMs = step && step.timestamp ? Date.parse(step.timestamp) : null;
+    return {
+      key,
+      sessionId,
+      stepId,
+      index: step && typeof step.index === "number" ? step.index : null,
+      timestamp: step && step.timestamp ? step.timestamp : null,
+      type: step && step.type ? step.type : "",
+      title: step && step.title ? step.title : "",
+      description: step && step.description ? step.description : "",
+      url: step && step.url ? step.url : "",
+      screenshotRef: step && step.screenshotRef ? step.screenshotRef : "",
+      screenshotFile: step && step.screenshotFile ? step.screenshotFile : "",
+      screenshotPath: step && step.screenshotPath ? step.screenshotPath : "",
+      screenshotCapturedAt:
+        step && step.screenshotCapturedAt ? step.screenshotCapturedAt : null,
+      notes: step && step.notes ? step.notes : "",
+      metadata: step && step.metadata ? step.metadata : {},
+      createdAtMs:
+        typeof createdAtMs === "number" && !Number.isNaN(createdAtMs)
+          ? createdAtMs
+          : Date.now(),
+    };
+  };
+
+  const persistStep = (step) => {
+    const idb = getIdb();
+    if (!idb || !currentSession || !step) {
+      return;
+    }
+    try {
+      const record = buildStepRecord(currentSession, step);
+      void idb.putOne("report_steps", record);
+    } catch (error) {
+      // Persistence is best-effort only.
+    }
+  };
+
+  const manager = {
+    createSession(partialInit = {}) {
+      const config = getConfig();
+      if (!config.enabled) {
+        return null;
+      }
+      const model = getModel();
+      if (!model) {
+        return null;
+      }
+      const forceNew = Boolean(partialInit && partialInit.forceNew === true);
+      if (currentSession && !forceNew) {
+        return clone(currentSession);
+      }
+      const init = { ...partialInit };
+      delete init.forceNew;
+      currentSession = model.createEmptyReportSession(init);
+      updateSummary();
+      touch();
+      return clone(currentSession);
+    },
+
+    getSessionData() {
+      return clone(currentSession);
+    },
+
+    getLastStep() {
+      if (!currentSession || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      const last = currentSession.steps[currentSession.steps.length - 1];
+      return clone(last);
+    },
+
+    updateSession(partialPatch = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      const safeFields = [
+        "status",
+        "startUrl",
+        "currentUrl",
+        "browserInfo",
+        "viewport",
+        "meta",
+      ];
+      safeFields.forEach((field) => {
+        if (Object.prototype.hasOwnProperty.call(partialPatch, field)) {
+          currentSession[field] = partialPatch[field];
+        }
+      });
+      touch();
+      return clone(currentSession);
+    },
+
+    updateStepById(stepId, partialPatch = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      if (!stepId || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      const idx = currentSession.steps.findIndex((step) => step.id === stepId);
+      if (idx === -1) {
+        return null;
+      }
+      currentSession.steps[idx] = {
+        ...currentSession.steps[idx],
+        ...partialPatch,
+      };
+      updateSummary();
+      touch();
+      persistStep(currentSession.steps[idx]);
+      return clone(currentSession.steps[idx]);
+    },
+
+    findRecentStep(predicate, options = {}) {
+      if (!currentSession || !Array.isArray(currentSession.steps)) {
+        return null;
+      }
+      if (typeof predicate !== "function") {
+        return null;
+      }
+      const maxAgeMs =
+        typeof options.maxAgeMs === "number" ? options.maxAgeMs : null;
+      const maxCount =
+        typeof options.maxCount === "number" ? options.maxCount : null;
+      const nowMs = Date.now();
+      let checked = 0;
+      for (let i = currentSession.steps.length - 1; i >= 0; i -= 1) {
+        if (maxCount !== null && checked >= maxCount) {
+          break;
+        }
+        checked += 1;
+        const step = currentSession.steps[i];
+        if (maxAgeMs !== null && step && step.timestamp) {
+          const tsMs = Date.parse(step.timestamp);
+          if (!Number.isNaN(tsMs) && nowMs - tsMs > maxAgeMs) {
+            continue;
+          }
+        }
+        if (predicate(step)) {
+          return clone(step);
+        }
+      }
+      return null;
+    },
+
+    addStep(stepPartial = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      const model = getModel();
+      if (!model) {
+        return null;
+      }
+      const steps = Array.isArray(currentSession.steps)
+        ? currentSession.steps
+        : [];
+      const normalized = model.normalizeStep(
+        { ...stepPartial, sessionId: currentSession.sessionId },
+        steps.length
+      );
+      steps.push(normalized);
+      currentSession.steps = steps;
+      updateSummary();
+      touch();
+      persistStep(normalized);
+      return clone(normalized);
+    },
+
+    attachScreenshot(fileMeta = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      const model = getModel();
+      if (!model) {
+        return null;
+      }
+      const normalized = model.normalizeArtifactFile({
+        kind: "screenshot",
+        ...fileMeta,
+      });
+      const screenshots = Array.isArray(currentSession.artifacts.screenshots)
+        ? currentSession.artifacts.screenshots
+        : [];
+      screenshots.push(normalized);
+      currentSession.artifacts.screenshots = screenshots;
+      this.attachExportedFile(normalized);
+      updateSummary();
+      touch();
+      return clone(normalized);
+    },
+
+    attachRecording(fileMeta = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      const model = getModel();
+      if (!model) {
+        return null;
+      }
+      const normalized = model.normalizeArtifactFile({
+        kind: "recording",
+        ...fileMeta,
+      });
+      currentSession.artifacts.recording = normalized;
+      this.attachExportedFile(normalized);
+      updateSummary();
+      touch();
+      return clone(normalized);
+    },
+
+    attachConsoleLogs(logsOrMeta) {
+      if (!ensureSession()) {
+        return null;
+      }
+      currentSession.artifacts.consoleLogs = logsOrMeta || [];
+      updateSummary();
+      touch();
+      return true;
+    },
+
+    attachNetworkLogs(logsOrMeta) {
+      if (!ensureSession()) {
+        return null;
+      }
+      currentSession.artifacts.networkLogs = logsOrMeta || [];
+      updateSummary();
+      touch();
+      return true;
+    },
+
+    attachExportedFile(fileMeta = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      const model = getModel();
+      if (!model) {
+        return null;
+      }
+      const normalized = model.normalizeArtifactFile(fileMeta);
+      const files = Array.isArray(currentSession.artifacts.files)
+        ? currentSession.artifacts.files
+        : [];
+      if (
+        normalized.relativePath &&
+        files.some((file) => file.relativePath === normalized.relativePath)
+      ) {
+        return clone(normalized);
+      }
+      files.push(normalized);
+      currentSession.artifacts.files = files;
+      updateSummary();
+      touch();
+      return clone(normalized);
+    },
+
+    finalizeSession(finalPatch = {}) {
+      if (!ensureSession()) {
+        return null;
+      }
+      currentSession.status = "finalized";
+      if (finalPatch && typeof finalPatch === "object") {
+        currentSession = { ...currentSession, ...finalPatch };
+      }
+      updateSummary();
+      touch();
+      return clone(currentSession);
+    },
+
+    clearSession() {
+      currentSession = null;
+    },
+
+    recalculateSummary() {
+      updateSummary();
+      touch();
+      return clone(currentSession);
+    },
+  };
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = manager;
+  } else {
+    const root =
+      typeof globalThis !== "undefined"
+        ? globalThis
+        : typeof window !== "undefined"
+          ? window
+          : typeof self !== "undefined"
+            ? self
+            : {};
+    root.ReportSessionManager = manager;
+  }
+})();
