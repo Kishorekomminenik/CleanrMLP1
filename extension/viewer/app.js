@@ -7245,7 +7245,7 @@ function applyDebugArtifactFallbacks(pkg, manifest) {
   }
   if (!manifest.artifacts.network?.present && networkCandidates.length === 1) {
     const networkArtifact = {
-      ...manifest.artifacts.network,
+      ...(manifest.artifacts.network || {}),
       present: true,
       path: networkCandidates[0],
       format: manifest.artifacts.network?.format || "ndjson",
@@ -7258,7 +7258,7 @@ function applyDebugArtifactFallbacks(pkg, manifest) {
   }
   if (!manifest.artifacts.console?.present && consoleCandidates.length === 1) {
     const consoleArtifact = {
-      ...manifest.artifacts.console,
+      ...(manifest.artifacts.console || {}),
       present: true,
       path: consoleCandidates[0],
       format: manifest.artifacts.console?.format || "ndjson",
@@ -8104,9 +8104,16 @@ timeline.addEventListener("touchend", () => {
 });
 
 [filterMarkers, filterNetwork, filterConsole, filterScreenshots, filterErrors].forEach(
-  (el) => el.addEventListener("change", refreshView)
+  (el) => {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("change", refreshView);
+  }
 );
-searchInput.addEventListener("input", refreshView);
+if (searchInput) {
+  searchInput.addEventListener("input", refreshView);
+}
 
 panelTabs.forEach((tab) => {
   tab.addEventListener("click", () => {
